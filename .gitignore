@@ -1,0 +1,10 @@
+.vs/
+.vscode/
+bin/
+obj/
+.venv/
+logger/
+*.dfsu
+*.dwg
+*.user
+*.suo

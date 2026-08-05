@@ -1,0 +1,55 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ArcGIS defaultAssembly="Muuntaja.dll"
+        defaultNamespace="Muuntaja"
+        xmlns="http://schemas.esri.com/DADF/Registry"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
+
+	<AddInInfo id="{78512C46-1376-4F15-812E-2A0D8D900A9E}"
+			   version="1.0"
+			   desktopVersion="3.5.0"
+			   product="ArcGISPro">
+		<Name>Muuntaja</Name>
+		<Description>Muuntaja-lataustyökalu (CAD/GPX/KML jne. import)</Description>
+		<Image>Images/muuntaja32.png</Image>
+		<Author>Roope Palomaa</Author>
+		<Company>Ramboll</Company>
+		<Date>2026-03-02</Date>
+		<Subject>Framework</Subject>
+	</AddInInfo>
+
+	<modules>
+		<insertModule id="Muuntaja_Module"
+					  className="Module1"
+					  autoLoad="true"
+					  caption="Muuntaja Module">
+
+			<groups>
+				<group id="Muuntaja_ToolsGroup"
+					   caption=""
+					   appearsOnAddInTab="true"
+					   keytip="MT"
+					   smallImage="Images/muuntaja16.png"
+					   largeImage="Images/muuntaja32.png">
+					<button refID="Muuntaja_OpenToolButton" size="large" />
+				</group>
+			</groups>
+
+			<controls>
+				<button id="Muuntaja_OpenToolButton"
+						caption="Muuntaja"
+						className="OpenMuuntajaToolButton"
+						loadOnClick="true"
+						keytip="M1"
+						smallImage="Images/muuntaja16.png"
+						largeImage="Images/muuntaja32.png">
+					<tooltip heading="Muuntaja">
+						Tuo tai vie tiedostot ArcGissiin.
+						<disabledText />
+					</tooltip>
+				</button>
+			</controls>
+
+		</insertModule>
+	</modules>
+</ArcGIS>

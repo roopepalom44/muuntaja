@@ -11,7 +11,7 @@
 			   product="ArcGISPro">
 		<Name>Muuntaja</Name>
 		<Description>Muuntaja-lataustyökalu (CAD/GPX/KML jne. import)</Description>
-		<Image>Images/muuntaja32.png</Image>
+		<Image>Images\muuntaja32.png</Image>
 		<Author>Roope Palomaa</Author>
 		<Company>Ramboll</Company>
 		<Date>2026-03-02</Date>
@@ -29,8 +29,8 @@
 					   caption=""
 					   appearsOnAddInTab="true"
 					   keytip="MT"
-					   smallImage="Images/muuntaja16.png"
-					   largeImage="Images/muuntaja32.png">
+					   smallImage="Images\muuntaja16.png"
+					   largeImage="Images\muuntaja32.png">
 					<button refID="Muuntaja_OpenToolButton" size="large" />
 				</group>
 			</groups>
@@ -41,8 +41,8 @@
 						className="OpenMuuntajaToolButton"
 						loadOnClick="true"
 						keytip="M1"
-						smallImage="Images/muuntaja16.png"
-						largeImage="Images/muuntaja32.png">
+						smallImage="Images\muuntaja16.png"
+						largeImage="Images\muuntaja32.png">
 					<tooltip heading="Muuntaja">
 						Tuo tai vie tiedostot ArcGissiin.
 						<disabledText />

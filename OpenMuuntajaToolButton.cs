@@ -37,8 +37,6 @@ namespace Muuntaja // <-- KORJATTU
                 // 5) Avaa työkalu geoprocessing-paneeliin
                 Geoprocessing.OpenToolDialog(toolPath, null, null, false);
 
-                // 6) Lokitetaan työkalun avaus
-                _ = LogData.GetInstance("", "UniversalImportTool", "Muuntaja");
             }
             catch (Exception ex)
             {

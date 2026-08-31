@@ -4,6 +4,8 @@ bin/
 obj/
 .venv/
 logger/
+__pycache__/
+*.py[cod]
 *.dfsu
 *.dwg
 *.user

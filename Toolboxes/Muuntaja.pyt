@@ -12,9 +12,6 @@ import importlib
 import xml.etree.ElementTree as ET
 import json
 import zipfile
-import threading
-import urllib.parse
-import urllib.request
 
 class Toolbox(object):
     def __init__(self):
@@ -37,94 +34,6 @@ EXPORT_FORMAT_TO_EXT = {
     "KMZ": ".kmz",
 }
 EXPORT_FORMAT_LIST = list(EXPORT_FORMAT_TO_EXT.keys())
-
-LOGGER_KEYVAULT_URL = "https://tcdfunctionsnet48.azurewebsites.net/api/GetKeyVaultValue"
-LOGGER_FUNCTION_URL = "https://rfilogger-functions.azurewebsites.net/api/HttpTriggerGeneral"
-LOGGER_SECRET_NAME = "rfilogger-HttpTriggerGeneral-ApiKey"
-LOGGER_SOFTWARE_NAME = "Muuntaja"
-LOGGER_TOOL_NAME = "Muuntaja"
-LOGGER_BUSINESS_UNIT = "TCD"
-LOGGER_MARKET = "Transport"
-
-
-def _muuntaja_logger_user_full_name():
-    """Read the same Office user name as the C# logger, but never fail the tool."""
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Office\Common\UserInfo") as key:
-            value, _ = winreg.QueryValueEx(key, "UserName")
-            return str(value or "")
-    except Exception:
-        return ""
-
-
-def _muuntaja_logger_developer_flag():
-    return "True" if os.environ.get("TCD_DEVELOPER") else "False"
-
-
-def _muuntaja_logger_http_get(url, params=None, timeout=2.5, api_key=None):
-    query = urllib.parse.urlencode(params or {}, safe="")
-    full_url = url if not query else f"{url}?{query}"
-    request = urllib.request.Request(full_url, method="GET")
-    if api_key:
-        request.add_header("x-functions-key", api_key)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read().decode("utf-8", errors="replace")
-
-
-def _muuntaja_logger_get_api_key():
-    try:
-        return _muuntaja_logger_http_get(
-            LOGGER_KEYVAULT_URL,
-            {
-                "QueryType": "Secrets",
-                "Secrets": LOGGER_SECRET_NAME,
-            },
-            timeout=2.5,
-        ).strip()
-    except Exception:
-        return ""
-
-
-def _muuntaja_logger_send(tool_type):
-    """Send one usage report. Logging failures are intentionally non-fatal."""
-    try:
-        api_key = _muuntaja_logger_get_api_key()
-        timestamp = datetime.datetime.now().astimezone().isoformat(timespec="milliseconds")
-        params = {
-            "UserName": os.environ.get("USERNAME") or os.environ.get("USER") or "",
-            "UserFullName": _muuntaja_logger_user_full_name(),
-            "ComputerName": os.environ.get("COMPUTERNAME") or "",
-            "UserDomainName": os.environ.get("USERDOMAIN") or "",
-            "Ipv4Address": "",
-            "Ipv6Address": "",
-            "UtcTime": timestamp,
-            "SoftwareName": LOGGER_SOFTWARE_NAME,
-            "ToolName": LOGGER_TOOL_NAME,
-            "ToolVersion": "1.0",
-            "RobotUser": "False",
-            "ProjectNumber": "",
-            "BusinessUnit": LOGGER_BUSINESS_UNIT,
-            "Market": LOGGER_MARKET,
-            "InputValues": tool_type or "",
-            "OutputValues": "",
-            "Status": "Opening",
-            "Developer": _muuntaja_logger_developer_flag(),
-            "BufferTime": "0",
-            "CalculationsAtBufferTime": "0",
-            "Errors": "",
-        }
-        _muuntaja_logger_http_get(LOGGER_FUNCTION_URL, params, timeout=2.5, api_key=api_key)
-    except Exception:
-        pass
-
-
-def _muuntaja_logger_send_async(tool_type):
-    try:
-        thread = threading.Thread(target=_muuntaja_logger_send, args=(tool_type,), daemon=True)
-        thread.start()
-    except Exception:
-        pass
 
 # AutoCAD Index Color → RGB — osajoukko Euclidean-lähimmäistä määritystä Esri-symbolin väreille (Color-kenttä).
 _CAD_ACI_SAMPLES = (
@@ -921,7 +830,6 @@ class UniversalImportTool(object):
         p_input = parameters[1]  # Input file/layer is now at index 1 (after mode parameter)
         paths = self._input_paths_from_param(p_input)
         mode_param = (parameters[0].valueAsText or "Tuonti").strip()
-        _muuntaja_logger_send_async(mode_param)
         is_import_mode = mode_param.startswith("Tuonti")
         if not paths:
             self.log(messages, "Syöte puuttuu (valitse vähintään yksi tiedosto tai taso).", "ERROR")
@@ -2929,6 +2837,28 @@ class UniversalImportTool(object):
             pass
         return str(input_sr) != str(target_sr)
 
+    def _project_cad_data(self, input_data, output_data, input_sr, target_sr):
+        """Projisoi CAD-tason ja anna lähtö-CRS vain, jos aineiston CRS on tuntematon.
+
+        CADToGeodatabase tallentaa tasot feature datasetin sisään. ArcGIS ei tue
+        DefineProjection-kutsua tällaiselle feature classille, joten tunnistettu
+        lähtökoordinaatisto annetaan tarvittaessa suoraan Project-työkalulle.
+        """
+        source_sr = None
+        try:
+            source_sr = getattr(arcpy.Describe(input_data), "spatialReference", None)
+        except Exception:
+            pass
+
+        source_name = str(getattr(source_sr, "name", "") or "").strip().lower()
+        source_is_known = bool(source_sr) and source_name not in ("", "unknown")
+        transform = self._list_datum_transform(input_sr, target_sr)
+
+        if source_is_known:
+            arcpy.management.Project(input_data, output_data, target_sr, transform)
+        else:
+            arcpy.management.Project(input_data, output_data, target_sr, transform, input_sr)
+
     def _resolve_output_path(self, output_loc, output_name, is_folder):
         """Palauttaa (output_name, check_path) ArcGIS-yhteensopivalla nimellä."""
         try:
@@ -3005,23 +2935,19 @@ class UniversalImportTool(object):
                                    remote, messages, do_projection, scratch_intermediate=None,
                                    source_in_scratch=False):
         """Annotaatio/multipatch: CopyFeatures → scratch → DefineProjection → Project → kohde."""
-        if source_in_scratch and not scratch_intermediate:
-            self.log(messages, "  > Annotaatio/multipatch: käsitellään paikallisesta GDB:stä...")
-        else:
-            self.log(messages, "  > Annotaatio/multipatch: kopioidaan scratchGDB:hen ennen projisointia...")
+        self.log(messages, "  > Annotaatio/multipatch: kopioidaan scratchGDB:hen ennen projisointia...")
 
         ns_input = scratch_intermediate
         scratch_copy = None
         if not ns_input:
-            if source_in_scratch:
-                ns_input = work_input
-            else:
-                scratch_copy, scratch_name = self._scratch_fc_path(scratch, "cad_ns", os.path.basename(check_path))
-                self._delete_if_exists(scratch_copy)
-                t0 = time.perf_counter()
-                arcpy.management.CopyFeatures(work_input, scratch_copy)
-                self._log_elapsed(messages, "Kopiointi scratchGDB:hen", t0)
-                ns_input = scratch_copy
+            # Myös CADToGeodatabase-lähde kopioidaan feature datasetin ulkopuolelle,
+            # jotta DefineProjection on ArcGISin tukema tälle väliaineistolle.
+            scratch_copy, scratch_name = self._scratch_fc_path(scratch, "cad_ns", os.path.basename(check_path))
+            self._delete_if_exists(scratch_copy)
+            t0 = time.perf_counter()
+            arcpy.management.CopyFeatures(work_input, scratch_copy)
+            self._log_elapsed(messages, "Kopiointi scratchGDB:hen", t0)
+            ns_input = scratch_copy
 
         if input_sr:
             arcpy.management.DefineProjection(ns_input, input_sr)
@@ -3209,12 +3135,7 @@ class UniversalImportTool(object):
                 self.log(messages, f"  > Muunnetaan koordinaatistoon: {out_name_log}...")
 
                 t0 = time.perf_counter()
-                if source_in_scratch:
-                    # SR on jo asetettu DefineProjectionilla process_cad:ssa
-                    _tr = self._list_datum_transform(input_sr, target_sr)
-                    arcpy.management.Project(work_input, check_path, target_sr, _tr)
-                else:
-                    arcpy.management.Project(work_input, check_path, target_sr, None, input_sr)
+                self._project_cad_data(work_input, check_path, input_sr, target_sr)
                 self._log_elapsed(messages, "Projisointi", t0)
 
             elif do_projection and not input_sr:
@@ -3370,17 +3291,6 @@ class UniversalImportTool(object):
             final_input_sr = input_sr if input_sr else detected_sr
             if not final_input_sr:
                 self.log(messages, "VAROITUS: Koordinaatistoa ei voitu tunnistaa.", "WARNING")
-
-            # Aseta koordinaatisto kaikille scratch-FC:ille kerralla niin Project() ei tarvitse
-            # in_coor_system-ohitusta (joka aiheuttaa ERROR 000289 jos FC:llä on jo jokin SR).
-            if final_input_sr and source_in_scratch and dataset_path:
-                for _fc in fcs:
-                    try:
-                        arcpy.management.DefineProjection(
-                            os.path.join(dataset_path, _fc), final_input_sr
-                        )
-                    except Exception:
-                        pass
 
             self.log(messages, f"Käsitellään {len(fcs)} tasoa...")
 

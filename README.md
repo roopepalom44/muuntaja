@@ -21,7 +21,7 @@
 ## Tekninen kuvaus
 - **Kehitysympäristö:** .NET 8.0 (WPF), C#
 - **ArcGIS Pro SDK:** 3.5.0
-- **Kehittäjä:** Roope Palomaa, Ramboll
+- **Kehittäjä:** Roope Palomaa
 
 Katso tarkemmat käyttöohjeet projektin mukana tulevasta manuaalista:
 - `Muuntaja_User_Manual.pdf` tai `.docx`

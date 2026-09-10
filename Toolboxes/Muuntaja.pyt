@@ -794,7 +794,7 @@ class UniversalImportTool(object):
                 # Ei kaadeta ajoa siivousvirheeseen.
                 pass
         if removed:
-            self.log(messages, f"  > Siivottiin {removed} väliaikaista CAD-aineistoa ajon lopussa.")
+            self.log(messages, f"  > Siivottiin {removed} väliaikaista aineistoa ajon lopussa.")
 
     def updateMessages(self, parameters):
         p_mode = parameters[0]
@@ -1589,7 +1589,9 @@ class UniversalImportTool(object):
 
             elif len(input_paths) == 1:
                 in_src = input_paths[0]
-                fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
+                fc_work = self._prepare_export_feature_class(
+                    in_src, target_sr, messages, copy_source=False
+                )
                 src_one = self._export_source_label(in_src)
                 if fmt == "GeoJSON":
                     written_paths = [self._export_to_geojson(fc_work, out_path, messages)]
@@ -1608,8 +1610,11 @@ class UniversalImportTool(object):
                     written_paths = []
                     if separate_gpkg:
                         for in_src in input_paths:
-                            fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
                             sub_src = self._export_source_label(in_src)
+                            self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
+                            fc_work = self._prepare_export_feature_class(
+                                in_src, target_sr, messages, copy_source=False
+                            )
                             out_one = self._unique_export_path(
                                 self._build_export_path_in_folder(folder, "GPKG", sub_src)
                             )
@@ -1618,32 +1623,41 @@ class UniversalImportTool(object):
                             )
                     else:
                         for in_src in input_paths:
-                            fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
                             sub_src = self._export_source_label(in_src)
+                            self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
+                            fc_work = self._prepare_export_feature_class(
+                                in_src, target_sr, messages, copy_source=False
+                            )
                             written_paths.append(
                                 self._export_to_geopackage(fc_work, out_path, messages, source_label=sub_src)
                             )
 
                 elif fmt == "GeoJSON":
                     for in_src in input_paths:
-                        fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
                         sub_nm = self.sanitize_name(self._export_source_label(in_src))[:35] or "layer"
+                        fc_work = self._prepare_export_feature_class(
+                            in_src, target_sr, messages, copy_source=False
+                        )
                         out_one = self._unique_export_path(
                             self._build_export_path_in_folder(folder, fmt, combined_label + "_" + sub_nm)
                         )
                         written_paths.append(self._export_to_geojson(fc_work, out_one, messages))
                 elif fmt == "Shapefile":
                     for in_src in input_paths:
-                        fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
                         sub_nm = self.sanitize_name(self._export_source_label(in_src))[:35] or "layer"
+                        fc_work = self._prepare_export_feature_class(
+                            in_src, target_sr, messages, copy_source=False
+                        )
                         out_one = self._unique_export_path(
                             self._build_export_path_in_folder(folder, fmt, combined_label + "_" + sub_nm)
                         )
                         written_paths.append(self._export_to_shapefile(fc_work, out_one, messages))
                 elif fmt in ("KML", "KMZ"):
                     for in_src in input_paths:
-                        fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
                         sub_nm = self.sanitize_name(self._export_source_label(in_src))[:35] or "layer"
+                        fc_work = self._prepare_export_feature_class(
+                            in_src, target_sr, messages, copy_source=False
+                        )
                         out_one = self._unique_export_path(
                             self._build_export_path_in_folder(folder, fmt, combined_label + "_" + sub_nm)
                         )
@@ -1669,11 +1683,14 @@ class UniversalImportTool(object):
                             pass
             except Exception:
                 pass
+            self.log(messages, f"Vienti valmis: {len(written_paths)} tuotosta.")
 
         except Exception as e:
             self.log(messages, f"Vientivirhe: {str(e)}", "ERROR")
             messages.addErrorMessage(traceback.format_exc())
             raise
+        finally:
+            self._run_deferred_cleanup(messages)
 
     def _resolve_export_catalog_path(self, in_src):
         """Palauttaa polun feature classiin (ei layer-nimeä ilman polkua)."""
@@ -1755,21 +1772,19 @@ class UniversalImportTool(object):
         except Exception:
             return None
 
-    def _prepare_export_feature_class(self, in_src, target_sr, messages):
-        """Kopio scratchGDB:hen (ei muokata lähdettä), valinnainen projisointi."""
-        scratch = arcpy.env.scratchGDB
-        stamp = datetime.datetime.now().strftime("%H%M%S")
-        base_name = f"muuntaja_vienti_{stamp}"
-        out_fc = os.path.join(scratch, base_name)
+    def _prepare_export_feature_class(self, in_src, target_sr, messages, copy_source=True):
+        """Valmistele vientitaso tarvittaessa scratchGDB:ssä ja projisoi se.
 
+        Lukuun perustuvissa viennissä lähdetasoa käytetään suoraan, jos
+        koordinaatistoa ei tarvitse vaihtaa. CAD-vienti käyttää edelleen aina
+        scratch-kopiota, koska CAD-valmistelu voi lisätä tai muuttaa kenttiä.
+        """
         catalog = self._resolve_export_catalog_path(in_src)
-        if arcpy.Exists(out_fc):
-            arcpy.management.Delete(out_fc)
-        arcpy.management.CopyFeatures(catalog, out_fc)
-
         desc = arcpy.Describe(catalog)
         src_sr = getattr(desc, "spatialReference", None)
         tgt_sr = self._spatial_ref_from_param(target_sr) if target_sr is not None else None
+        need_proj = False
+        comparison_failed = False
 
         if tgt_sr and src_sr and getattr(src_sr, "name", "") != "Unknown":
             try:
@@ -1783,20 +1798,45 @@ class UniversalImportTool(object):
                         need_proj = src_sr.exportToString() != tgt_sr.exportToString()
                     except Exception:
                         need_proj = str(src_sr) != str(tgt_sr)
-                if need_proj:
-                    proj_fc = out_fc + "_proj"
-                    if arcpy.Exists(proj_fc):
-                        arcpy.management.Delete(proj_fc)
-                    try:
-                        tname = tgt_sr.name
-                    except Exception:
-                        tname = "kohde-CRS"
-                    self.log(messages, f"  > Projisoidaan vientiin: {tname}...")
-                    arcpy.management.Project(out_fc, proj_fc, tgt_sr)
-                    arcpy.management.Delete(out_fc)
-                    out_fc = proj_fc
             except Exception as e:
-                self.log(messages, f"  > Projisointi epäonnistui, käytetään alkuperäistä: {e}", "WARNING")
+                comparison_failed = True
+                need_proj = True
+                self.log(messages, f"  > CRS-vertailu epäonnistui, käytetään varmistuskopiota: {e}", "WARNING")
+
+        if not copy_source and not need_proj and not comparison_failed:
+            return catalog
+
+        scratch = arcpy.env.scratchGDB
+        sequence = int(getattr(self, "_export_temp_sequence", 0) or 0) + 1
+        self._export_temp_sequence = sequence
+        stamp = datetime.datetime.now().strftime("%H%M%S_%f")
+        base_name = f"muuntaja_vienti_{stamp}_{sequence}"
+        out_fc = os.path.join(scratch, base_name)
+        while arcpy.Exists(out_fc):
+            sequence += 1
+            self._export_temp_sequence = sequence
+            out_fc = os.path.join(scratch, f"muuntaja_vienti_{stamp}_{sequence}")
+
+        self.log(messages, "  > Luodaan vientiä varten väliaikainen scratch-kopio...")
+        arcpy.management.CopyFeatures(catalog, out_fc)
+        self._queue_deferred_cleanup(out_fc)
+
+        if need_proj:
+            proj_fc = out_fc + "_proj"
+            if arcpy.Exists(proj_fc):
+                arcpy.management.Delete(proj_fc)
+            try:
+                tname = tgt_sr.name
+            except Exception:
+                tname = "kohde-CRS"
+            self.log(messages, f"  > Projisoidaan vientiin: {tname}...")
+            try:
+                arcpy.management.Project(out_fc, proj_fc, tgt_sr)
+                self._queue_deferred_cleanup(proj_fc)
+                arcpy.management.Delete(out_fc)
+                out_fc = proj_fc
+            except Exception as e:
+                self.log(messages, f"  > Projisointi epäonnistui, käytetään alkuperäistä kopiota: {e}", "WARNING")
 
         return out_fc
 

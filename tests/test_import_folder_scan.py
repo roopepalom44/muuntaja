@@ -181,7 +181,9 @@ class ImportFolderScanTests(unittest.TestCase):
             parameters[16].valueAsText = self.module.GPKG_EXPORT_PACKAGING_SEPARATE
 
             exported = []
-            self.tool._prepare_export_feature_class = lambda source, _target_sr, _messages: source
+            self.tool._prepare_export_feature_class = (
+                lambda source, _target_sr, _messages, copy_source=True: source
+            )
             self.tool._export_source_label = lambda source: Path(source).stem
 
             def fake_export(_fc_work, out_path, _messages, source_label=None):
@@ -204,6 +206,19 @@ class ImportFolderScanTests(unittest.TestCase):
             self.tool._gpkg_export_packaging_from_param(param, 2),
             self.module.GPKG_EXPORT_PACKAGING_COMBINED,
         )
+
+    def test_read_only_export_reuses_source_without_scratch_copy(self):
+        self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
+            dataType="FeatureClass",
+            catalogPath=path,
+            spatialReference=None,
+        )
+
+        result = self.tool._prepare_export_feature_class(
+            r"C:\data\roads", None, types.SimpleNamespace(), copy_source=False
+        )
+
+        self.assertEqual(result, r"C:\data\roads")
 
 
 if __name__ == "__main__":

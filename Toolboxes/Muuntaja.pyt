@@ -339,7 +339,9 @@ class UniversalImportTool(object):
         # ===== TUONTI-HAARA =====
         if is_import:
             p_input.enabled = True
+            p_input.parameterType = "Required"
             p_export_layers.enabled = False
+            p_export_layers.parameterType = "Optional"
 
             p_output_loc.enabled = True
             p_output_loc.parameterType = "Optional"
@@ -405,7 +407,9 @@ class UniversalImportTool(object):
         # ===== VIENTI-HAARA =====
         else:
             p_input.enabled = False
+            p_input.parameterType = "Optional"
             p_export_layers.enabled = True
+            p_export_layers.parameterType = "Required"
             p_output_loc.enabled = False
             p_output_loc.parameterType = "Optional"
             p_mapper.enabled = False

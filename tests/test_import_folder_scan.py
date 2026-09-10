@@ -126,6 +126,35 @@ class ImportFolderScanTests(unittest.TestCase):
 
         self.assertEqual(self.tool._bulk_export_mode([r"C:\data\roads.shp"]), "export")
 
+    def test_mode_switch_marks_only_active_input_as_required(self):
+        class Parameter:
+            def __init__(self, value="", values=None):
+                self.value = value
+                self.values = values
+                self.valueAsText = value
+                self.enabled = True
+                self.parameterType = "Optional"
+                self.filter = types.SimpleNamespace(list=[])
+
+            def setErrorMessage(self, _message):
+                pass
+
+        parameters = [Parameter("Tuonti"), Parameter(), Parameter()]
+        parameters.extend(Parameter() for _ in range(13))
+        parameters[15].enabled = False
+
+        self.tool.updateParameters(parameters)
+
+        self.assertEqual(parameters[1].parameterType, "Required")
+        self.assertEqual(parameters[15].parameterType, "Optional")
+
+        parameters[0].value = "Vienti"
+        parameters[0].valueAsText = "Vienti"
+        self.tool.updateParameters(parameters)
+
+        self.assertEqual(parameters[1].parameterType, "Optional")
+        self.assertEqual(parameters[15].parameterType, "Required")
+
 
 if __name__ == "__main__":
     unittest.main()

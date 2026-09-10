@@ -47,10 +47,6 @@ MULTI_EXPORT_PACKAGING_FORMATS = ("GPKG", "DWG", "DXF")
 # pieni varmuusvara ArcGISin omille kenttämäärittelyille.
 SHAPEFILE_MAX_RECORD_LENGTH = 4000
 SHAPEFILE_SAFE_RECORD_LENGTH = SHAPEFILE_MAX_RECORD_LENGTH - 100
-# ArcGIS Pron multivalue-string-ohjain, jossa vaihtoehdot näkyvät
-# valintaruutuina ja mukana on myös Select All -painike.
-EXPORT_LAYER_CHECKBOX_CONTROL_CLSID = "{38C34610-C7F7-11D5-A693-0008C711C8C1}"
-
 # AutoCAD Index Color → RGB — osajoukko Euclidean-lähimmäistä määritystä Esri-symbolin väreille (Color-kenttä).
 _CAD_ACI_SAMPLES = (
     (1, 255, 0, 0), (2, 255, 255, 0), (3, 0, 255, 0), (4, 0, 255, 255), (5, 0, 0, 255), (6, 255, 0, 255),
@@ -108,7 +104,11 @@ class UniversalImportTool(object):
             displayName="Syöte - tiedosto(t) tai kansio(t) (kansio skannataan alikansioineen)",
             name="input_file",
             datatype=["DEFile", "DEFolder", "DEFeatureClass", "DEFeatureDataset", "DECadDrawingDataset", "GPFeatureLayer"],
-            parameterType="Required",
+            # Moodista riippuvaa pakollisuutta ei saa jättää ArcGISin
+            # staattisen validaattorin hoidettavaksi: piilotettu Required-
+            # parametri estää toisen moodin ajon. updateMessages tarkistaa
+            # aktiivisen syötteen itse.
+            parameterType="Optional",
             direction="Input")
         param1.multiValue = True
         # Huomio: ArcGIS Pro:n tiedostoselain ei tunnista DFSU-tiedostoja oletuksena.
@@ -284,12 +284,11 @@ class UniversalImportTool(object):
             displayName="Vienti - valitse mukaan vietävät tasot",
             name="export_layers",
             datatype="GPString",
-            parameterType="Required",
+            parameterType="Optional",
             direction="Input")
         param15.multiValue = True
         param15.filter.type = "ValueList"
         param15.filter.list = []
-        param15.controlCLSID = EXPORT_LAYER_CHECKBOX_CONTROL_CLSID
         param15.enabled = False
 
         # 16. Usean tason GPKG-/DWG-/DXF-viennin paketointitapa.
@@ -366,26 +365,20 @@ class UniversalImportTool(object):
         # ===== TUONTI-HAARA =====
         if is_import:
             p_input.enabled = True
-            p_input.parameterType = "Required"
             p_export_layers.enabled = False
-            p_export_layers.parameterType = "Optional"
 
             p_output_loc.enabled = True
-            p_output_loc.parameterType = "Optional"
             # DWG-parametrit näkyvät vain jos on DWG-tiedostoja
             p_mapper.enabled = has_dwg
             p_input_sr.enabled = has_dwg
             p_target_sr.enabled = has_dwg
             
             p_export_folder.enabled = False
-            p_export_folder.parameterType = "Optional"
             p_export_fmt.enabled = False
-            p_export_fmt.parameterType = "Optional"
             p_cad_label.enabled = False
             p_cad_emit_table.enabled = False
             p_cad_attr_fields.enabled = False
             p_multi_packaging.enabled = False
-            p_multi_packaging.parameterType = "Optional"
             
             # DFSU-suodatin näkyy vain DFSU-tuonnissa
             if has_dfsu:
@@ -436,19 +429,13 @@ class UniversalImportTool(object):
         # ===== VIENTI-HAARA =====
         else:
             p_input.enabled = False
-            p_input.parameterType = "Optional"
             p_export_layers.enabled = True
-            p_export_layers.parameterType = "Required"
             p_output_loc.enabled = False
-            p_output_loc.parameterType = "Optional"
             p_mapper.enabled = False
             p_input_sr.enabled = False
             p_target_sr.enabled = False
             p_export_folder.enabled = True
-            p_export_folder.parameterType = "Required"
             p_export_fmt.enabled = True
-            p_export_fmt.parameterType = "Required"
-            p_multi_packaging.parameterType = "Optional"
             current_fmt = (p_export_fmt.valueAsText or "").strip()
             p_multi_packaging.enabled = (
                 current_fmt in MULTI_EXPORT_PACKAGING_FORMATS
@@ -825,6 +812,18 @@ class UniversalImportTool(object):
         else:
             paths = self._export_paths_from_param(p_export_layers, raw_paths)
             import_paths = []
+        if not paths:
+            if is_import:
+                p_input.setErrorMessage(
+                    "Valitse vähintään yksi tuettu tiedosto tai kansio. "
+                    "Kansio skannataan myös alikansioineen."
+                )
+            else:
+                p_export_layers.setErrorMessage(
+                    "Valitse vähintään yksi aktiivisen kartan taso vientiin."
+                )
+            return
+
         # Tuontitilassa vältetään raskaat Describe-kutsut UI-vaiheessa (sujuvampi drag/drop).
         if not is_import:
             if self._bulk_export_mode(paths) != "export":
@@ -833,8 +832,6 @@ class UniversalImportTool(object):
                     "tai pelkkiä tasoja/feature classeja."
                 )
                 return
-        if not paths:
-            return
         
         # VIENTI-VALIDOINTI
         if not is_import:

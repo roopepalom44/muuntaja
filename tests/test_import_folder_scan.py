@@ -127,7 +127,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
         self.assertEqual(self.tool._bulk_export_mode([r"C:\data\roads.shp"]), "export")
 
-    def test_mode_switch_marks_only_active_input_as_required(self):
+    def test_mode_switch_keeps_conditional_inputs_optional_for_arcgis_validator(self):
         class Parameter:
             def __init__(self, value="", values=None):
                 self.value = value
@@ -146,7 +146,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
         self.tool.updateParameters(parameters)
 
-        self.assertEqual(parameters[1].parameterType, "Required")
+        self.assertEqual(parameters[1].parameterType, "Optional")
         self.assertEqual(parameters[15].parameterType, "Optional")
 
         parameters[0].value = "Vienti"
@@ -154,7 +154,35 @@ class ImportFolderScanTests(unittest.TestCase):
         self.tool.updateParameters(parameters)
 
         self.assertEqual(parameters[1].parameterType, "Optional")
-        self.assertEqual(parameters[15].parameterType, "Required")
+        self.assertEqual(parameters[15].parameterType, "Optional")
+
+    def test_missing_input_error_is_applied_only_to_active_mode(self):
+        class Parameter:
+            def __init__(self, value="", values=None):
+                self.value = value
+                self.values = values
+                self.valueAsText = value
+                self.enabled = True
+                self.parameterType = "Optional"
+                self.filter = types.SimpleNamespace(list=[])
+                self.error = None
+
+            def setErrorMessage(self, message):
+                self.error = message
+
+        parameters = [Parameter("Tuonti"), Parameter(), Parameter()]
+        parameters.extend(Parameter() for _ in range(14))
+
+        self.tool.updateMessages(parameters)
+
+        self.assertIn("tiedosto tai kansio", parameters[1].error)
+        self.assertIsNone(parameters[15].error)
+
+        parameters[0].value = "Vienti"
+        parameters[0].valueAsText = "Vienti"
+        self.tool.updateMessages(parameters)
+
+        self.assertIn("aktiivisen kartan taso", parameters[15].error)
 
     def test_gpkg_export_can_create_one_file_per_layer(self):
         with tempfile.TemporaryDirectory() as temp_dir:

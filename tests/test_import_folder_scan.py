@@ -151,10 +151,14 @@ class ImportFolderScanTests(unittest.TestCase):
 
         parameters[0].value = "Vienti"
         parameters[0].valueAsText = "Vienti"
+        parameters[1].values = [r"C:\data\old.gpkg"]
+        parameters[15].values = ["Vanha taso"]
         self.tool.updateParameters(parameters)
 
         self.assertEqual(parameters[1].parameterType, "Optional")
         self.assertEqual(parameters[15].parameterType, "Optional")
+        self.assertEqual(parameters[1].values, [])
+        self.assertEqual(parameters[15].values, [])
 
     def test_missing_input_error_is_applied_only_to_active_mode(self):
         class Parameter:

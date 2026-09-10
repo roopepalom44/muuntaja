@@ -82,6 +82,7 @@ class UniversalImportTool(object):
         self._import_expansion_cache_key = None
         self._import_expansion_cache_value = None
         self._export_layer_sources = {}
+        self._export_layer_choices_initialized = False
         self._last_operation_mode = None
 
     def getParameterInfo(self):
@@ -340,11 +341,10 @@ class UniversalImportTool(object):
         if mode_changed:
             # Tiedostopolut ja checkbox-listan tasovalinnat eivät ole
             # keskenään yhteensopivia.
-            try:
-                p_input.values = None
-                p_export_layers.values = None
-            except Exception:
-                pass
+            self._clear_multivalue_parameter(p_input)
+            self._clear_multivalue_parameter(p_export_layers)
+            self._export_layer_sources = {}
+            self._export_layer_choices_initialized = False
             raw_paths = []
 
         # UI-suorituskyky: vältä kansioiden sisältöjen laajaa skannausta jokaisella näppäilyllä/dragilla.
@@ -354,7 +354,17 @@ class UniversalImportTool(object):
             else:
                 paths = list(raw_paths)
         else:
-            paths = self._configure_export_layer_choices(p_export_layers, raw_paths)
+            # Rakennetaan dynaaminen valintalista vain kerran vientimoodiin
+            # siirryttäessä. Sen kirjoittaminen jokaisella ArcGIS Pron
+            # validaatiokierroksella voi laukaista kontrollin uudelleen ja
+            # joissain Pro-versioissa kaataa koko sovelluksen.
+            if mode_changed or not self._export_layer_choices_initialized:
+                paths = self._configure_export_layer_choices(
+                    p_export_layers,
+                    [] if mode_changed else raw_paths,
+                )
+            else:
+                paths = self._export_paths_from_param(p_export_layers, raw_paths)
         has_dfsu = any(str(p).lower().endswith(".dfsu") for p in paths) if paths else False
         has_dwg = (
             any(self._path_contains_extension(p, (".dwg", ".dxf")) for p in paths)
@@ -471,11 +481,11 @@ class UniversalImportTool(object):
                     p_cad_label.value = None
                 cur_multi = self._multi_value_strings(p_cad_attr_fields)
                 keep = [x for x in opts if x in cur_multi]
-                p_cad_attr_fields.values = keep if keep else None
+                p_cad_attr_fields.values = keep if keep else []
             else:
                 p_cad_label.filter.list = []
                 p_cad_attr_fields.filter.list = []
-                p_cad_attr_fields.values = None
+                p_cad_attr_fields.values = []
             
             # DFSU-suodatin pois päältä viennissä
             p_dfsu_filter_en.enabled = False
@@ -992,6 +1002,21 @@ class UniversalImportTool(object):
                     out.append(s)
         return out
 
+    def _clear_multivalue_parameter(self, param):
+        """Tyhjennä moniarvoparametri ArcGIS Pron vakaalla tavalla.
+
+        ``None`` ei ole multivalue-parametrin arvo vaan puuttuva objektiarvo,
+        ja sen asettaminen dynaamiselle GPString-kontrollille on aiheuttanut
+        Prossa kaatumisia. Tyhjä lista on ArcGISin dokumentoitu muoto.
+        """
+        try:
+            param.values = []
+        except Exception:
+            try:
+                param.value = None
+            except Exception:
+                pass
+
     def _ensure_project_default_output_location(self, param):
         """Aseta tuonnin oletuskohteeksi aktiivisen projektin oletus-GDB.
 
@@ -1061,10 +1086,11 @@ class UniversalImportTool(object):
                 selected_labels.append(label)
 
         try:
-            param.values = selected_labels if selected_labels else None
+            param.values = selected_labels if selected_labels else []
         except Exception:
             pass
 
+        self._export_layer_choices_initialized = True
         return [self._export_layer_sources[label] for label in selected_labels]
 
     def _list_export_layer_options(self):

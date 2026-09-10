@@ -3,7 +3,9 @@
 **Muuntaja** on ArcGIS Pro Add-In -laajennus, joka on suunniteltu helpottamaan erilaisten tiedostomuotojen (kuten CAD, GPX, KML jne.) tuomista ja viemistä ArcGIS Pro -ympäristössä. Se tarjoaa käyttäjäystävällisen käyttöliittymän aineistojen nopeaan kääntämiseen ja siirtämiseen.
 
 ## Ominaisuudet
-- **Tiedostojen muuntaminen:** Tuo CAD-, GPX- ja KML-aineistoja suoraan projektiin.
+- **Tiedostojen muuntaminen:** Tuo CAD-, GPKG-, Shapefile-, GeoJSON-, GPX-, KML/KMZ- ja DFSU-aineistoja suoraan projektiin.
+- **Kansiotuonti:** Anna tuonnissa yhden kansion polku. Muuntaja käy kansion ja sen alikansiot läpi, tunnistaa kaikki tuetut tiedostomuodot ja lisää muunnetut tasot työtilaan.
+- **Tasovalinta viennissä:** Vientitilassa aktiivisen kartan feature-tasot näkyvät valintaruutulistana, josta vietävät tasot voi rastittaa.
 - **Integrointi ArcGIS Prohon:** Laajennus lisää ArcGIS Pron käyttöliittymään oman välilehden / painikkeen (Muuntaja), josta työkalun saa nopeasti auki.
 - **Python-työkalulaatikko:** Sisältää `Muuntaja.pyt`-työkalulaatikon geokäsittelytehtäviä varten.
 
@@ -16,7 +18,8 @@
 1. Käynnistä ArcGIS Pro.
 2. Siirry Add-In (tai Muuntaja) -välilehdelle.
 3. Klikkaa **Muuntaja**-painiketta avataksesi työkalun.
-4. Työkalu mahdollistaa tiedostojen (esim. CAD ja KML) lukemisen ja viemisen.
+4. Valitse tuonnissa joko tiedostoja tai kansio. Kansiota käytettäessä kansioon voi kerätä eri muotoja sekaisin; Muuntaja skannaa myös alikansiot, ohittaa Shapefilen sivutiedostot (DBF/SHX/PRJ) ja tuo jokaisen varsinaisen aineiston erikseen.
+5. Valitse viennissä aktiivisen kartan tasot valintaruuduista ja määritä vientiformaatti sekä vientikansio.
 
 ## Tekninen kuvaus
 - **Kehitysympäristö:** .NET 8.0 (WPF), C#

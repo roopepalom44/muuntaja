@@ -34,6 +34,9 @@ EXPORT_FORMAT_TO_EXT = {
     "KMZ": ".kmz",
 }
 EXPORT_FORMAT_LIST = list(EXPORT_FORMAT_TO_EXT.keys())
+# ArcGIS Pron multivalue-string-ohjain, jossa vaihtoehdot näkyvät
+# valintaruutuina ja mukana on myös Select All -painike.
+EXPORT_LAYER_CHECKBOX_CONTROL_CLSID = "{38C34610-C7F7-11D5-A693-0008C711C8C1}"
 
 # AutoCAD Index Color → RGB — osajoukko Euclidean-lähimmäistä määritystä Esri-symbolin väreille (Color-kenttä).
 _CAD_ACI_SAMPLES = (
@@ -53,13 +56,23 @@ class UniversalImportTool(object):
         self.label = "Muuntaja"
         self.description = (
             "Tuonti tai vienti — syötteenä voi valita useita rivejä (checkbox-monivalinta). "
-            "Tuonti: tiedostosta GDB:hen (CAD, GPKG, GeoJSON, KML, GPX, DFSU). DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
+            "Tuonti: valitse tiedostoja tai kansio; kansio skannataan myös alikansioineen ja kaikki tuetut muodot "
+            "tuodaan tiedosto kerrallaan GDB:hen (CAD, GPKG, GeoJSON, KML, GPX, DFSU ja Shapefile). "
+            "DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
+            "Vienti: aktiivisen kartan feature-tasot valitaan valintaruutulistasta. "
             "CAD-vienti: tekstit (TxtValue), symbologia ja attribuuttitaulukko DWG/DXF:ään. "
             "Muut viennit: GeoJSON, Shapefile, GPKG (samassa paketissa), KML."
         )
         self.canRunInBackground = False
         # DFSU-sarakelistan cache UI:lle (polku+mtime -> sarakkeet); updateParameters kutsuu usein.
         self._dfsu_col_cache = {}
+        # Kansiopolkujen laajennus cachetetaan UI-päivitysten ajaksi. Varsinainen
+        # suoritus tekee aina tuoreen skannauksen, jotta ajon aikana lisätyt
+        # tiedostotkin tulevat mukaan.
+        self._import_expansion_cache_key = None
+        self._import_expansion_cache_value = None
+        self._export_layer_sources = {}
+        self._last_operation_mode = None
 
     def getParameterInfo(self):
         # 0. Mitä haluat tehdä? (MODE) — tuonti tai vienti
@@ -76,9 +89,9 @@ class UniversalImportTool(object):
         ]
         param0.value = "Tuonti (gpkg, geojson, json, kml, kmz, gpx, dwg, dxf, dfsu, shp)"
 
-        # 1. Syöte: mode ohjaa mitä voidaan valita (tuonti: tiedosto/kansio, vienti: taso/FC)
+        # 1. Tuonnin syöte: tiedosto(t) tai kansio(t)
         param1 = arcpy.Parameter(
-            displayName="Syöte - valitse tiedosto tai kansio",
+            displayName="Syöte - tiedosto(t) tai kansio(t) (kansio skannataan alikansioineen)",
             name="input_file",
             datatype=["DEFile", "DEFolder", "DEFeatureClass", "DEFeatureDataset", "DECadDrawingDataset", "GPFeatureLayer"],
             parameterType="Required",
@@ -250,7 +263,22 @@ class UniversalImportTool(object):
             direction="Input")
         param14.enabled = False
 
-        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14]
+        # 15. Vientiin vietävät aktiivisen kartan tasot. Tämä on erillinen
+        # parametri, jotta tuonnin tiedosto-/kansioselainparametrin datatypea
+        # ei tarvitse vaihtaa kesken ArcGIS Pron validoinnin.
+        param15 = arcpy.Parameter(
+            displayName="Vienti - valitse mukaan vietävät tasot",
+            name="export_layers",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+        param15.multiValue = True
+        param15.filter.type = "ValueList"
+        param15.filter.list = []
+        param15.controlCLSID = EXPORT_LAYER_CHECKBOX_CONTROL_CLSID
+        param15.enabled = False
+
+        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15]
 
     def updateParameters(self, parameters):
         """Mode-perustainen parametrienhallinta: tuonti vs. vienti sekä DFSU-suodatin."""
@@ -270,27 +298,48 @@ class UniversalImportTool(object):
         p_dfsu_filter_col = parameters[12] # DFSU: column
         p_dfsu_filter_op = parameters[13]  # DFSU: operator
         p_dfsu_filter_val = parameters[14] # DFSU: value
+        p_export_layers = parameters[15]  # Vienti: checkbox-lista tasoille
         
         # Lue käyttäjän valittu moodi
         mode = (p_mode.valueAsText or "Tuonti").strip()
         is_import = mode.startswith("Tuonti")
         
         # Tuonti-/vientiparametrit
-        raw_paths = self._input_paths_from_param(p_input)
+        selection_param = p_input if is_import else p_export_layers
+        raw_paths = self._input_paths_from_param(selection_param)
+        mode_changed = (
+            self._last_operation_mode is not None
+            and mode != self._last_operation_mode
+        )
+        if mode_changed:
+            # Tiedostopolut ja checkbox-listan tasovalinnat eivät ole
+            # keskenään yhteensopivia.
+            try:
+                p_input.values = None
+                p_export_layers.values = None
+            except Exception:
+                pass
+            raw_paths = []
+
         # UI-suorituskyky: vältä kansioiden sisältöjen laajaa skannausta jokaisella näppäilyllä/dragilla.
-        if is_import and any(os.path.isdir(p) for p in raw_paths):
-            paths = self._expand_import_paths(raw_paths)
+        if is_import:
+            if any(os.path.isdir(p) for p in raw_paths):
+                paths = self._expand_import_paths(raw_paths, use_cache=True)
+            else:
+                paths = list(raw_paths)
         else:
-            paths = list(raw_paths)
+            paths = self._configure_export_layer_choices(p_export_layers, raw_paths)
         has_dfsu = any(str(p).lower().endswith(".dfsu") for p in paths) if paths else False
-        has_dwg = any(self._path_contains_extension(p, (".dwg", ".dxf")) for p in paths) if paths else False
+        has_dwg = (
+            any(self._path_contains_extension(p, (".dwg", ".dxf")) for p in paths)
+            if is_import
+            else bool(paths)
+        )
        
         # ===== TUONTI-HAARA =====
         if is_import:
-            try:
-                p_input.datatype = ["DEFile", "DEFolder", "DEFeatureClass", "DEFeatureDataset", "DECadDrawingDataset"]
-            except Exception:
-                pass
+            p_input.enabled = True
+            p_export_layers.enabled = False
 
             p_output_loc.enabled = True
             p_output_loc.parameterType = "Optional"
@@ -355,11 +404,8 @@ class UniversalImportTool(object):
         
         # ===== VIENTI-HAARA =====
         else:
-            try:
-                p_input.datatype = ["DEFeatureClass", "GPFeatureLayer"]
-            except Exception:
-                pass
-
+            p_input.enabled = False
+            p_export_layers.enabled = True
             p_output_loc.enabled = False
             p_output_loc.parameterType = "Optional"
             p_mapper.enabled = False
@@ -370,7 +416,7 @@ class UniversalImportTool(object):
             p_export_fmt.enabled = True
             p_export_fmt.parameterType = "Required"
             
-            # CAD-parametrit näkyvät vain CAD-viennissä ja jos on CAD-tiedostoja valittuna
+            # CAD-parametrit näkyvät CAD-viennissä, kun vähintään yksi taso on valittu
             fmt_cad = (p_export_fmt.valueAsText or "").strip() in ("DWG", "DXF")
             p_cad_label.enabled = fmt_cad and has_dwg
             p_cad_emit_table.enabled = fmt_cad and has_dwg
@@ -381,7 +427,7 @@ class UniversalImportTool(object):
             p_dfsu_filter_col.enabled = False
             p_dfsu_filter_op.enabled = False
             p_dfsu_filter_val.enabled = False
-            
+
             if fmt_cad and has_dwg and paths:
                 opts = self._common_label_field_options(paths)
                 p_cad_label.filter.list = opts
@@ -405,6 +451,8 @@ class UniversalImportTool(object):
             p_dfsu_filter_col.filter.list = []
             p_dfsu_filter_op.enabled = False
             p_dfsu_filter_val.enabled = False
+
+        self._last_operation_mode = mode
 
     def _common_label_field_options(self, export_paths):
         """Palauta valittujen tasojen yhteiset kentät dropdowniin (aakkosjärjestys)."""
@@ -718,15 +766,23 @@ class UniversalImportTool(object):
         p_cad_label = parameters[8]
         p_cad_emit_table = parameters[9]
         p_cad_attr_fields = parameters[10]
+        p_export_layers = parameters[15]
         
         mode = (p_mode.valueAsText or "Tuonti").strip()
         is_import = mode.startswith("Tuonti")
         
-        paths = self._input_paths_from_param(p_input)
+        selection_param = p_input if is_import else p_export_layers
+        raw_paths = self._input_paths_from_param(selection_param)
+        if is_import:
+            paths = raw_paths
+            import_paths = self._expand_import_paths(paths, use_cache=True)
+        else:
+            paths = self._export_paths_from_param(p_export_layers, raw_paths)
+            import_paths = []
         # Tuontitilassa vältetään raskaat Describe-kutsut UI-vaiheessa (sujuvampi drag/drop).
         if not is_import:
-            if self._bulk_operation_mode(paths) == "mixed":
-                p_input.setErrorMessage(
+            if self._bulk_export_mode(paths) != "export":
+                p_export_layers.setErrorMessage(
                     "Älä sekoita tuontitiedostoja ja vientitason valintoja samaan ajoon — valitse joko pelkkiä tiedostoja "
                     "tai pelkkiä tasoja/feature classeja."
                 )
@@ -783,17 +839,17 @@ class UniversalImportTool(object):
                     d = arcpy.Describe(pv)
                     dt = (d.dataType or "").upper()
                     if dt not in ("FEATURECLASS", "FEATURELAYER", "SHAPEFILE"):
-                        p_input.setErrorMessage(
+                        p_export_layers.setErrorMessage(
                             f"Vienti — '{pv}': tyyppi ei ole pisteviiva/alue (nykyinen tyyppi: {d.dataType})."
                         )
                         return
                     if not getattr(d, "shapeFieldName", None):
-                        p_input.setErrorMessage(
+                        p_export_layers.setErrorMessage(
                             f"Vienti — '{pv}': geometriaa ei ole (pelkkä taulu ei kelpaa)."
                         )
                         return
                 except Exception as e:
-                    p_input.setErrorMessage(f"Syötettä ei voitu tulkita tasoksi ({pv}): {e}")
+                    p_export_layers.setErrorMessage(f"Syötettä ei voitu tulkita tasoksi ({pv}): {e}")
         
         # TUONTI-VALIDOINTI
         else:
@@ -816,7 +872,9 @@ class UniversalImportTool(object):
                         + ")."
                     )
                     return
-            if any(str(p).lower().endswith(".dfsu") for p in paths):
+            # Kansiosyöte on jo laajennettu tiedostoiksi, jotta myös alikansioiden
+            # DFSU-tiedostot saavat saman validoinnin kuin yksittäin valitut tiedostot.
+            if any(str(p).lower().endswith(".dfsu") for p in import_paths):
                 dfsu_filter_enabled = bool(parameters[11].value)
                 dfsu_filter_column = (parameters[12].valueAsText or "").strip()
                 if dfsu_filter_enabled and not dfsu_filter_column:
@@ -828,26 +886,29 @@ class UniversalImportTool(object):
 
     def execute(self, parameters, messages):
         p_input = parameters[1]  # Input file/layer is now at index 1 (after mode parameter)
-        paths = self._input_paths_from_param(p_input)
+        p_export_layers = parameters[15]
         mode_param = (parameters[0].valueAsText or "Tuonti").strip()
         is_import_mode = mode_param.startswith("Tuonti")
+        selection_param = p_input if is_import_mode else p_export_layers
+        raw_paths = self._input_paths_from_param(selection_param)
+        paths = raw_paths if is_import_mode else self._export_paths_from_param(p_export_layers, raw_paths)
         if not paths:
             self.log(messages, "Syöte puuttuu (valitse vähintään yksi tiedosto tai taso).", "ERROR")
             return
 
-        detected_mode = self._bulk_operation_mode(paths)
-        if detected_mode == "mixed":
-            self.log(
-                messages,
-                "Sekoitettu syöte: älä yhdistä tuontitiedostoja ja vientitasoja samaan ajoon.",
-                "ERROR",
-            )
-            return
-
-        if is_import_mode and detected_mode != "import":
-            self.log(messages, "Tuonti-tilassa syötteen pitää olla tiedostoja tai kansioita.", "ERROR")
-            return
-        if (not is_import_mode) and detected_mode != "export":
+        if is_import_mode:
+            detected_mode = self._bulk_operation_mode(paths)
+            if detected_mode == "mixed":
+                self.log(
+                    messages,
+                    "Sekoitettu syöte: älä yhdistä tuontitiedostoja ja vientitasoja samaan ajoon.",
+                    "ERROR",
+                )
+                return
+            if detected_mode != "import":
+                self.log(messages, "Tuonti-tilassa syötteen pitää olla tiedostoja tai kansioita.", "ERROR")
+                return
+        elif self._bulk_export_mode(paths) != "export":
             self.log(messages, "Vienti-tilassa syötteen pitää olla karttatasoja tai feature classeja.", "ERROR")
             return
 
@@ -879,31 +940,261 @@ class UniversalImportTool(object):
                     out.append(s)
         return out
 
-    def _list_supported_import_files(self, folder_path):
-        """Palauta kansion tuetut tuontitiedostot (ei rekursiivinen)."""
+    def _configure_export_layer_choices(self, param, previous_values=None):
+        """Täytä vientiparametrin checkbox-lista aktiivisen kartan tasoilla.
+
+        Parametrin arvot ovat käyttöliittymässä tasojen nimiä, mutta vientiin
+        palautetaan niiden catalogPath-polut. Näin pitkä GDB-polku ei täytä
+        valintalistaa ja samannimiset tasot voidaan silti näyttää erillisinä
+        vaihtoehtoina.
+        """
+        if previous_values is None:
+            previous_values = self._input_paths_from_param(param)
+
+        options = self._list_export_layer_options()
+        labels = [label for label, _source in options]
+        self._export_layer_sources = {label: source for label, source in options}
+
         try:
-            out = []
-            for entry in sorted(os.listdir(folder_path)):
-                full_path = os.path.join(folder_path, entry)
-                if not os.path.isfile(full_path):
+            param.filter.type = "ValueList"
+            param.filter.list = labels
+        except Exception:
+            pass
+
+        # Säilytä jo tehdyt valinnat, jos karttaa tai parametria päivitetään.
+        # Ensimmäisellä vientitilaan siirtymisellä lista jätetään tyhjäksi,
+        # jotta käyttäjä päättää itse vietävät tasot.
+        selected_labels = []
+        source_to_label = {}
+        for label, source in options:
+            source_to_label.setdefault(self._export_path_key(source), label)
+        label_set = set(labels)
+        for value in previous_values or []:
+            value = str(value).strip()
+            if not value:
+                continue
+            if value in label_set:
+                label = value
+            else:
+                label = source_to_label.get(self._export_path_key(value))
+            if label and label not in selected_labels:
+                selected_labels.append(label)
+
+        try:
+            param.values = selected_labels if selected_labels else None
+        except Exception:
+            pass
+
+        return [self._export_layer_sources[label] for label in selected_labels]
+
+    def _list_export_layer_options(self):
+        """Palauta aktiivisen kartan vietävät feature layerit TOC-järjestyksessä."""
+        options = []
+        try:
+            aprx = arcpy.mp.ArcGISProject("CURRENT")
+            active_map = getattr(aprx, "activeMap", None)
+            maps = [active_map] if active_map else list(aprx.listMaps() or [])
+        except Exception:
+            return options
+
+        for current_map in maps:
+            if not current_map:
+                continue
+            try:
+                layers = current_map.listLayers()
+            except Exception:
+                continue
+            self._collect_export_layer_options(layers, (), options)
+
+        # Varmista uniikit näytettävät nimet myös silloin, kun kaksi tasoa on
+        # samanniminen tai sama taso on lisätty kartalle useammin kuin kerran.
+        used = {}
+        unique_options = []
+        for base_label, source in options:
+            base_label = base_label or "Taso"
+            count = used.get(base_label, 0) + 1
+            used[base_label] = count
+            label = base_label if count == 1 else f"{base_label} ({count})"
+            while any(existing == label for existing, _ in unique_options):
+                count += 1
+                used[base_label] = count
+                label = f"{base_label} ({count})"
+            unique_options.append((label, source))
+        return unique_options
+
+    def _collect_export_layer_options(self, layers, parents, output):
+        """Kerää feature layerit myös ryhmäkerrosten sisältä."""
+        for layer in layers or []:
+            try:
+                if getattr(layer, "isGroupLayer", False):
+                    group_name = str(getattr(layer, "name", "") or "").strip()
+                    try:
+                        children = layer.listLayers()
+                    except Exception:
+                        children = []
+                    self._collect_export_layer_options(
+                        children,
+                        parents + ((group_name,) if group_name else ()),
+                        output,
+                    )
                     continue
-                if os.path.splitext(entry)[1].lower() in IMPORT_FILE_EXTENSIONS:
-                    out.append(full_path)
-            return out
+                if getattr(layer, "isBasemapLayer", False) or getattr(layer, "isBroken", False):
+                    continue
+            except Exception:
+                continue
+
+            name = str(getattr(layer, "name", "") or "").strip()
+            if not name:
+                name = "Taso"
+
+            is_feature_layer = bool(getattr(layer, "isFeatureLayer", False))
+            desc = None
+            if not is_feature_layer:
+                try:
+                    desc = arcpy.Describe(layer)
+                    data_type = (getattr(desc, "dataType", "") or "").upper()
+                    is_feature_layer = data_type in ("FEATURELAYER", "FEATURECLASS", "SHAPEFILE")
+                except Exception:
+                    is_feature_layer = False
+            if not is_feature_layer:
+                continue
+
+            source = ""
+            try:
+                if desc is None:
+                    desc = arcpy.Describe(layer)
+                source = str(getattr(desc, "catalogPath", "") or "").strip()
+            except Exception:
+                pass
+            if not source:
+                try:
+                    source = str(getattr(layer, "dataSource", "") or "").strip()
+                except Exception:
+                    source = ""
+            if not source:
+                # Layer-nimi toimii viimeisenä fallbackina, koska aktiivisen
+                # kartan layerit voidaan yleensä ratkaista ArcPyssa nimellä.
+                source = name
+
+            path_parts = tuple(part for part in parents if part)
+            display_name = " / ".join(path_parts + (name,))
+            output.append((display_name, source))
+
+    def _export_path_key(self, value):
+        """Normalisoi paikallisen polun vaihtoehtojen säilytystä varten."""
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        try:
+            return os.path.normcase(os.path.normpath(text))
+        except Exception:
+            return text.casefold()
+
+    def _export_paths_from_param(self, param, values=None):
+        """Muunna checkbox-listan näyttöarvot vientiin käytettäviksi poluiksi."""
+        if values is None:
+            values = self._input_paths_from_param(param)
+        sources = getattr(self, "_export_layer_sources", {}) or {}
+        if any(str(value).strip() not in sources for value in values if str(value).strip()):
+            # Normaalisti lista rakennetaan updateParameters()-kutsussa, mutta
+            # fallback tekee suorituksesta kestävän myös silloin, kun työkalu
+            # käynnistetään suoraan ilman edeltävää UI-päivitystä.
+            sources = dict(sources)
+            for label, source in self._list_export_layer_options():
+                sources.setdefault(label, source)
+        return [sources.get(str(value).strip(), str(value).strip()) for value in values if str(value).strip()]
+
+    def _list_supported_import_files(self, folder_path):
+        """Palauta kansion ja sen alikansioiden tuetut tuontitiedostot.
+
+        Skannaus palauttaa vain varsinaiset aineistotiedostot. Esimerkiksi
+        Shapefilen .dbf/.shx/.prj-sivutiedostoja ei palauteta erillisinä
+        syötteinä, koska tuonti käynnistetään aina .shp-tiedostosta.
+        """
+        try:
+            root = os.path.abspath(os.path.normpath(str(folder_path).strip()))
         except Exception:
             return []
 
-    def _expand_import_paths(self, paths):
-        """Laajenna kansiosyötteet tuettuihin tiedostoihin."""
+        if not os.path.isdir(root):
+            return []
+
+        out = []
+        try:
+            for current_root, dir_names, file_names in os.walk(
+                root, topdown=True, followlinks=False
+            ):
+                # Vakioitu järjestys tekee eräajosta toistettavan ja helpottaa
+                # lokin vertaamista seuraavilla ajoilla.
+                dir_names.sort(key=lambda value: (str(value).casefold(), str(value)))
+                file_names.sort(key=lambda value: (str(value).casefold(), str(value)))
+
+                for file_name in file_names:
+                    extension = os.path.splitext(file_name)[1].lower()
+                    if extension not in IMPORT_FILE_EXTENSIONS:
+                        continue
+                    full_path = os.path.join(current_root, file_name)
+                    try:
+                        if os.path.isfile(full_path):
+                            out.append(full_path)
+                    except OSError:
+                        # Yksittäinen lukukelvoton/poistunut tiedosto ei estä
+                        # muun kansion käsittelyä.
+                        continue
+        except (OSError, IOError):
+            return []
+
+        # os.walk tuottaa jo järjestetyn tuloksen, mutta järjestetään vielä
+        # suhteellisen polun mukaan, jotta eri käyttöjärjestelmät käyttäytyvät
+        # samalla tavalla.
+        out.sort(
+            key=lambda value: (
+                os.path.relpath(value, root).casefold(),
+                os.path.relpath(value, root),
+            )
+        )
+        return out
+
+    def _expand_import_paths(self, paths, use_cache=False):
+        """Laajenna kansiosyötteet tuettuihin tiedostoihin ilman duplikaatteja.
+
+        ``use_cache`` on tarkoitettu ArcGIS Pron parametripäivityksiin, joita
+        kutsutaan useita kertoja saman valinnan aikana. Ajon yhteydessä cache
+        ohitetaan, jotta kansio luetaan aina uudelleen.
+        """
+        cache_key = tuple(str(p).strip() for p in (paths or []) if str(p).strip())
+        if use_cache and cache_key == self._import_expansion_cache_key:
+            return list(self._import_expansion_cache_value or [])
+
         expanded = []
+        seen = set()
         for p in paths or []:
             p = str(p).strip()
             if not p:
                 continue
             if os.path.isdir(p):
-                expanded.extend(self._list_supported_import_files(p))
+                candidates = self._list_supported_import_files(p)
             else:
-                expanded.append(p)
+                candidates = [p]
+
+            for candidate in candidates:
+                candidate = str(candidate).strip()
+                if not candidate:
+                    continue
+                try:
+                    identity = os.path.normcase(
+                        os.path.realpath(os.path.abspath(candidate))
+                    )
+                except Exception:
+                    identity = candidate.casefold()
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                expanded.append(candidate)
+
+        if use_cache:
+            self._import_expansion_cache_key = cache_key
+            self._import_expansion_cache_value = list(expanded)
         return expanded
 
     def _multi_value_strings(self, param):
@@ -1007,6 +1298,24 @@ class UniversalImportTool(object):
             return "mixed"
         return "mixed"
 
+    def _classify_export_path(self, path):
+        """Tarkista, onko polku geometrinen feature class/layer vientiä varten."""
+        try:
+            desc = arcpy.Describe(path)
+            data_type = (getattr(desc, "dataType", "") or "").upper()
+            if data_type not in ("FEATURECLASS", "FEATURELAYER", "SHAPEFILE"):
+                return "other"
+            return "export" if getattr(desc, "shapeFieldName", None) else "other"
+        except Exception:
+            return "other"
+
+    def _bulk_export_mode(self, paths):
+        """Palauta 'empty', 'export' tai 'other' vientiin annetuista poluista."""
+        if not paths:
+            return "empty"
+        kinds = [self._classify_export_path(path) for path in paths]
+        return "export" if all(kind == "export" for kind in kinds) else "other"
+
     def _export_combined_stamp_label(self, paths):
         """Tiedostonimi monelle lähteelle (lyhyt yhdistelmä)."""
         if not paths:
@@ -1082,7 +1391,11 @@ class UniversalImportTool(object):
         for raw_path in raw_input_paths:
             if os.path.isdir(raw_path):
                 folder_files = self._list_supported_import_files(raw_path)
-                self.log(messages, f"Tuonti — kansio '{raw_path}' laajennettu: {len(folder_files)} tuettua tiedostoa.")
+                self.log(
+                    messages,
+                    f"Tuonti — kansio '{raw_path}' skannattu alikansioineen: "
+                    f"{len(folder_files)} tuettua tiedostoa.",
+                )
         if not input_paths:
             self.log(messages, "Tuonti: valituista kansioista/tiedostoista ei löytynyt käsiteltäviä tuontitiedostoja.", "ERROR")
             return
@@ -1127,7 +1440,11 @@ class UniversalImportTool(object):
     def _execute_export(self, parameters, messages, input_paths=None):
         """Vienti: yksi tai useampi ArcGIS-taso / FC → tiedosto(t) vientikansioon."""
         if input_paths is None:
-            input_paths = self._input_paths_from_param(parameters[1])  # Index shifted from 0 to 1
+            input_param = parameters[15]
+            input_paths = self._export_paths_from_param(
+                input_param,
+                self._input_paths_from_param(input_param),
+            )  # Index shifted from 0 to 1
         folder = (parameters[6].valueAsText or "").strip()  # Index shifted from 5 to 6
         fmt = (parameters[7].valueAsText or "GPKG").strip()  # Index shifted from 6 to 7
         target_sr = self._spatial_ref_from_param(parameters[5].value)  # Index shifted from 4 to 5
@@ -2861,30 +3178,43 @@ class UniversalImportTool(object):
 
     def _resolve_output_path(self, output_loc, output_name, is_folder):
         """Palauttaa (output_name, check_path) ArcGIS-yhteensopivalla nimellä."""
-        try:
-            validated_name = arcpy.ValidateTableName(output_name, output_loc)
-            if validated_name:
-                output_name = validated_name
-        except Exception:
-            pass
-
-        if is_folder:
-            check_path = os.path.join(output_loc, output_name + ".shp")
-        else:
-            check_path = os.path.join(output_loc, output_name)
-
-        if arcpy.Exists(check_path):
-            output_name = f"{output_name}_{datetime.datetime.now().strftime('%H%M%S')}"
+        def validate_name(candidate):
             try:
-                validated_name = arcpy.ValidateTableName(output_name, output_loc)
-                if validated_name:
-                    output_name = validated_name
+                validated = arcpy.ValidateTableName(candidate, output_loc)
+                if validated:
+                    return validated
             except Exception:
                 pass
+            return candidate
+
+        def build_path(candidate):
             if is_folder:
-                check_path = os.path.join(output_loc, output_name + ".shp")
+                return os.path.join(output_loc, candidate + ".shp")
             else:
-                check_path = os.path.join(output_loc, output_name)
+                return os.path.join(output_loc, candidate)
+
+        output_name = validate_name(str(output_name or "output"))
+        base_name = output_name
+        check_path = build_path(output_name)
+
+        # Kansioajoissa usealla lähteellä voi olla sama tiedostonimi (tai
+        # GPKG:n sisäisillä tasoilla sama nimi). Älä käytä sekuntitason
+        # aikaleimaa, koska monta osumaa voi syntyä saman sekunnin aikana.
+        # Peräkkäinen tunniste tekee jokaisesta tuotoksesta varmasti oman
+        # feature classin eikä aiempaa tuotosta ylikirjoiteta.
+        suffix_number = 2
+        while arcpy.Exists(check_path):
+            suffix = f"_{suffix_number}"
+            candidate_base = base_name[: max(1, 50 - len(suffix))]
+            candidate = validate_name(candidate_base + suffix)
+            candidate_path = build_path(candidate)
+            if candidate_path == check_path:
+                # Jos ValidateTableName lyhentää nimen niin, että tunniste
+                # katoaa, vaihdetaan seuraavaan ehdokkaaseen.
+                candidate = validate_name(f"output_{suffix_number}")
+                candidate_path = build_path(candidate)
+            output_name, check_path = candidate, candidate_path
+            suffix_number += 1
 
         return output_name, check_path
 

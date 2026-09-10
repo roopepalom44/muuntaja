@@ -184,6 +184,27 @@ class ImportFolderScanTests(unittest.TestCase):
 
         self.assertIn("aktiivisen kartan taso", parameters[15].error)
 
+    def test_import_mode_restores_project_default_geodatabase_when_output_is_empty(self):
+        project_gdb = r"C:\project\Project.gdb"
+        self.fake_arcpy.mp = types.SimpleNamespace(
+            ArcGISProject=lambda _: types.SimpleNamespace(defaultGeodatabase=project_gdb)
+        )
+
+        class Parameter:
+            def __init__(self, value=""):
+                self.value = value
+                self.valueAsText = value
+                self.values = None
+                self.enabled = True
+                self.filter = types.SimpleNamespace(list=[])
+
+        parameters = [Parameter("Tuonti"), Parameter(), Parameter()]
+        parameters.extend(Parameter() for _ in range(14))
+
+        self.tool.updateParameters(parameters)
+
+        self.assertEqual(parameters[2].value, project_gdb)
+
     def test_gpkg_export_can_create_one_file_per_layer(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir)

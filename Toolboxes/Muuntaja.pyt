@@ -368,6 +368,7 @@ class UniversalImportTool(object):
             p_export_layers.enabled = False
 
             p_output_loc.enabled = True
+            self._ensure_project_default_output_location(p_output_loc)
             # DWG-parametrit näkyvät vain jos on DWG-tiedostoja
             p_mapper.enabled = has_dwg
             p_input_sr.enabled = has_dwg
@@ -990,6 +991,34 @@ class UniversalImportTool(object):
                 if s:
                     out.append(s)
         return out
+
+    def _ensure_project_default_output_location(self, param):
+        """Aseta tuonnin oletuskohteeksi aktiivisen projektin oletus-GDB.
+
+        ``getParameterInfo`` asettaa oletuksen yleensä jo työkalun avautuessa,
+        mutta ArcGIS Pro voi tyhjentää valinnaisen parametrin moodinvaihdossa.
+        Täytä arvo vain silloin, kun käyttäjä ei ole itse valinnut muuta
+        kohdetta.
+        """
+        try:
+            current = (getattr(param, "valueAsText", None) or "").strip()
+        except Exception:
+            current = ""
+        if current:
+            return
+
+        try:
+            aprx = arcpy.mp.ArcGISProject("CURRENT")
+            default_gdb = str(getattr(aprx, "defaultGeodatabase", "") or "").strip()
+        except Exception:
+            default_gdb = ""
+        if not default_gdb:
+            return
+
+        try:
+            param.value = default_gdb
+        except Exception:
+            pass
 
     def _configure_export_layer_choices(self, param, previous_values=None):
         """Täytä vientiparametrin checkbox-lista aktiivisen kartan tasoilla.

@@ -78,46 +78,37 @@ class ImportFolderScanTests(unittest.TestCase):
             self.assertEqual(name, "roads_3")
             self.assertEqual(Path(path), output_folder / "roads_3.shp")
 
-    def test_export_layer_options_include_group_layers_and_resolve_sources(self):
-        class FakeLayer:
-            def __init__(self, name, source=None, children=None):
-                self.name = name
-                self.dataSource = source or ""
-                self.isGroupLayer = children is not None
-                self.isFeatureLayer = children is None
-                self.isBasemapLayer = False
-                self.isBroken = False
-                self._children = children or []
-
-            def listLayers(self):
-                return self._children
-
-        roads = FakeLayer("Roads", r"C:\data.gdb\roads")
-        grouped_roads = FakeLayer("Roads", r"C:\other.gdb\roads")
-        group = FakeLayer("Transport", children=[grouped_roads])
-        project = types.SimpleNamespace(activeMap=types.SimpleNamespace(listLayers=lambda: [roads, group]))
-        self.fake_arcpy.mp = types.SimpleNamespace(ArcGISProject=lambda _: project)
-        self.fake_arcpy.Describe = lambda layer: types.SimpleNamespace(
-            catalogPath=layer.dataSource,
-            dataType="FeatureLayer",
-            shapeFieldName="Shape",
-        )
-
+    def test_export_layers_use_arcgis_native_multivalue_feature_layer_parameter(self):
         class Filter:
-            type = None
-            list = []
+            def __init__(self):
+                self.type = None
+                self.list = []
 
-        param = types.SimpleNamespace(filter=Filter(), values=None, valueAsText=None)
-        paths = self.tool._configure_export_layer_choices(param)
+        class Parameter:
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+                self.value = None
+                self.values = []
+                self.valueAsText = None
+                self.enabled = True
+                self.multiValue = False
+                self.filter = Filter()
 
-        self.assertEqual(param.filter.list, ["Roads", "Transport / Roads"])
-        self.assertEqual(paths, [])
-
-        param.values = ["Transport / Roads"]
-        self.assertEqual(
-            self.tool._export_paths_from_param(param),
-            [r"C:\other.gdb\roads"],
+        self.fake_arcpy.Parameter = Parameter
+        self.fake_arcpy.mp = types.SimpleNamespace(
+            ArcGISProject=lambda _: types.SimpleNamespace(
+                defaultGeodatabase=r"C:\project\Project.gdb",
+                activeMap=None,
+            )
         )
+
+        parameters = self.tool.getParameterInfo()
+        export_layers = parameters[15]
+
+        self.assertEqual(export_layers.datatype, "GPFeatureLayer")
+        self.assertTrue(export_layers.multiValue)
+        self.assertFalse(export_layers.enabled)
 
     def test_shapefile_source_is_valid_export_input(self):
         self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
@@ -153,8 +144,10 @@ class ImportFolderScanTests(unittest.TestCase):
         parameters[0].valueAsText = "Vienti"
         parameters[1].values = [r"C:\data\old.gpkg"]
         parameters[15].values = ["Vanha taso"]
-        self.tool._list_export_layer_options = lambda: self.fail(
-            "Vientimoodin validaatio ei saa avata aktiivista karttaa"
+        self.fake_arcpy.mp = types.SimpleNamespace(
+            ArcGISProject=lambda _: self.fail(
+                "Vientimoodin vaihto ei saa avata aktiivista karttaa"
+            )
         )
         self.tool.updateParameters(parameters)
 

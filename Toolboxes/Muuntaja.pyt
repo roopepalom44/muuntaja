@@ -64,11 +64,11 @@ class UniversalImportTool(object):
     def __init__(self):
         self.label = "Muuntaja"
         self.description = (
-            "Tuonti tai vienti — syötteenä voi valita useita rivejä (checkbox-monivalinta). "
+            "Tuonti tai vienti — syötteenä voi valita useita tiedostoja tai tasoja. "
             "Tuonti: valitse tiedostoja tai kansio; kansio skannataan myös alikansioineen ja kaikki tuetut muodot "
             "tuodaan tiedosto kerrallaan GDB:hen (CAD, GPKG, GeoJSON, KML, GPX, DFSU ja Shapefile). "
             "DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
-            "Vienti: aktiivisen kartan feature-tasot valitaan valintaruutulistasta. "
+            "Vienti: feature-tasot valitaan ArcGIS Pron omalla monitasovalitsimella. "
             "CAD-vienti: tekstit (TxtValue), symbologia ja attribuuttitaulukko DWG/DXF:ään. "
             "Muut viennit: GeoJSON, Shapefile ja KML taso kerrallaan; GPKG/DWG/DXF-viennissä "
             "usealle tasolle voi valita yhteisen tai oman tiedoston."
@@ -81,8 +81,6 @@ class UniversalImportTool(object):
         # tiedostotkin tulevat mukaan.
         self._import_expansion_cache_key = None
         self._import_expansion_cache_value = None
-        self._export_layer_sources = {}
-        self._export_layer_choices_initialized = False
         self._last_operation_mode = None
 
     def getParameterInfo(self):
@@ -278,23 +276,18 @@ class UniversalImportTool(object):
             direction="Input")
         param14.enabled = False
 
-        # 15. Vientiin vietävät aktiivisen kartan tasot. Tämä on erillinen
-        # parametri, jotta tuonnin tiedosto-/kansioselainparametrin datatypea
-        # ei tarvitse vaihtaa kesken ArcGIS Pron validoinnin.
+        # 15. Vientiin vietävät tasot. ArcGIS Pron oma GPFeatureLayer-
+        # monivalitsin tarjoaa aktiivisen kartan tasot ja selaamisen ilman
+        # omaa arcpy.mp-karttatasojen skannausta. Oma skannaus GP-työkalun
+        # avaus-/validointivaiheessa voi kaataa koko ArcGIS Pro -prosessin.
         param15 = arcpy.Parameter(
             displayName="Vienti - valitse mukaan vietävät tasot",
             name="export_layers",
-            datatype="GPString",
+            datatype="GPFeatureLayer",
             parameterType="Optional",
             direction="Input")
         param15.multiValue = True
-        param15.filter.type = "ValueList"
-        param15.filter.list = []
         param15.enabled = False
-        # Kerää aktiivisen kartan tasot kerran työkalun avautuessa.
-        # arcpy.mp-karttaobjektien avaamista ei tehdä updateParametersissa,
-        # jota ArcGIS Pro kutsuu jokaisesta UI-muutoksesta.
-        self._configure_export_layer_choices(param15, [])
 
         # 16. Usean tason GPKG-/DWG-/DXF-viennin paketointitapa.
         param16 = arcpy.Parameter(
@@ -328,7 +321,7 @@ class UniversalImportTool(object):
         p_dfsu_filter_col = parameters[12] # DFSU: column
         p_dfsu_filter_op = parameters[13]  # DFSU: operator
         p_dfsu_filter_val = parameters[14] # DFSU: value
-        p_export_layers = parameters[15]  # Vienti: checkbox-lista tasoille
+        p_export_layers = parameters[15]  # Vienti: ArcGISin monitasovalitsin
         p_multi_packaging = parameters[16]  # Vienti: GPKG/DWG/DXF-paketointi
         
         # Lue käyttäjän valittu moodi
@@ -343,7 +336,7 @@ class UniversalImportTool(object):
             and mode != self._last_operation_mode
         )
         if mode_changed:
-            # Tiedostopolut ja checkbox-listan tasovalinnat eivät ole
+            # Tiedostopolut ja vientitason valinnat eivät ole
             # keskenään yhteensopivia.
             self._clear_multivalue_parameter(p_input)
             self._clear_multivalue_parameter(p_export_layers)
@@ -363,8 +356,8 @@ class UniversalImportTool(object):
             else:
                 paths = list(raw_paths)
         else:
-            # Valintalista on rakennettu getParameterInfo-vaiheessa. Tässä
-            # vain luetaan valinnat; karttaa ei avata validaatiokierroksella.
+            # ArcGIS Pron oma GPFeatureLayer-monivalitsin palauttaa valitut
+            # tasot suoraan. Karttaa ei avata validaatiokierroksella.
             paths = self._export_paths_from_param(p_export_layers, raw_paths)
         has_dfsu = any(str(p).lower().endswith(".dfsu") for p in paths) if paths else False
         has_dwg = (
@@ -1046,166 +1039,11 @@ class UniversalImportTool(object):
         except Exception:
             pass
 
-    def _configure_export_layer_choices(self, param, previous_values=None):
-        """Täytä vientiparametrin valintalista aktiivisen kartan tasoilla.
-
-        Parametrin arvot ovat käyttöliittymässä tasojen nimiä, mutta vientiin
-        palautetaan niiden catalogPath-polut. Näin pitkä GDB-polku ei täytä
-        valintalistaa ja samannimiset tasot voidaan silti näyttää erillisinä
-        vaihtoehtoina. Metodia kutsutaan vain työkalun alustuksessa, ei
-        updateParameters-validaatiokierrokselta.
-        """
-        if previous_values is None:
-            previous_values = self._input_paths_from_param(param)
-
-        options = self._list_export_layer_options()
-        labels = [label for label, _source in options]
-        self._export_layer_sources = {label: source for label, source in options}
-
-        try:
-            param.filter.type = "ValueList"
-            param.filter.list = labels
-        except Exception:
-            pass
-
-        # Säilytä jo tehdyt valinnat, jos karttaa tai parametria päivitetään.
-        # Ensimmäisellä vientitilaan siirtymisellä lista jätetään tyhjäksi,
-        # jotta käyttäjä päättää itse vietävät tasot.
-        selected_labels = []
-        source_to_label = {}
-        for label, source in options:
-            source_to_label.setdefault(self._export_path_key(source), label)
-        label_set = set(labels)
-        for value in previous_values or []:
-            value = str(value).strip()
-            if not value:
-                continue
-            if value in label_set:
-                label = value
-            else:
-                label = source_to_label.get(self._export_path_key(value))
-            if label and label not in selected_labels:
-                selected_labels.append(label)
-
-        try:
-            param.values = selected_labels if selected_labels else []
-        except Exception:
-            pass
-
-        self._export_layer_choices_initialized = True
-        return [self._export_layer_sources[label] for label in selected_labels]
-
-    def _list_export_layer_options(self):
-        """Palauta aktiivisen kartan vietävät feature layerit TOC-järjestyksessä."""
-        options = []
-        try:
-            aprx = arcpy.mp.ArcGISProject("CURRENT")
-            active_map = getattr(aprx, "activeMap", None)
-            maps = [active_map] if active_map else list(aprx.listMaps() or [])
-        except Exception:
-            return options
-
-        for current_map in maps:
-            if not current_map:
-                continue
-            try:
-                layers = current_map.listLayers()
-            except Exception:
-                continue
-            self._collect_export_layer_options(layers, (), options)
-
-        # Varmista uniikit näytettävät nimet myös silloin, kun kaksi tasoa on
-        # samanniminen tai sama taso on lisätty kartalle useammin kuin kerran.
-        used = {}
-        unique_options = []
-        for base_label, source in options:
-            base_label = base_label or "Taso"
-            count = used.get(base_label, 0) + 1
-            used[base_label] = count
-            label = base_label if count == 1 else f"{base_label} ({count})"
-            while any(existing == label for existing, _ in unique_options):
-                count += 1
-                used[base_label] = count
-                label = f"{base_label} ({count})"
-            unique_options.append((label, source))
-        return unique_options
-
-    def _collect_export_layer_options(self, layers, parents, output):
-        """Kerää feature layerit myös ryhmäkerrosten sisältä."""
-        for layer in layers or []:
-            try:
-                if getattr(layer, "isGroupLayer", False):
-                    group_name = str(getattr(layer, "name", "") or "").strip()
-                    try:
-                        children = layer.listLayers()
-                    except Exception:
-                        children = []
-                    self._collect_export_layer_options(
-                        children,
-                        parents + ((group_name,) if group_name else ()),
-                        output,
-                    )
-                    continue
-                if getattr(layer, "isBasemapLayer", False) or getattr(layer, "isBroken", False):
-                    continue
-            except Exception:
-                continue
-
-            name = str(getattr(layer, "name", "") or "").strip()
-            if not name:
-                name = "Taso"
-
-            is_feature_layer = bool(getattr(layer, "isFeatureLayer", False))
-            desc = None
-            if not is_feature_layer:
-                try:
-                    desc = arcpy.Describe(layer)
-                    data_type = (getattr(desc, "dataType", "") or "").upper()
-                    is_feature_layer = data_type in ("FEATURELAYER", "FEATURECLASS", "SHAPEFILE")
-                except Exception:
-                    is_feature_layer = False
-            if not is_feature_layer:
-                continue
-
-            source = ""
-            try:
-                if desc is None:
-                    desc = arcpy.Describe(layer)
-                source = str(getattr(desc, "catalogPath", "") or "").strip()
-            except Exception:
-                pass
-            if not source:
-                try:
-                    source = str(getattr(layer, "dataSource", "") or "").strip()
-                except Exception:
-                    source = ""
-            if not source:
-                # Layer-nimi toimii viimeisenä fallbackina, koska aktiivisen
-                # kartan layerit voidaan yleensä ratkaista ArcPyssa nimellä.
-                source = name
-
-            path_parts = tuple(part for part in parents if part)
-            display_name = " / ".join(path_parts + (name,))
-            output.append((display_name, source))
-
-    def _export_path_key(self, value):
-        """Normalisoi paikallisen polun vaihtoehtojen säilytystä varten."""
-        text = str(value or "").strip()
-        if not text:
-            return ""
-        try:
-            return os.path.normcase(os.path.normpath(text))
-        except Exception:
-            return text.casefold()
-
     def _export_paths_from_param(self, param, values=None):
-        """Muunna checkbox-listan näyttöarvot vientiin käytettäviksi poluiksi."""
+        """Palauta ArcGIS Pron GPFeatureLayer-monivalitsimen tasot listana."""
         if values is None:
             values = self._input_paths_from_param(param)
-        sources = getattr(self, "_export_layer_sources", {}) or {}
-        # Tuntematon arvo voi olla suoraan annettu catalogPath (esimerkiksi
-        # Pythonista ajettuna). Tässä ei koskaan avata arcpy.mp-karttaobjekteja.
-        return [sources.get(str(value).strip(), str(value).strip()) for value in values if str(value).strip()]
+        return [str(value).strip() for value in values if str(value).strip()]
 
     def _list_supported_import_files(self, folder_path):
         """Palauta kansion ja sen alikansioiden tuetut tuontitiedostot.

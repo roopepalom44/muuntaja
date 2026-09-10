@@ -34,14 +34,19 @@ EXPORT_FORMAT_TO_EXT = {
     "KMZ": ".kmz",
 }
 EXPORT_FORMAT_LIST = list(EXPORT_FORMAT_TO_EXT.keys())
-# Usean tason GPKG-viennin paketointitavat. Yhteinen paketti säilyttää
-# nykyisen oletustoiminnan.
-GPKG_EXPORT_PACKAGING_COMBINED = "Kaikki tasot samaan GPKG-tiedostoon"
-GPKG_EXPORT_PACKAGING_SEPARATE = "Oma GPKG jokaiselle tasolle"
-GPKG_EXPORT_PACKAGING_OPTIONS = [
-    GPKG_EXPORT_PACKAGING_COMBINED,
-    GPKG_EXPORT_PACKAGING_SEPARATE,
+# Usean tason GPKG-/DWG-/DXF-viennin paketointitavat. Yhteinen tiedosto
+# säilyttää nykyisen oletustoiminnan.
+MULTI_EXPORT_PACKAGING_COMBINED = "Kaikki tasot yhteen tiedostoon"
+MULTI_EXPORT_PACKAGING_SEPARATE = "Oma tiedosto jokaiselle tasolle"
+MULTI_EXPORT_PACKAGING_OPTIONS = [
+    MULTI_EXPORT_PACKAGING_COMBINED,
+    MULTI_EXPORT_PACKAGING_SEPARATE,
 ]
+MULTI_EXPORT_PACKAGING_FORMATS = ("GPKG", "DWG", "DXF")
+# Shapefilen dBASE-attribuuttitaulun rajoitus on 4 000 tavua/rivi. Jätetään
+# pieni varmuusvara ArcGISin omille kenttämäärittelyille.
+SHAPEFILE_MAX_RECORD_LENGTH = 4000
+SHAPEFILE_SAFE_RECORD_LENGTH = SHAPEFILE_MAX_RECORD_LENGTH - 100
 # ArcGIS Pron multivalue-string-ohjain, jossa vaihtoehdot näkyvät
 # valintaruutuina ja mukana on myös Select All -painike.
 EXPORT_LAYER_CHECKBOX_CONTROL_CLSID = "{38C34610-C7F7-11D5-A693-0008C711C8C1}"
@@ -69,7 +74,8 @@ class UniversalImportTool(object):
             "DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
             "Vienti: aktiivisen kartan feature-tasot valitaan valintaruutulistasta. "
             "CAD-vienti: tekstit (TxtValue), symbologia ja attribuuttitaulukko DWG/DXF:ään. "
-            "Muut viennit: GeoJSON, Shapefile, GPKG (usealle tasolle yhteinen tai oma paketti), KML."
+            "Muut viennit: GeoJSON, Shapefile ja KML taso kerrallaan; GPKG/DWG/DXF-viennissä "
+            "usealle tasolle voi valita yhteisen tai oman tiedoston."
         )
         self.canRunInBackground = False
         # DFSU-sarakelistan cache UI:lle (polku+mtime -> sarakkeet); updateParameters kutsuu usein.
@@ -286,16 +292,16 @@ class UniversalImportTool(object):
         param15.controlCLSID = EXPORT_LAYER_CHECKBOX_CONTROL_CLSID
         param15.enabled = False
 
-        # 16. Usean tason GPKG-viennin paketointitapa.
+        # 16. Usean tason GPKG-/DWG-/DXF-viennin paketointitapa.
         param16 = arcpy.Parameter(
-            displayName="Vienti: GPKG-paketointi (useita tasoja)",
-            name="gpkg_export_packaging",
+            displayName="Vienti: monitasoviennin paketointi (GPKG/DWG/DXF)",
+            name="multi_export_packaging",
             datatype="GPString",
             parameterType="Optional",
             direction="Input")
         param16.filter.type = "ValueList"
-        param16.filter.list = GPKG_EXPORT_PACKAGING_OPTIONS
-        param16.value = GPKG_EXPORT_PACKAGING_COMBINED
+        param16.filter.list = MULTI_EXPORT_PACKAGING_OPTIONS
+        param16.value = MULTI_EXPORT_PACKAGING_COMBINED
         param16.enabled = False
 
         return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16]
@@ -319,7 +325,7 @@ class UniversalImportTool(object):
         p_dfsu_filter_op = parameters[13]  # DFSU: operator
         p_dfsu_filter_val = parameters[14] # DFSU: value
         p_export_layers = parameters[15]  # Vienti: checkbox-lista tasoille
-        p_gpkg_packaging = parameters[16]  # Vienti: usean tason GPKG-paketointi
+        p_multi_packaging = parameters[16]  # Vienti: GPKG/DWG/DXF-paketointi
         
         # Lue käyttäjän valittu moodi
         mode = (p_mode.valueAsText or "Tuonti").strip()
@@ -378,8 +384,8 @@ class UniversalImportTool(object):
             p_cad_label.enabled = False
             p_cad_emit_table.enabled = False
             p_cad_attr_fields.enabled = False
-            p_gpkg_packaging.enabled = False
-            p_gpkg_packaging.parameterType = "Optional"
+            p_multi_packaging.enabled = False
+            p_multi_packaging.parameterType = "Optional"
             
             # DFSU-suodatin näkyy vain DFSU-tuonnissa
             if has_dfsu:
@@ -442,17 +448,18 @@ class UniversalImportTool(object):
             p_export_folder.parameterType = "Required"
             p_export_fmt.enabled = True
             p_export_fmt.parameterType = "Required"
-            p_gpkg_packaging.parameterType = "Optional"
-            p_gpkg_packaging.enabled = (
-                (p_export_fmt.valueAsText or "").strip() == "GPKG"
+            p_multi_packaging.parameterType = "Optional"
+            current_fmt = (p_export_fmt.valueAsText or "").strip()
+            p_multi_packaging.enabled = (
+                current_fmt in MULTI_EXPORT_PACKAGING_FORMATS
                 and len(paths) > 1
             )
-            if p_gpkg_packaging.enabled:
-                p_gpkg_packaging.filter.type = "ValueList"
-                p_gpkg_packaging.filter.list = GPKG_EXPORT_PACKAGING_OPTIONS
-                current_packaging = (p_gpkg_packaging.valueAsText or "").strip()
-                if current_packaging not in GPKG_EXPORT_PACKAGING_OPTIONS:
-                    p_gpkg_packaging.value = GPKG_EXPORT_PACKAGING_COMBINED
+            if p_multi_packaging.enabled:
+                p_multi_packaging.filter.type = "ValueList"
+                p_multi_packaging.filter.list = MULTI_EXPORT_PACKAGING_OPTIONS
+                current_packaging = (p_multi_packaging.valueAsText or "").strip()
+                if current_packaging not in MULTI_EXPORT_PACKAGING_OPTIONS:
+                    p_multi_packaging.value = MULTI_EXPORT_PACKAGING_COMBINED
             
             # CAD-parametrit näkyvät CAD-viennissä, kun vähintään yksi taso on valittu
             fmt_cad = (p_export_fmt.valueAsText or "").strip() in ("DWG", "DXF")
@@ -805,7 +812,7 @@ class UniversalImportTool(object):
         p_cad_emit_table = parameters[9]
         p_cad_attr_fields = parameters[10]
         p_export_layers = parameters[15]
-        p_gpkg_packaging = parameters[16]
+        p_multi_packaging = parameters[16]
         
         mode = (p_mode.valueAsText or "Tuonti").strip()
         is_import = mode.startswith("Tuonti")
@@ -841,12 +848,12 @@ class UniversalImportTool(object):
             fmt = (p_export_fmt.valueAsText or "").strip()
             if fmt and fmt not in EXPORT_FORMAT_TO_EXT:
                 p_export_fmt.setErrorMessage("Valitse tuettu vientiformaatti listasta.")
-            if fmt == "GPKG" and len(paths) > 1:
-                packaging = (p_gpkg_packaging.valueAsText or "").strip()
-                if packaging not in GPKG_EXPORT_PACKAGING_OPTIONS:
-                    p_gpkg_packaging.setErrorMessage(
-                        "Valitse, viedäänkö kaikki tasot samaan GPKG-tiedostoon "
-                        "vai tehdäänkö jokaiselle oma GPKG."
+            if fmt in MULTI_EXPORT_PACKAGING_FORMATS and len(paths) > 1:
+                packaging = (p_multi_packaging.valueAsText or "").strip()
+                if packaging not in MULTI_EXPORT_PACKAGING_OPTIONS:
+                    p_multi_packaging.setErrorMessage(
+                        "Valitse, viedäänkö kaikki tasot yhteen tiedostoon "
+                        "vai tehdäänkö jokaiselle oma tiedosto."
                     )
                     return
             cad_lbl = (p_cad_label.valueAsText or "").strip()
@@ -1363,21 +1370,24 @@ class UniversalImportTool(object):
         kinds = [self._classify_export_path(path) for path in paths]
         return "export" if all(kind == "export" for kind in kinds) else "other"
 
-    def _gpkg_export_packaging_from_param(self, param, input_count):
-        """Palauta usean tason GPKG-viennin paketointitapa.
+    def _multi_export_packaging_from_param(self, param, input_count, fmt=None):
+        """Palauta usean tason GPKG/DWG/DXF-viennin paketointitapa.
 
         Yhden tason viennissä valinta ei vaikuta toimintaan. Puuttuva arvo
-        käyttää nykyistä oletusta eli kaikkien tasojen yhteistä pakettia.
+        käyttää nykyistä oletusta eli kaikkien tasojen yhteistä tiedostoa.
+        Muut formaatit viedään aina taso kerrallaan.
         """
         if input_count <= 1:
-            return GPKG_EXPORT_PACKAGING_COMBINED
+            return MULTI_EXPORT_PACKAGING_COMBINED
+        if fmt and fmt not in MULTI_EXPORT_PACKAGING_FORMATS:
+            return MULTI_EXPORT_PACKAGING_SEPARATE
         try:
             value = (getattr(param, "valueAsText", None) or "").strip()
         except Exception:
             value = ""
-        if value in GPKG_EXPORT_PACKAGING_OPTIONS:
+        if value in MULTI_EXPORT_PACKAGING_OPTIONS:
             return value
-        return GPKG_EXPORT_PACKAGING_COMBINED
+        return MULTI_EXPORT_PACKAGING_COMBINED
 
     def _export_combined_stamp_label(self, paths):
         """Tiedostonimi monelle lähteelle (lyhyt yhdistelmä)."""
@@ -1511,9 +1521,10 @@ class UniversalImportTool(object):
         folder = (parameters[6].valueAsText or "").strip()  # Index shifted from 5 to 6
         fmt = (parameters[7].valueAsText or "GPKG").strip()  # Index shifted from 6 to 7
         target_sr = self._spatial_ref_from_param(parameters[5].value)  # Index shifted from 4 to 5
-        gpkg_packaging = self._gpkg_export_packaging_from_param(
+        multi_packaging = self._multi_export_packaging_from_param(
             parameters[16] if len(parameters) > 16 else None,
             len(input_paths),
+            fmt,
         )
 
         if not folder:
@@ -1528,12 +1539,14 @@ class UniversalImportTool(object):
             return
 
         combined_label = self._export_combined_stamp_label(input_paths)
-        separate_gpkg = (
-            fmt == "GPKG"
-            and len(input_paths) > 1
-            and gpkg_packaging == GPKG_EXPORT_PACKAGING_SEPARATE
+        separate_outputs = (
+            len(input_paths) > 1
+            and (
+                fmt not in MULTI_EXPORT_PACKAGING_FORMATS
+                or multi_packaging == MULTI_EXPORT_PACKAGING_SEPARATE
+            )
         )
-        out_path = None if separate_gpkg else self._unique_export_path(
+        out_path = None if separate_outputs else self._unique_export_path(
             self._build_export_path_in_folder(folder, fmt, combined_label)
         )
 
@@ -1552,16 +1565,16 @@ class UniversalImportTool(object):
 
         self.log(messages, "Vienti — lähteet: " + "; ".join(input_paths))
         self.log(messages, f"Vienti — kansio: {folder}")
-        if separate_gpkg:
-            self.log(messages, "Vienti — formaatti: GPKG → oma tiedosto jokaiselle tasolle")
+        if separate_outputs:
+            self.log(messages, f"Vienti — formaatti: {fmt} → oma tiedosto jokaiselle tasolle")
         else:
             self.log(messages, f"Vienti — formaatti: {fmt} → {os.path.basename(out_path)}")
         if len(input_paths) > 1:
-            if fmt == "GPKG":
+            if fmt in MULTI_EXPORT_PACKAGING_FORMATS:
                 packaging_label = (
-                    "oma GPKG jokaiselle tasolle"
-                    if separate_gpkg
-                    else "kaikki tasot samaan GPKG-tiedostoon"
+                    "oma tiedosto jokaiselle tasolle"
+                    if separate_outputs
+                    else "kaikki tasot yhteen tiedostoon"
                 )
                 self.log(messages, f"  > Tasoja valittuna: {len(input_paths)} ({packaging_label}).")
             else:
@@ -1572,20 +1585,41 @@ class UniversalImportTool(object):
             fc_pairs = []
 
             if fmt in ("DWG", "DXF"):
-                for in_src in input_paths:
-                    fc_pairs.append((self._prepare_export_feature_class(in_src, target_sr, messages), in_src))
-                written_paths = [
-                    self._export_to_cad(
-                        fc_pairs,
-                        out_path,
-                        messages,
-                        cad_label_field=cad_label_field,
-                        use_map_symbology=use_map_symbology,
-                        cad_text_height=cad_text_height,
-                        emit_attr_table=emit_attr_table,
-                        attr_text_fields=attr_text_fields,
-                    )
-                ]
+                if separate_outputs:
+                    for in_src in input_paths:
+                        sub_src = self._export_source_label(in_src)
+                        self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
+                        fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
+                        out_one = self._unique_export_path(
+                            self._build_export_path_in_folder(folder, fmt, sub_src)
+                        )
+                        written_paths.append(
+                            self._export_to_cad(
+                                [(fc_work, in_src)],
+                                out_one,
+                                messages,
+                                cad_label_field=cad_label_field,
+                                use_map_symbology=use_map_symbology,
+                                cad_text_height=cad_text_height,
+                                emit_attr_table=emit_attr_table,
+                                attr_text_fields=attr_text_fields,
+                            )
+                        )
+                else:
+                    for in_src in input_paths:
+                        fc_pairs.append((self._prepare_export_feature_class(in_src, target_sr, messages), in_src))
+                    written_paths = [
+                        self._export_to_cad(
+                            fc_pairs,
+                            out_path,
+                            messages,
+                            cad_label_field=cad_label_field,
+                            use_map_symbology=use_map_symbology,
+                            cad_text_height=cad_text_height,
+                            emit_attr_table=emit_attr_table,
+                            attr_text_fields=attr_text_fields,
+                        )
+                    ]
 
             elif len(input_paths) == 1:
                 in_src = input_paths[0]
@@ -1608,7 +1642,7 @@ class UniversalImportTool(object):
             else:
                 if fmt == "GPKG":
                     written_paths = []
-                    if separate_gpkg:
+                    if separate_outputs:
                         for in_src in input_paths:
                             sub_src = self._export_source_label(in_src)
                             self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
@@ -3100,18 +3134,236 @@ class UniversalImportTool(object):
         self.log(messages, f"GeoJSON-vienti valmis: {out_path}")
         return out_path
 
+    def _shapefile_field_width(self, field):
+        """Arvioi shapefilen dBASE-kentän määrittelypituuden tavuina."""
+        field_type = (getattr(field, "type", "") or "").casefold()
+        try:
+            length = max(int(getattr(field, "length", 0) or 0), 0)
+        except Exception:
+            length = 0
+
+        if field_type in ("geometry", "oid", "blob", "raster"):
+            return 0
+        if field_type in ("string", "text"):
+            return min(max(length, 1), 254)
+        if field_type in ("smallinteger", "short"):
+            return 6
+        if field_type in ("integer", "long"):
+            return 11
+        if field_type in ("biginteger", "big integer"):
+            return 20
+        if field_type in ("single", "float"):
+            return 14
+        if field_type in ("double",):
+            return 20
+        if field_type in ("date", "dateonly"):
+            return 8
+        if field_type in ("timeonly",):
+            return 13
+        if field_type in ("timestampoffset",):
+            return 29
+        if field_type in ("guid", "globalid"):
+            return 38
+        return max(length, 1)
+
+    def _is_shapefile_record_length_error(self, error):
+        text = str(error or "").casefold()
+        return "001337" in text or "maximum record length" in text
+
+    def _build_shapefile_field_mappings(
+        self, fc_path, out_dir, messages, force=False, minimal=False
+    ):
+        """Rajaa Shapefilen kentät dBASE:n 4 000 tavun rivirajoitukseen."""
+        try:
+            source_fields = list(arcpy.ListFields(fc_path) or [])
+        except Exception as e:
+            self.log(messages, f"  > Shapefilen kenttien tarkistus epäonnistui: {e}", "WARNING")
+            return None
+
+        field_types_without_width = {"geometry", "oid", "blob", "raster"}
+        estimated_length = 1
+        needs_mapping = False
+        for field in source_fields:
+            field_type = (getattr(field, "type", "") or "").casefold()
+            estimated_length += self._shapefile_field_width(field)
+            try:
+                raw_length = int(getattr(field, "length", 0) or 0)
+            except Exception:
+                raw_length = 0
+            if field_type in ("string", "text") and raw_length > 254:
+                needs_mapping = True
+
+        if not force and estimated_length <= SHAPEFILE_SAFE_RECORD_LENGTH and not needs_mapping:
+            return None
+
+        try:
+            field_mappings = arcpy.FieldMappings()
+            # Tämä saa ArcGISin sovittamaan nimet Shapefilen enintään 10 merkkiin.
+            field_mappings.fieldValidationWorkspace = out_dir
+            field_mappings.addTable(fc_path)
+        except Exception as e:
+            self.log(messages, f"  > Shapefilen kenttäkartan luonti epäonnistui: {e}", "WARNING")
+            return None
+
+        # Shapefile-tekstikenttä ei voi olla yli 254 merkkiä. FieldMap.outputField
+        # on kopioitava, muutettava ja asetettava takaisin ArcGISin API-ohjeen
+        # mukaisesti.
+        for output_field in list(field_mappings.fields):
+            field_type = (getattr(output_field, "type", "") or "").casefold()
+            if field_type not in ("string", "text"):
+                continue
+            try:
+                output_length = int(getattr(output_field, "length", 0) or 0)
+            except Exception:
+                output_length = 0
+            if output_length <= 254:
+                continue
+            try:
+                field_index = field_mappings.findFieldMapIndex(output_field.name)
+                if field_index < 0:
+                    continue
+                field_map = field_mappings.getFieldMap(field_index)
+                mapped_field = field_map.outputField
+                mapped_field.length = 254
+                field_map.outputField = mapped_field
+                field_mappings.replaceFieldMap(field_index, field_map)
+            except Exception:
+                # Kentän poisto alla pienentää rakennetta silti tarvittaessa.
+                pass
+
+        current_length = 1
+        removable = []
+        for output_field in list(field_mappings.fields):
+            field_type = (getattr(output_field, "type", "") or "").casefold()
+            width = self._shapefile_field_width(output_field)
+            current_length += width
+            if (
+                field_type not in field_types_without_width
+                and (
+                    minimal
+                    or not getattr(output_field, "required", False)
+                )
+            ):
+                removable.append((width, str(getattr(output_field, "name", "") or "")))
+
+        if minimal:
+            keep_candidates = [
+                (width, field_name)
+                for width, field_name in removable
+            ]
+            keep_name = min(keep_candidates)[1] if keep_candidates else None
+            removable = [
+                (width, field_name)
+                for width, field_name in removable
+                if field_name != keep_name
+            ]
+
+        removed = []
+        for width, field_name in sorted(removable, key=lambda item: (-item[0], item[1].casefold())):
+            if current_length <= SHAPEFILE_SAFE_RECORD_LENGTH:
+                break
+            try:
+                field_index = field_mappings.findFieldMapIndex(field_name)
+                if field_index < 0:
+                    continue
+                field_mappings.removeFieldMap(field_index)
+                current_length -= width
+                removed.append(field_name)
+            except Exception:
+                continue
+
+        if removed:
+            preview = ", ".join(removed[:12])
+            if len(removed) > 12:
+                preview += f", … (+{len(removed) - 12})"
+            self.log(
+                messages,
+                "  > Shapefile: dBASE:n 4 000 tavun rivirajan vuoksi "
+                f"jätettiin pois {len(removed)} kenttää ({preview}).",
+                "WARNING",
+            )
+        if current_length > SHAPEFILE_SAFE_RECORD_LENGTH:
+            self.log(
+                messages,
+                "  > Shapefile: kenttärakenne ylittää edelleen dBASE:n rivirajan; "
+                "säilytetään mahdollisimman vähän ei-järjestelmäkenttiä.",
+                "WARNING",
+            )
+        return field_mappings
+
     def _export_to_shapefile(self, fc_path, out_path, messages):
         out_dir = os.path.dirname(out_path) or "."
         base = os.path.splitext(os.path.basename(out_path))[0]
         if not base:
             base = "export"
         shp_path = os.path.join(out_dir, base + ".shp")
-        if arcpy.Exists(shp_path):
+
+        def remove_partial_output():
             try:
-                arcpy.management.Delete(shp_path)
+                if arcpy.Exists(shp_path):
+                    arcpy.management.Delete(shp_path)
             except Exception:
+                pass
+            for extension in (".shp", ".shx", ".dbf", ".prj", ".cpg", ".sbn", ".sbx"):
+                candidate = os.path.join(out_dir, base + extension)
+                try:
+                    if os.path.isfile(candidate):
+                        os.remove(candidate)
+                except Exception:
+                    pass
+
+        if arcpy.Exists(shp_path):
+            remove_partial_output()
+            if arcpy.Exists(shp_path):
                 base = base + "_" + datetime.datetime.now().strftime("%H%M%S")
-        arcpy.conversion.FeatureClassToFeatureClass(fc_path, out_dir, base)
+                shp_path = os.path.join(out_dir, base + ".shp")
+        field_mappings = self._build_shapefile_field_mappings(fc_path, out_dir, messages)
+
+        def convert(mapping):
+            if mapping is None:
+                arcpy.conversion.FeatureClassToFeatureClass(fc_path, out_dir, base)
+            else:
+                arcpy.conversion.FeatureClassToFeatureClass(
+                    fc_path, out_dir, base, field_mapping=mapping
+                )
+
+        try:
+            convert(field_mappings)
+        except Exception as first_error:
+            if not self._is_shapefile_record_length_error(first_error):
+                raise
+            # Jos ArcGISin oma kenttäleveyspäätelmä poikkeaa arviosta, rakenna
+            # varmistuskartta ja yritä vielä kerran rajatuilla kentillä.
+            remove_partial_output()
+            fallback_mappings = self._build_shapefile_field_mappings(
+                fc_path, out_dir, messages, force=True
+            )
+            if fallback_mappings is None:
+                raise
+            self.log(
+                messages,
+                "  > Shapefile: ensimmäinen vientiyritys ylitti dBASE-rivin; "
+                "yritetään kenttäkartalla.",
+                "WARNING",
+            )
+            try:
+                convert(fallback_mappings)
+            except Exception as second_error:
+                if not self._is_shapefile_record_length_error(second_error):
+                    raise
+                remove_partial_output()
+                minimal_mappings = self._build_shapefile_field_mappings(
+                    fc_path, out_dir, messages, force=True, minimal=True
+                )
+                if minimal_mappings is None:
+                    raise
+                self.log(
+                    messages,
+                    "  > Shapefile: kenttärivi ylitti rajan edelleen; "
+                    "yritetään geometriaa ja yhtä lyhyttä attribuuttikenttää.",
+                    "WARNING",
+                )
+                convert(minimal_mappings)
         final_shp = os.path.join(out_dir, base + ".shp")
         self.log(messages, f"Shapefile-vienti valmis: {final_shp}")
         return final_shp

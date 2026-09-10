@@ -178,7 +178,7 @@ class ImportFolderScanTests(unittest.TestCase):
             parameters[8].valueAsText = ""
             parameters[9].value = False
             parameters[10].values = None
-            parameters[16].valueAsText = self.module.GPKG_EXPORT_PACKAGING_SEPARATE
+            parameters[16].valueAsText = self.module.MULTI_EXPORT_PACKAGING_SEPARATE
 
             exported = []
             self.tool._prepare_export_feature_class = (
@@ -199,13 +199,121 @@ class ImportFolderScanTests(unittest.TestCase):
             self.assertEqual(len({path for path, _label in exported}), 2)
             self.assertTrue(all(Path(path).suffix == ".gpkg" for path, _label in exported))
 
+    def test_dwg_export_can_create_one_file_per_layer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            self.fake_arcpy.Exists = lambda path: Path(str(path)).exists()
+
+            class Messages:
+                def addMessage(self, _message):
+                    pass
+
+                def addWarningMessage(self, _message):
+                    pass
+
+                def addErrorMessage(self, _message):
+                    pass
+
+            parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(17)]
+            parameters[5].value = None
+            parameters[6].valueAsText = str(folder)
+            parameters[7].valueAsText = "DWG"
+            parameters[8].valueAsText = ""
+            parameters[9].value = False
+            parameters[10].values = None
+            parameters[16].valueAsText = self.module.MULTI_EXPORT_PACKAGING_SEPARATE
+
+            exported = []
+            self.tool._prepare_export_feature_class = (
+                lambda source, _target_sr, _messages, copy_source=True: source
+            )
+            self.tool._export_source_label = lambda source: Path(source).stem
+            self.tool._export_to_cad = (
+                lambda pairs, out_path, _messages, **_kwargs: exported.append(
+                    (str(out_path), pairs)
+                ) or str(out_path)
+            )
+
+            input_paths = [str(folder / "roads"), str(folder / "water")]
+            self.tool._execute_export(parameters, Messages(), input_paths)
+
+            self.assertEqual(len(exported), 2)
+            self.assertTrue(all(Path(path).suffix == ".dwg" for path, _pairs in exported))
+            self.assertTrue(all(len(pairs) == 1 for _path, pairs in exported))
+
     def test_gpkg_export_defaults_to_one_shared_file(self):
         param = types.SimpleNamespace(valueAsText=None)
 
         self.assertEqual(
-            self.tool._gpkg_export_packaging_from_param(param, 2),
-            self.module.GPKG_EXPORT_PACKAGING_COMBINED,
+            self.tool._multi_export_packaging_from_param(param, 2, "GPKG"),
+            self.module.MULTI_EXPORT_PACKAGING_COMBINED,
         )
+
+        self.assertEqual(
+            self.tool._multi_export_packaging_from_param(param, 2, "Shapefile"),
+            self.module.MULTI_EXPORT_PACKAGING_SEPARATE,
+        )
+
+    def test_shapefile_wide_records_get_a_reduced_field_mapping(self):
+        class Field:
+            def __init__(self, name, field_type="String", length=254, required=False):
+                self.name = name
+                self.type = field_type
+                self.length = length
+                self.required = required
+
+        source_fields = [Field(f"attribute_{index}") for index in range(20)]
+        self.fake_arcpy.ListFields = lambda _path: source_fields
+
+        class FakeFieldMap:
+            def __init__(self, field):
+                self.outputField = field
+
+        class FakeFieldMappings:
+            def __init__(self):
+                self.fieldValidationWorkspace = None
+                self._fields = []
+
+            @property
+            def fields(self):
+                return list(self._fields)
+
+            def addTable(self, _path):
+                self._fields = [
+                    Field(field.name, field.type, field.length, field.required)
+                    for field in source_fields
+                ]
+
+            def findFieldMapIndex(self, name):
+                for index, field in enumerate(self._fields):
+                    if field.name == name:
+                        return index
+                return -1
+
+            def getFieldMap(self, index):
+                return FakeFieldMap(self._fields[index])
+
+            def replaceFieldMap(self, index, field_map):
+                self._fields[index] = field_map.outputField
+
+            def removeFieldMap(self, index):
+                self._fields.pop(index)
+
+        self.fake_arcpy.FieldMappings = FakeFieldMappings
+        messages = types.SimpleNamespace(
+            addMessage=lambda _message: None,
+            addWarningMessage=lambda _message: None,
+            addErrorMessage=lambda _message: None,
+        )
+
+        mappings = self.tool._build_shapefile_field_mappings(
+            r"C:\\data\\wide", r"C:\\data", messages
+        )
+
+        self.assertIsNotNone(mappings)
+        record_length = 1 + sum(self.tool._shapefile_field_width(field) for field in mappings.fields)
+        self.assertLessEqual(record_length, self.module.SHAPEFILE_SAFE_RECORD_LENGTH)
+        self.assertLess(len(mappings.fields), len(source_fields))
 
     def test_read_only_export_reuses_source_without_scratch_copy(self):
         self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(

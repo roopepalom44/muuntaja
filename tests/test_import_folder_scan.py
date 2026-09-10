@@ -153,6 +153,9 @@ class ImportFolderScanTests(unittest.TestCase):
         parameters[0].valueAsText = "Vienti"
         parameters[1].values = [r"C:\data\old.gpkg"]
         parameters[15].values = ["Vanha taso"]
+        self.tool._list_export_layer_options = lambda: self.fail(
+            "Vientimoodin validaatio ei saa avata aktiivista karttaa"
+        )
         self.tool.updateParameters(parameters)
 
         self.assertEqual(parameters[1].parameterType, "Optional")

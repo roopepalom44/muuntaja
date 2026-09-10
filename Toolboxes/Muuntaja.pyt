@@ -291,6 +291,10 @@ class UniversalImportTool(object):
         param15.filter.type = "ValueList"
         param15.filter.list = []
         param15.enabled = False
+        # Kerää aktiivisen kartan tasot kerran työkalun avautuessa.
+        # arcpy.mp-karttaobjektien avaamista ei tehdä updateParametersissa,
+        # jota ArcGIS Pro kutsuu jokaisesta UI-muutoksesta.
+        self._configure_export_layer_choices(param15, [])
 
         # 16. Usean tason GPKG-/DWG-/DXF-viennin paketointitapa.
         param16 = arcpy.Parameter(
@@ -343,8 +347,13 @@ class UniversalImportTool(object):
             # keskenään yhteensopivia.
             self._clear_multivalue_parameter(p_input)
             self._clear_multivalue_parameter(p_export_layers)
-            self._export_layer_sources = {}
-            self._export_layer_choices_initialized = False
+            self._clear_multivalue_parameter(p_cad_attr_fields)
+            p_cad_label.value = None
+            p_cad_emit_table.value = False
+            p_dfsu_filter_en.value = False
+            p_dfsu_filter_col.value = None
+            p_dfsu_filter_val.value = None
+            p_multi_packaging.value = MULTI_EXPORT_PACKAGING_COMBINED
             raw_paths = []
 
         # UI-suorituskyky: vältä kansioiden sisältöjen laajaa skannausta jokaisella näppäilyllä/dragilla.
@@ -354,17 +363,9 @@ class UniversalImportTool(object):
             else:
                 paths = list(raw_paths)
         else:
-            # Rakennetaan dynaaminen valintalista vain kerran vientimoodiin
-            # siirryttäessä. Sen kirjoittaminen jokaisella ArcGIS Pron
-            # validaatiokierroksella voi laukaista kontrollin uudelleen ja
-            # joissain Pro-versioissa kaataa koko sovelluksen.
-            if mode_changed or not self._export_layer_choices_initialized:
-                paths = self._configure_export_layer_choices(
-                    p_export_layers,
-                    [] if mode_changed else raw_paths,
-                )
-            else:
-                paths = self._export_paths_from_param(p_export_layers, raw_paths)
+            # Valintalista on rakennettu getParameterInfo-vaiheessa. Tässä
+            # vain luetaan valinnat; karttaa ei avata validaatiokierroksella.
+            paths = self._export_paths_from_param(p_export_layers, raw_paths)
         has_dfsu = any(str(p).lower().endswith(".dfsu") for p in paths) if paths else False
         has_dwg = (
             any(self._path_contains_extension(p, (".dwg", ".dxf")) for p in paths)
@@ -1046,12 +1047,13 @@ class UniversalImportTool(object):
             pass
 
     def _configure_export_layer_choices(self, param, previous_values=None):
-        """Täytä vientiparametrin checkbox-lista aktiivisen kartan tasoilla.
+        """Täytä vientiparametrin valintalista aktiivisen kartan tasoilla.
 
         Parametrin arvot ovat käyttöliittymässä tasojen nimiä, mutta vientiin
         palautetaan niiden catalogPath-polut. Näin pitkä GDB-polku ei täytä
         valintalistaa ja samannimiset tasot voidaan silti näyttää erillisinä
-        vaihtoehtoina.
+        vaihtoehtoina. Metodia kutsutaan vain työkalun alustuksessa, ei
+        updateParameters-validaatiokierrokselta.
         """
         if previous_values is None:
             previous_values = self._input_paths_from_param(param)
@@ -1201,13 +1203,8 @@ class UniversalImportTool(object):
         if values is None:
             values = self._input_paths_from_param(param)
         sources = getattr(self, "_export_layer_sources", {}) or {}
-        if any(str(value).strip() not in sources for value in values if str(value).strip()):
-            # Normaalisti lista rakennetaan updateParameters()-kutsussa, mutta
-            # fallback tekee suorituksesta kestävän myös silloin, kun työkalu
-            # käynnistetään suoraan ilman edeltävää UI-päivitystä.
-            sources = dict(sources)
-            for label, source in self._list_export_layer_options():
-                sources.setdefault(label, source)
+        # Tuntematon arvo voi olla suoraan annettu catalogPath (esimerkiksi
+        # Pythonista ajettuna). Tässä ei koskaan avata arcpy.mp-karttaobjekteja.
         return [sources.get(str(value).strip(), str(value).strip()) for value in values if str(value).strip()]
 
     def _list_supported_import_files(self, folder_path):

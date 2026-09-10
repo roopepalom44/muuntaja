@@ -34,6 +34,14 @@ EXPORT_FORMAT_TO_EXT = {
     "KMZ": ".kmz",
 }
 EXPORT_FORMAT_LIST = list(EXPORT_FORMAT_TO_EXT.keys())
+# Usean tason GPKG-viennin paketointitavat. Yhteinen paketti säilyttää
+# nykyisen oletustoiminnan.
+GPKG_EXPORT_PACKAGING_COMBINED = "Kaikki tasot samaan GPKG-tiedostoon"
+GPKG_EXPORT_PACKAGING_SEPARATE = "Oma GPKG jokaiselle tasolle"
+GPKG_EXPORT_PACKAGING_OPTIONS = [
+    GPKG_EXPORT_PACKAGING_COMBINED,
+    GPKG_EXPORT_PACKAGING_SEPARATE,
+]
 # ArcGIS Pron multivalue-string-ohjain, jossa vaihtoehdot näkyvät
 # valintaruutuina ja mukana on myös Select All -painike.
 EXPORT_LAYER_CHECKBOX_CONTROL_CLSID = "{38C34610-C7F7-11D5-A693-0008C711C8C1}"
@@ -61,7 +69,7 @@ class UniversalImportTool(object):
             "DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
             "Vienti: aktiivisen kartan feature-tasot valitaan valintaruutulistasta. "
             "CAD-vienti: tekstit (TxtValue), symbologia ja attribuuttitaulukko DWG/DXF:ään. "
-            "Muut viennit: GeoJSON, Shapefile, GPKG (samassa paketissa), KML."
+            "Muut viennit: GeoJSON, Shapefile, GPKG (usealle tasolle yhteinen tai oma paketti), KML."
         )
         self.canRunInBackground = False
         # DFSU-sarakelistan cache UI:lle (polku+mtime -> sarakkeet); updateParameters kutsuu usein.
@@ -278,7 +286,19 @@ class UniversalImportTool(object):
         param15.controlCLSID = EXPORT_LAYER_CHECKBOX_CONTROL_CLSID
         param15.enabled = False
 
-        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15]
+        # 16. Usean tason GPKG-viennin paketointitapa.
+        param16 = arcpy.Parameter(
+            displayName="Vienti: GPKG-paketointi (useita tasoja)",
+            name="gpkg_export_packaging",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+        param16.filter.type = "ValueList"
+        param16.filter.list = GPKG_EXPORT_PACKAGING_OPTIONS
+        param16.value = GPKG_EXPORT_PACKAGING_COMBINED
+        param16.enabled = False
+
+        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16]
 
     def updateParameters(self, parameters):
         """Mode-perustainen parametrienhallinta: tuonti vs. vienti sekä DFSU-suodatin."""
@@ -299,6 +319,7 @@ class UniversalImportTool(object):
         p_dfsu_filter_op = parameters[13]  # DFSU: operator
         p_dfsu_filter_val = parameters[14] # DFSU: value
         p_export_layers = parameters[15]  # Vienti: checkbox-lista tasoille
+        p_gpkg_packaging = parameters[16]  # Vienti: usean tason GPKG-paketointi
         
         # Lue käyttäjän valittu moodi
         mode = (p_mode.valueAsText or "Tuonti").strip()
@@ -357,6 +378,8 @@ class UniversalImportTool(object):
             p_cad_label.enabled = False
             p_cad_emit_table.enabled = False
             p_cad_attr_fields.enabled = False
+            p_gpkg_packaging.enabled = False
+            p_gpkg_packaging.parameterType = "Optional"
             
             # DFSU-suodatin näkyy vain DFSU-tuonnissa
             if has_dfsu:
@@ -419,6 +442,17 @@ class UniversalImportTool(object):
             p_export_folder.parameterType = "Required"
             p_export_fmt.enabled = True
             p_export_fmt.parameterType = "Required"
+            p_gpkg_packaging.parameterType = "Optional"
+            p_gpkg_packaging.enabled = (
+                (p_export_fmt.valueAsText or "").strip() == "GPKG"
+                and len(paths) > 1
+            )
+            if p_gpkg_packaging.enabled:
+                p_gpkg_packaging.filter.type = "ValueList"
+                p_gpkg_packaging.filter.list = GPKG_EXPORT_PACKAGING_OPTIONS
+                current_packaging = (p_gpkg_packaging.valueAsText or "").strip()
+                if current_packaging not in GPKG_EXPORT_PACKAGING_OPTIONS:
+                    p_gpkg_packaging.value = GPKG_EXPORT_PACKAGING_COMBINED
             
             # CAD-parametrit näkyvät CAD-viennissä, kun vähintään yksi taso on valittu
             fmt_cad = (p_export_fmt.valueAsText or "").strip() in ("DWG", "DXF")
@@ -771,6 +805,7 @@ class UniversalImportTool(object):
         p_cad_emit_table = parameters[9]
         p_cad_attr_fields = parameters[10]
         p_export_layers = parameters[15]
+        p_gpkg_packaging = parameters[16]
         
         mode = (p_mode.valueAsText or "Tuonti").strip()
         is_import = mode.startswith("Tuonti")
@@ -806,6 +841,14 @@ class UniversalImportTool(object):
             fmt = (p_export_fmt.valueAsText or "").strip()
             if fmt and fmt not in EXPORT_FORMAT_TO_EXT:
                 p_export_fmt.setErrorMessage("Valitse tuettu vientiformaatti listasta.")
+            if fmt == "GPKG" and len(paths) > 1:
+                packaging = (p_gpkg_packaging.valueAsText or "").strip()
+                if packaging not in GPKG_EXPORT_PACKAGING_OPTIONS:
+                    p_gpkg_packaging.setErrorMessage(
+                        "Valitse, viedäänkö kaikki tasot samaan GPKG-tiedostoon "
+                        "vai tehdäänkö jokaiselle oma GPKG."
+                    )
+                    return
             cad_lbl = (p_cad_label.valueAsText or "").strip()
             emit_attr_tbl = bool(p_cad_emit_table.value)
             attr_fields = self._multi_value_strings(p_cad_attr_fields) if emit_attr_tbl else []
@@ -1320,6 +1363,22 @@ class UniversalImportTool(object):
         kinds = [self._classify_export_path(path) for path in paths]
         return "export" if all(kind == "export" for kind in kinds) else "other"
 
+    def _gpkg_export_packaging_from_param(self, param, input_count):
+        """Palauta usean tason GPKG-viennin paketointitapa.
+
+        Yhden tason viennissä valinta ei vaikuta toimintaan. Puuttuva arvo
+        käyttää nykyistä oletusta eli kaikkien tasojen yhteistä pakettia.
+        """
+        if input_count <= 1:
+            return GPKG_EXPORT_PACKAGING_COMBINED
+        try:
+            value = (getattr(param, "valueAsText", None) or "").strip()
+        except Exception:
+            value = ""
+        if value in GPKG_EXPORT_PACKAGING_OPTIONS:
+            return value
+        return GPKG_EXPORT_PACKAGING_COMBINED
+
     def _export_combined_stamp_label(self, paths):
         """Tiedostonimi monelle lähteelle (lyhyt yhdistelmä)."""
         if not paths:
@@ -1452,6 +1511,10 @@ class UniversalImportTool(object):
         folder = (parameters[6].valueAsText or "").strip()  # Index shifted from 5 to 6
         fmt = (parameters[7].valueAsText or "GPKG").strip()  # Index shifted from 6 to 7
         target_sr = self._spatial_ref_from_param(parameters[5].value)  # Index shifted from 4 to 5
+        gpkg_packaging = self._gpkg_export_packaging_from_param(
+            parameters[16] if len(parameters) > 16 else None,
+            len(input_paths),
+        )
 
         if not folder:
             self.log(messages, "Vientikansio puuttuu.", "ERROR")
@@ -1465,7 +1528,14 @@ class UniversalImportTool(object):
             return
 
         combined_label = self._export_combined_stamp_label(input_paths)
-        out_path = self._unique_export_path(self._build_export_path_in_folder(folder, fmt, combined_label))
+        separate_gpkg = (
+            fmt == "GPKG"
+            and len(input_paths) > 1
+            and gpkg_packaging == GPKG_EXPORT_PACKAGING_SEPARATE
+        )
+        out_path = None if separate_gpkg else self._unique_export_path(
+            self._build_export_path_in_folder(folder, fmt, combined_label)
+        )
 
         cad_label_field = ""
         use_map_symbology = True  # aina päällä
@@ -1482,9 +1552,20 @@ class UniversalImportTool(object):
 
         self.log(messages, "Vienti — lähteet: " + "; ".join(input_paths))
         self.log(messages, f"Vienti — kansio: {folder}")
-        self.log(messages, f"Vienti — formaatti: {fmt} → {os.path.basename(out_path)}")
+        if separate_gpkg:
+            self.log(messages, "Vienti — formaatti: GPKG → oma tiedosto jokaiselle tasolle")
+        else:
+            self.log(messages, f"Vienti — formaatti: {fmt} → {os.path.basename(out_path)}")
         if len(input_paths) > 1:
-            self.log(messages, f"  > Tasoja valittuna: {len(input_paths)} (yhdessä tai useassa tiedostossa tulostusformatin mukaan).")
+            if fmt == "GPKG":
+                packaging_label = (
+                    "oma GPKG jokaiselle tasolle"
+                    if separate_gpkg
+                    else "kaikki tasot samaan GPKG-tiedostoon"
+                )
+                self.log(messages, f"  > Tasoja valittuna: {len(input_paths)} ({packaging_label}).")
+            else:
+                self.log(messages, f"  > Tasoja valittuna: {len(input_paths)} (yksi tiedosto tasoa kohden).")
 
         try:
             written_paths = []
@@ -1525,12 +1606,23 @@ class UniversalImportTool(object):
             else:
                 if fmt == "GPKG":
                     written_paths = []
-                    for in_src in input_paths:
-                        fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
-                        sub_src = self._export_source_label(in_src)
-                        written_paths.append(
-                            self._export_to_geopackage(fc_work, out_path, messages, source_label=sub_src)
-                        )
+                    if separate_gpkg:
+                        for in_src in input_paths:
+                            fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
+                            sub_src = self._export_source_label(in_src)
+                            out_one = self._unique_export_path(
+                                self._build_export_path_in_folder(folder, "GPKG", sub_src)
+                            )
+                            written_paths.append(
+                                self._export_to_geopackage(fc_work, out_one, messages, source_label=sub_src)
+                            )
+                    else:
+                        for in_src in input_paths:
+                            fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
+                            sub_src = self._export_source_label(in_src)
+                            written_paths.append(
+                                self._export_to_geopackage(fc_work, out_path, messages, source_label=sub_src)
+                            )
 
                 elif fmt == "GeoJSON":
                     for in_src in input_paths:

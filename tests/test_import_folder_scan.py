@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import os
 import sys
 import tempfile
 import types
@@ -140,7 +141,7 @@ class ImportFolderScanTests(unittest.TestCase):
                 pass
 
         parameters = [Parameter("Tuonti"), Parameter(), Parameter()]
-        parameters.extend(Parameter() for _ in range(13))
+        parameters.extend(Parameter() for _ in range(14))
         parameters[15].enabled = False
 
         self.tool.updateParameters(parameters)
@@ -154,6 +155,55 @@ class ImportFolderScanTests(unittest.TestCase):
 
         self.assertEqual(parameters[1].parameterType, "Optional")
         self.assertEqual(parameters[15].parameterType, "Required")
+
+    def test_gpkg_export_can_create_one_file_per_layer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            self.fake_arcpy.Exists = lambda path: Path(str(path)).exists()
+
+            class Messages:
+                def addMessage(self, _message):
+                    pass
+
+                def addWarningMessage(self, _message):
+                    pass
+
+                def addErrorMessage(self, _message):
+                    pass
+
+            parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(17)]
+            parameters[5].value = None
+            parameters[6].valueAsText = str(folder)
+            parameters[7].valueAsText = "GPKG"
+            parameters[8].valueAsText = ""
+            parameters[9].value = False
+            parameters[10].values = None
+            parameters[16].valueAsText = self.module.GPKG_EXPORT_PACKAGING_SEPARATE
+
+            exported = []
+            self.tool._prepare_export_feature_class = lambda source, _target_sr, _messages: source
+            self.tool._export_source_label = lambda source: Path(source).stem
+
+            def fake_export(_fc_work, out_path, _messages, source_label=None):
+                exported.append((str(out_path), source_label))
+                return os.path.join(str(out_path), source_label or "layer")
+
+            self.tool._export_to_geopackage = fake_export
+            input_paths = [str(folder / "roads"), str(folder / "water")]
+
+            self.tool._execute_export(parameters, Messages(), input_paths)
+
+            self.assertEqual([label for _path, label in exported], ["roads", "water"])
+            self.assertEqual(len({path for path, _label in exported}), 2)
+            self.assertTrue(all(Path(path).suffix == ".gpkg" for path, _label in exported))
+
+    def test_gpkg_export_defaults_to_one_shared_file(self):
+        param = types.SimpleNamespace(valueAsText=None)
+
+        self.assertEqual(
+            self.tool._gpkg_export_packaging_from_param(param, 2),
+            self.module.GPKG_EXPORT_PACKAGING_COMBINED,
+        )
 
 
 if __name__ == "__main__":

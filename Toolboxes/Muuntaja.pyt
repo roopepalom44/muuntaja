@@ -844,15 +844,6 @@ class UniversalImportTool(object):
                 )
             return
 
-        # Tuontitilassa vältetään raskaat Describe-kutsut UI-vaiheessa (sujuvampi drag/drop).
-        if not is_import:
-            if self._bulk_export_mode(paths) != "export":
-                p_export_layers.setErrorMessage(
-                    "Älä sekoita tuontitiedostoja ja vientitason valintoja samaan ajoon — valitse joko pelkkiä tiedostoja "
-                    "tai pelkkiä tasoja/feature classeja."
-                )
-                return
-        
         # VIENTI-VALIDOINTI
         if not is_import:
             p6t = (p_export_folder.valueAsText or "").strip()
@@ -914,22 +905,11 @@ class UniversalImportTool(object):
                     except Exception as e:
                         p_cad_attr_fields.setErrorMessage(f"Attribuuttikenttien tarkistus epäonnistui ({pv}): {e}")
                         return
-            for pv in paths:
-                try:
-                    d = arcpy.Describe(pv)
-                    dt = (d.dataType or "").upper()
-                    if dt not in ("FEATURECLASS", "FEATURELAYER", "SHAPEFILE"):
-                        p_export_layers.setErrorMessage(
-                            f"Vienti — '{pv}': tyyppi ei ole pisteviiva/alue (nykyinen tyyppi: {d.dataType})."
-                        )
-                        return
-                    if not getattr(d, "shapeFieldName", None):
-                        p_export_layers.setErrorMessage(
-                            f"Vienti — '{pv}': geometriaa ei ole (pelkkä taulu ei kelpaa)."
-                        )
-                        return
-                except Exception as e:
-                    p_export_layers.setErrorMessage(f"Syötettä ei voitu tulkita tasoksi ({pv}): {e}")
+            # GPFeatureLayer-monivalitsin tekee tyyppitarkistuksen itse.
+            # Älä kutsu Describea tässä UI-validointikierroksessa: ryhmien
+            # sisäiset tasot voivat olla hetkellisesti vain karttaniminä,
+            # jolloin Describe antaa väärän negatiivisen tuloksen ja Pro
+            # merkitsee koko muuten kelvollisen monivalinnan virheelliseksi.
         
         # TUONTI-VALIDOINTI
         else:
@@ -988,10 +968,6 @@ class UniversalImportTool(object):
             if detected_mode != "import":
                 self.log(messages, "Tuonti-tilassa syötteen pitää olla tiedostoja tai kansioita.", "ERROR")
                 return
-        elif self._bulk_export_mode(paths) != "export":
-            self.log(messages, "Vienti-tilassa syötteen pitää olla karttatasoja tai feature classeja.", "ERROR")
-            return
-
         if is_import_mode:
             self._execute_import(parameters, messages, paths)
         else:
@@ -1146,13 +1122,41 @@ class UniversalImportTool(object):
         for value in selected:
             key = self._cad_source_text_key(value)
             if key not in represented:
-                rows.append([value, None])
+                rows.append([value, self._cad_default_table_field_for_source(value)])
 
         try:
             param.values = rows
         except Exception:
             pass
         self._cad_table_layer_signature = signature
+
+    def _cad_default_table_field_for_source(self, source):
+        """Valitse uuden CAD-taulukkorivin ensimmäinen käyttökelpoinen kenttä.
+
+        Tyhjä Field-solu tekee ArcGIS Pron GPValueTable-rivistä sisäisesti
+        virheellisen jo ennen kuin käyttäjä ehtii avata valikkoa. Esitä siksi
+        turvallinen oletus, jonka käyttäjä voi vaihtaa rivin omasta valikosta.
+        """
+        try:
+            catalog = self._resolve_export_catalog_path(source)
+            fields = arcpy.ListFields(catalog) or []
+        except Exception:
+            return None
+
+        fallback = None
+        skip_types = {"Geometry", "Blob", "Raster"}
+        skip_names = {"shape", "shape_length", "shape_area"}
+        for field in fields:
+            name = str(getattr(field, "name", "") or "").strip()
+            if not name or getattr(field, "type", None) in skip_types:
+                continue
+            if name.casefold() in skip_names:
+                continue
+            if getattr(field, "type", None) in ("OID", "GlobalID"):
+                fallback = fallback or name
+                continue
+            return name
+        return fallback
 
     def _cad_source_keys(self, value):
         """Palauta layerille tekstin ja catalogPathin vertailuavaimet."""

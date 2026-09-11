@@ -349,6 +349,74 @@ class ImportFolderScanTests(unittest.TestCase):
             [["Roads", "name"], ["Roads", "speed"], ["Water", None]],
         )
 
+    def test_cad_table_new_rows_get_a_valid_default_field(self):
+        self.fake_arcpy.Describe = lambda _source: types.SimpleNamespace(
+            dataType="FeatureLayer",
+            catalogPath=r"C:\project\data.gdb\Roads",
+        )
+        self.fake_arcpy.ListFields = lambda _source: [
+            types.SimpleNamespace(name="OBJECTID", type="OID"),
+            types.SimpleNamespace(name="Shape", type="Geometry"),
+            types.SimpleNamespace(name="road_name", type="String"),
+        ]
+        param = types.SimpleNamespace(values=[], valueAsText=None)
+
+        self.tool._sync_cad_table_rows(param, ["Roads"])
+
+        self.assertEqual(param.values, [["Roads", "road_name"]])
+
+    def test_export_ui_does_not_reject_native_layers_when_describe_is_unavailable(self):
+        class Parameter:
+            def __init__(self, value="", values=None):
+                self.value = value
+                self.values = values
+                self.valueAsText = value
+                self.enabled = True
+                self.filter = types.SimpleNamespace(list=[])
+                self.error = None
+
+            def setErrorMessage(self, message):
+                self.error = message
+
+            def clearMessage(self):
+                self.error = None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            parameters = [Parameter("Vienti"), Parameter(), Parameter()]
+            parameters.extend(Parameter() for _ in range(14))
+            parameters[6].value = temp_dir
+            parameters[6].valueAsText = temp_dir
+            parameters[7].value = "Shapefile"
+            parameters[7].valueAsText = "Shapefile"
+            parameters[15].values = ["Group\\Roads", "Group\\Water"]
+            self.fake_arcpy.Describe = lambda _source: (_ for _ in ()).throw(
+                RuntimeError("Karttanimi ei ole Describe-kelpoinen validointikierroksessa")
+            )
+
+            self.tool.updateMessages(parameters)
+
+            self.assertIsNone(parameters[15].error)
+
+    def test_execute_trusts_native_export_layer_parameter(self):
+        parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(17)]
+        parameters[0].valueAsText = "Vienti"
+        parameters[15].values = ["Group\\Roads"]
+        parameters[15].valueAsText = None
+        calls = []
+        self.tool._bulk_export_mode = lambda _paths: self.fail(
+            "Natiivin GPFeatureLayer-parametrin arvoja ei pidä hylätä ylimääräisellä UI-luokituksella"
+        )
+        self.tool._execute_export = lambda _parameters, _messages, paths: calls.append(paths)
+        messages = types.SimpleNamespace(
+            addMessage=lambda _message: None,
+            addWarningMessage=lambda _message: None,
+            addErrorMessage=lambda _message: None,
+        )
+
+        self.tool.execute(parameters, messages)
+
+        self.assertEqual(calls, [["Group\\Roads"]])
+
     def test_cad_tables_are_positioned_side_by_side(self):
         self.fake_arcpy.Exists = lambda _path: False
         exported = []

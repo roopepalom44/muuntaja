@@ -6,7 +6,7 @@
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
 	<AddInInfo id="{78512C46-1376-4F15-812E-2A0D8D900A9E}"
-			   version="1.2.3"
+			   version="1.2.4"
 			   desktopVersion="3.5.0"
 			   product="ArcGISPro">
 		<Name>Muuntaja</Name>

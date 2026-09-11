@@ -94,6 +94,7 @@ class ImportFolderScanTests(unittest.TestCase):
                 self.enabled = True
                 self.multiValue = False
                 self.filter = Filter()
+                self.filters = [Filter() for _ in range(3)]
 
         self.fake_arcpy.Parameter = Parameter
         self.fake_arcpy.mp = types.SimpleNamespace(
@@ -114,14 +115,15 @@ class ImportFolderScanTests(unittest.TestCase):
             parameters[8].columns,
             [
                 ["GPFeatureLayer", "Taso"],
-                ["Field", "Teksti-/labelkenttä"],
+                ["GPString", "Teksti-/labelkenttä"],
                 ["GPBoolean", "Vie tekstit"],
             ],
         )
+        self.assertEqual(parameters[8].filters[1].type, "ValueList")
         self.assertEqual(parameters[10].datatype, "GPValueTable")
         self.assertEqual(
             parameters[10].columns,
-            [["GPFeatureLayer", "Taso"], ["Field", "Taulukkoon vietävä kenttä"]],
+            [["GPFeatureLayer", "Taso"], ["GPBoolean", "Luo attribuuttitaulu"]],
         )
 
     def test_shapefile_source_is_valid_export_input(self):
@@ -329,24 +331,18 @@ class ImportFolderScanTests(unittest.TestCase):
             ["Roads", "Water"],
         )
 
-    def test_cad_table_fields_are_selected_separately_for_each_layer(self):
-        specs = [
-            ("Roads", "name"),
-            ("Roads", "speed"),
-            ("Water", "depth"),
-        ]
+    def test_cad_attribute_tables_are_selected_separately_for_each_layer(self):
+        param = types.SimpleNamespace(
+            values=[["Roads", True], ["Water", False]],
+            valueAsText=None,
+        )
 
-        self.assertEqual(
-            self.tool._cad_table_fields_for_source(specs, "Roads"),
-            ["name", "speed"],
-        )
-        self.assertEqual(
-            self.tool._cad_table_fields_for_source(specs, "Water"),
-            ["depth"],
-        )
+        self.assertEqual(self.tool._cad_attribute_table_sources(param), ["Roads"])
+        self.assertTrue(self.tool._cad_source_is_selected(["Roads"], "Roads"))
+        self.assertFalse(self.tool._cad_source_is_selected(["Roads"], "Water"))
 
     def test_cad_label_rows_follow_selected_layers_and_remain_optional(self):
-        self.tool._cad_default_table_field_for_source = lambda source: {
+        self.tool._cad_default_label_field_for_source = lambda source: {
             "Roads": "road_name",
             "Water": "water_name",
         }[source]
@@ -366,6 +362,50 @@ class ImportFolderScanTests(unittest.TestCase):
         )
         self.assertEqual(self.tool._cad_label_specs(param), [("Roads", "route_id")])
 
+    def test_cad_ui_rows_preserve_native_layer_objects_for_field_dropdowns(self):
+        class Layer:
+            def __init__(self, name):
+                self.name = name
+
+            def __str__(self):
+                return self.name
+
+        roads = Layer("Roads")
+        water = Layer("Water")
+        source_param = types.SimpleNamespace(values=[roads, water])
+        label_param = types.SimpleNamespace(values=[])
+        self.tool._cad_default_label_field_for_source = lambda _source: "name"
+
+        sources = self.tool._cad_ui_sources_from_parameter(source_param)
+        self.tool._sync_cad_label_rows(label_param, sources)
+
+        self.assertIs(label_param.values[0][0], roads)
+        self.assertIs(label_param.values[1][0], water)
+
+    def test_cad_label_dropdown_contains_fields_from_every_selected_layer(self):
+        fields_by_source = {
+            "Roads": [
+                types.SimpleNamespace(name="road_name", type="String"),
+                types.SimpleNamespace(name="speed", type="Integer"),
+            ],
+            "Water": [
+                types.SimpleNamespace(name="water_name", type="String"),
+                types.SimpleNamespace(name="depth", type="Double"),
+            ],
+        }
+        self.fake_arcpy.ListFields = lambda source: fields_by_source[source]
+        param = types.SimpleNamespace(
+            filters=[types.SimpleNamespace(type=None, list=[]) for _ in range(3)]
+        )
+
+        self.tool._set_cad_label_field_options(param, ["Roads", "Water"])
+
+        self.assertEqual(param.filters[1].type, "ValueList")
+        self.assertEqual(
+            param.filters[1].list,
+            ["depth", "road_name", "speed", "water_name"],
+        )
+
     def test_cad_label_field_is_resolved_per_layer(self):
         specs = [("Roads", "road_name"), ("Water", "water_name")]
 
@@ -384,7 +424,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
     def test_cad_table_rows_follow_selected_export_layers(self):
         param = types.SimpleNamespace(
-            values=[["Roads", "name"], ["Roads", "speed"]],
+            values=[["Roads", True]],
             valueAsText=None,
         )
 
@@ -392,24 +432,22 @@ class ImportFolderScanTests(unittest.TestCase):
 
         self.assertEqual(
             param.values,
-            [["Roads", "name"], ["Roads", "speed"], ["Water", None]],
+            [["Roads", True], ["Water", False]],
         )
 
-    def test_cad_table_new_rows_get_a_valid_default_field(self):
-        self.fake_arcpy.Describe = lambda _source: types.SimpleNamespace(
-            dataType="FeatureLayer",
-            catalogPath=r"C:\project\data.gdb\Roads",
-        )
+    def test_cad_attribute_table_uses_all_printable_fields(self):
         self.fake_arcpy.ListFields = lambda _source: [
             types.SimpleNamespace(name="OBJECTID", type="OID"),
             types.SimpleNamespace(name="Shape", type="Geometry"),
             types.SimpleNamespace(name="road_name", type="String"),
+            types.SimpleNamespace(name="speed", type="Integer"),
+            types.SimpleNamespace(name="attachment", type="Blob"),
         ]
-        param = types.SimpleNamespace(values=[], valueAsText=None)
 
-        self.tool._sync_cad_table_rows(param, ["Roads"])
-
-        self.assertEqual(param.values, [["Roads", "road_name"]])
+        self.assertEqual(
+            self.tool._cad_all_table_fields("Roads"),
+            ["OBJECTID", "road_name", "speed"],
+        )
 
     def test_export_ui_does_not_reject_native_layers_when_describe_is_unavailable(self):
         class Parameter:
@@ -472,6 +510,10 @@ class ImportFolderScanTests(unittest.TestCase):
         self.tool._cad_get_point_pdsize = lambda *_args, **_kwargs: None
         self.tool._cad_attribute_table_layout_origin = lambda *_args: (100.0, 200.0, 10.0)
         self.tool._export_source_label = lambda source: source
+        self.tool._cad_all_table_fields = lambda source: {
+            "roads_fc": ["name", "speed"],
+            "water_fc": ["depth"],
+        }[source]
         prepared = []
 
         def prepare_pair(
@@ -502,12 +544,7 @@ class ImportFolderScanTests(unittest.TestCase):
             r"C:\output\combined.dwg",
             messages,
             cad_label_specs=[("Roads", "road_name"), ("Water", "water_name")],
-            emit_attr_table=True,
-            attr_table_specs=[
-                ("Roads", "name"),
-                ("Roads", "speed"),
-                ("Water", "depth"),
-            ],
+            attr_table_sources=["Roads", "Water"],
         )
 
         self.assertEqual(prepared[0][1], "road_name")

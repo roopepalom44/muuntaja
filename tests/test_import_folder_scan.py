@@ -109,6 +109,15 @@ class ImportFolderScanTests(unittest.TestCase):
         self.assertEqual(export_layers.datatype, "GPFeatureLayer")
         self.assertTrue(export_layers.multiValue)
         self.assertFalse(export_layers.enabled)
+        self.assertEqual(parameters[8].datatype, "GPValueTable")
+        self.assertEqual(
+            parameters[8].columns,
+            [
+                ["GPFeatureLayer", "Taso"],
+                ["Field", "Teksti-/labelkenttä"],
+                ["GPBoolean", "Vie tekstit"],
+            ],
+        )
         self.assertEqual(parameters[10].datatype, "GPValueTable")
         self.assertEqual(
             parameters[10].columns,
@@ -336,6 +345,43 @@ class ImportFolderScanTests(unittest.TestCase):
             ["depth"],
         )
 
+    def test_cad_label_rows_follow_selected_layers_and_remain_optional(self):
+        self.tool._cad_default_table_field_for_source = lambda source: {
+            "Roads": "road_name",
+            "Water": "water_name",
+        }[source]
+        param = types.SimpleNamespace(
+            values=[["Roads", "route_id", True]],
+            valueAsText=None,
+        )
+
+        self.tool._sync_cad_label_rows(param, ["Roads", "Water"])
+
+        self.assertEqual(
+            param.values,
+            [
+                ["Roads", "route_id", True],
+                ["Water", "water_name", False],
+            ],
+        )
+        self.assertEqual(self.tool._cad_label_specs(param), [("Roads", "route_id")])
+
+    def test_cad_label_field_is_resolved_per_layer(self):
+        specs = [("Roads", "road_name"), ("Water", "water_name")]
+
+        self.assertEqual(
+            self.tool._cad_label_field_for_source(specs, "Roads"),
+            "road_name",
+        )
+        self.assertEqual(
+            self.tool._cad_label_field_for_source(specs, "Water"),
+            "water_name",
+        )
+        self.assertEqual(
+            self.tool._cad_label_field_for_source([("Roads", "road_name")], "Water"),
+            "",
+        )
+
     def test_cad_table_rows_follow_selected_export_layers(self):
         param = types.SimpleNamespace(
             values=[["Roads", "name"], ["Roads", "speed"]],
@@ -441,7 +487,7 @@ class ImportFolderScanTests(unittest.TestCase):
             layer_name,
             title,
         ):
-            prepared.append((in_src, list(fields), anchor, layer_name, title))
+            prepared.append((in_src, _cad_label, list(fields), anchor, layer_name, title))
             return fc_path, None, [f"{fc_path}_table"], 50.0
 
         self.tool._cad_prepare_pair_for_export = prepare_pair
@@ -455,6 +501,7 @@ class ImportFolderScanTests(unittest.TestCase):
             [("roads_fc", "Roads"), ("water_fc", "Water")],
             r"C:\output\combined.dwg",
             messages,
+            cad_label_specs=[("Roads", "road_name"), ("Water", "water_name")],
             emit_attr_table=True,
             attr_table_specs=[
                 ("Roads", "name"),
@@ -463,11 +510,13 @@ class ImportFolderScanTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(prepared[0][1], ["name", "speed"])
-        self.assertEqual(prepared[1][1], ["depth"])
-        self.assertEqual(prepared[0][2], (100.0, 200.0))
-        self.assertEqual(prepared[1][2], (160.0, 200.0))
-        self.assertNotEqual(prepared[0][3], prepared[1][3])
+        self.assertEqual(prepared[0][1], "road_name")
+        self.assertEqual(prepared[1][1], "water_name")
+        self.assertEqual(prepared[0][2], ["name", "speed"])
+        self.assertEqual(prepared[1][2], ["depth"])
+        self.assertEqual(prepared[0][3], (100.0, 200.0))
+        self.assertEqual(prepared[1][3], (160.0, 200.0))
+        self.assertNotEqual(prepared[0][4], prepared[1][4])
         self.assertEqual(len(exported), 1)
 
     def test_export_does_not_add_outputs_to_active_map(self):

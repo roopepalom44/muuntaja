@@ -8,6 +8,7 @@
 - **Tasovalinta viennissä:** Vientitilassa tasot valitaan ArcGIS Pron omalla monitasovalitsimella aktiivisesta kartasta tai selaamalla.
 - **Monitasoviennin paketointi:** Shapefile-, GeoJSON- ja KML/KMZ-viennit tehdään aina omiksi tiedostoiksi tasoittain. GPKG-, DWG- ja DXF-vienneissä voi valita yhden yhteisen tiedoston tai oman tiedoston jokaiselle tasolle.
 - **Tasokohtaiset CAD-taulukot:** DWG/DXF-viennissä taulukkokentät valitaan taso–kenttä-riveillä. Jokaiselle tasolle muodostuu oma nimetty taulukko, ja saman CAD-tiedoston taulukot sijoitetaan vierekkäin.
+- **Tasokohtaiset CAD-tekstit:** Jokaiselle DWG/DXF-vientitasolle voi kytkeä tekstiviennin erikseen ja valita juuri kyseisen tason labelkentän.
 - **Hallittu karttasisältö:** Vienti kirjoittaa vain tiedostot eikä lisää vientituloksia aktiiviselle kartalle. Tuonti lisää muunnetut aineistot normaalisti työtilaan.
 - **Integrointi ArcGIS Prohon:** Laajennus lisää ArcGIS Pron käyttöliittymään oman välilehden / painikkeen (Muuntaja), josta työkalun saa nopeasti auki.
 - **Python-työkalulaatikko:** Sisältää `Muuntaja.pyt`-työkalulaatikon geokäsittelytehtäviä varten.
@@ -23,7 +24,7 @@
 3. Klikkaa **Muuntaja**-painiketta avataksesi työkalun.
 4. Valitse tuonnissa joko tiedostoja tai kansio. Kansiota käytettäessä kansioon voi kerätä eri muotoja sekaisin; Muuntaja skannaa myös alikansiot, ohittaa Shapefilen sivutiedostot (DBF/SHX/PRJ) ja tuo jokaisen varsinaisen aineiston erikseen.
 5. Valitse viennissä tasot ArcGIS Pron monitasovalitsimella ja määritä vientiformaatti sekä vientikansio. Usean tason GPKG-, DWG- tai DXF-viennissä valitse lisäksi yhteinen tai tasokohtainen tiedosto.
-6. Jos luot CAD-attribuuttitaulukot, valitse jokaisella rivillä taso ja yksi kenttä. Lisää samalle tasolle uusia rivejä, kun haluat sen taulukkoon useita kenttiä.
+6. CAD-viennin tekstit valitaan tasokohtaisilta riveiltä: kytke **Vie tekstit** halutuille tasoille ja valitse niiden omat labelkentät. Jos luot CAD-attribuuttitaulukot, valitse jokaisella taulukkorivillä taso ja yksi kenttä. Lisää samalle tasolle uusia rivejä, kun haluat sen taulukkoon useita kenttiä.
 
 ## Tekninen kuvaus
 - **Kehitysympäristö:** .NET 8.0 (WPF), C#

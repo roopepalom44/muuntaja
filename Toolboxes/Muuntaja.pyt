@@ -83,6 +83,7 @@ class UniversalImportTool(object):
         self._import_expansion_cache_key = None
         self._import_expansion_cache_value = None
         self._last_operation_mode = None
+        self._cad_label_layer_signature = None
         self._cad_table_layer_signature = None
 
     def getParameterInfo(self):
@@ -203,15 +204,20 @@ class UniversalImportTool(object):
         param7.value = "GPKG"
         param7.enabled = False
 
-        # 8. Vain CAD-vientiin: labelkenttä
+        # 8. CAD-vienti: tasokohtainen labelkenttä. Boolean-sarake pitää
+        # labelin aidosti valinnaisena, vaikka Field-solulla on aina
+        # kelvollinen oletusarvo ArcGIS Pron GPValueTable-validointia varten.
         param8 = arcpy.Parameter(
-            displayName="[CAD-vienti] Teksti-/labelkenttä (sisältö → CAD Text, tyhjä = ei tekstiä kartalle)",
-            name="cad_label_field",
-            datatype="GPString",
+            displayName="[CAD-vienti] Tasokohtaiset teksti-/labelkentät",
+            name="cad_label_fields_by_layer",
+            datatype="GPValueTable",
             parameterType="Optional",
             direction="Input")
-        param8.filter.type = "ValueList"
-        param8.filter.list = []
+        param8.columns = [
+            ["GPFeatureLayer", "Taso"],
+            ["Field", "Teksti-/labelkenttä"],
+            ["GPBoolean", "Vie tekstit"],
+        ]
         param8.enabled = False
 
         # 9. CAD-vienti: luo DWG:hen visuaalinen attribuuttitaulukko (viivat + tekstit)
@@ -349,7 +355,8 @@ class UniversalImportTool(object):
             self._clear_multivalue_parameter(p_export_layers)
             self._clear_multivalue_parameter(p_cad_attr_fields)
             self._cad_table_layer_signature = None
-            p_cad_label.value = None
+            self._clear_multivalue_parameter(p_cad_label)
+            self._cad_label_layer_signature = None
             p_cad_emit_table.value = False
             p_dfsu_filter_en.value = False
             p_dfsu_filter_col.value = None
@@ -474,19 +481,15 @@ class UniversalImportTool(object):
             p_dfsu_filter_val.enabled = False
 
             if fmt_cad and has_dwg and paths:
-                opts = self._common_label_field_options(paths)
-                p_cad_label.filter.list = opts
-                # Jos aiempi arvo ei enää kelpaa, tyhjennä se
-                cur = (p_cad_label.valueAsText or "").strip()
-                if cur and cur not in opts:
-                    p_cad_label.value = None
+                self._sync_cad_label_rows(p_cad_label, paths)
                 if p_cad_attr_fields.enabled:
                     self._sync_cad_table_rows(p_cad_attr_fields, paths)
                 else:
                     self._clear_multivalue_parameter(p_cad_attr_fields)
                     self._cad_table_layer_signature = None
             else:
-                p_cad_label.filter.list = []
+                self._clear_multivalue_parameter(p_cad_label)
+                self._cad_label_layer_signature = None
                 self._clear_multivalue_parameter(p_cad_attr_fields)
                 self._cad_table_layer_signature = None
             
@@ -499,51 +502,6 @@ class UniversalImportTool(object):
             p_dfsu_filter_val.enabled = False
 
         self._last_operation_mode = mode
-
-    def _common_label_field_options(self, export_paths):
-        """Palauta valittujen tasojen yhteiset kentät dropdowniin (aakkosjärjestys)."""
-        if not export_paths:
-            return []
-        common_lc = None
-        display_by_lc = {}
-        skip_types = {"Geometry", "OID", "Blob", "Raster"}
-        skip_names_lc = {"shape", "objectid", "fid", "globalid"}
-
-        for p in export_paths:
-            try:
-                catalog = self._resolve_export_catalog_path(p)
-                fields = arcpy.ListFields(catalog)
-                desc = arcpy.Describe(catalog)
-            except Exception:
-                return []
-            this_set = set()
-            for f in fields:
-                nm = getattr(f, "name", None)
-                if not nm:
-                    continue
-                if f.type in skip_types:
-                    continue
-                nml = nm.lower()
-                if nml in skip_names_lc:
-                    continue
-                this_set.add(nml)
-                if nml not in display_by_lc:
-                    display_by_lc[nml] = nm
-            try:
-                if getattr(desc, "OIDFieldName", None):
-                    this_set.add("objectid")
-                    display_by_lc["objectid"] = "OBJECTID"
-            except Exception:
-                pass
-            if common_lc is None:
-                common_lc = this_set
-            else:
-                common_lc &= this_set
-
-        if not common_lc:
-            return []
-        out = [display_by_lc[k] for k in sorted(common_lc)]
-        return out
 
     def _read_dfsu_columns(self, dfsu_path):
         """Lue DFSU-sarakkeet; tulos cachetetaan polun+muokkausajan mukaan (UI kutsuu usein)."""
@@ -864,21 +822,15 @@ class UniversalImportTool(object):
                         "vai tehdäänkö jokaiselle oma tiedosto."
                     )
                     return
-            cad_lbl = (p_cad_label.valueAsText or "").strip()
+            label_rows = self._cad_label_rows(p_cad_label)
             emit_attr_tbl = bool(p_cad_emit_table.value)
             attr_specs = self._cad_table_field_specs(p_cad_attr_fields) if emit_attr_tbl else []
-            if fmt in ("DWG", "DXF") and cad_lbl:
-                for pv in paths:
-                    try:
-                        catalog = self._resolve_export_catalog_path(pv)
-                        if not self._cad_resolve_field_name(catalog, cad_lbl):
-                            p_cad_label.setErrorMessage(
-                                f"Kenttää '{cad_lbl}' ei löydy tasosta '{pv}'. Käytä samaa labelkentän nimeä "
-                                "kaikissa tasossa tai tyhjennä parametri."
-                            )
-                            return
-                    except Exception as e:
-                        p_cad_label.setErrorMessage(f"Labelkentän tarkistus epäonnistui ({pv}): {e}")
+            if fmt in ("DWG", "DXF"):
+                for layer, enabled, field in label_rows:
+                    if enabled and not field:
+                        p_cad_label.setErrorMessage(
+                            f"Valitse tasolle '{layer}' teksti-/labelkenttä tai poista tekstivienti käytöstä."
+                        )
                         return
             if fmt in ("DWG", "DXF") and emit_attr_tbl and not attr_specs:
                 p_cad_attr_fields.setErrorMessage(
@@ -888,22 +840,11 @@ class UniversalImportTool(object):
                 return
             if fmt in ("DWG", "DXF") and emit_attr_tbl and attr_specs:
                 for pv in paths:
-                    try:
-                        catalog = self._resolve_export_catalog_path(pv)
-                        layer_fields = self._cad_table_fields_for_source(attr_specs, pv)
-                        if not layer_fields:
-                            p_cad_attr_fields.setErrorMessage(
-                                f"Valitse tasolle '{pv}' vähintään yksi taulukkokenttä."
-                            )
-                            return
-                        miss = [f for f in layer_fields if not self._cad_resolve_field_name(catalog, f)]
-                        if miss:
-                            p_cad_attr_fields.setErrorMessage(
-                                f"Tasosta '{pv}' puuttuu kenttä(t): {', '.join(miss)}"
-                            )
-                            return
-                    except Exception as e:
-                        p_cad_attr_fields.setErrorMessage(f"Attribuuttikenttien tarkistus epäonnistui ({pv}): {e}")
+                    layer_fields = self._cad_table_fields_for_source(attr_specs, pv)
+                    if not layer_fields:
+                        p_cad_attr_fields.setErrorMessage(
+                            f"Valitse tasolle '{pv}' vähintään yksi taulukkokenttä."
+                        )
                         return
             # GPFeatureLayer-monivalitsin tekee tyyppitarkistuksen itse.
             # Älä kutsu Describea tässä UI-validointikierroksessa: ryhmien
@@ -1068,6 +1009,84 @@ class UniversalImportTool(object):
         """Vakaa tekstivertailu ArcGISin layer-nimille ja catalogPath-poluille."""
         text = str(value or "").strip().strip("'\"")
         return text.replace("/", "\\").casefold()
+
+    def _cad_value_is_true(self, value):
+        """Tulkitse GPValueTable-taulukon boolean luotettavasti."""
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().casefold() in ("true", "1", "yes", "kyllä")
+
+    def _cad_label_rows(self, param):
+        """Lue label-GPValueTable riveiksi ``[(taso, käytössä, kenttä), ...]``."""
+        try:
+            rows = getattr(param, "values", None) or []
+        except Exception:
+            rows = []
+        result = []
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 3:
+                continue
+            layer = str(row[0] or "").strip()
+            field = str(row[1] or "").strip()
+            if layer:
+                result.append((layer, self._cad_value_is_true(row[2]), field))
+        return result
+
+    def _cad_label_specs(self, param):
+        """Palauta käyttöön otetut tasokohtaiset labelkentät."""
+        return [
+            (layer, field)
+            for layer, enabled, field in self._cad_label_rows(param)
+            if enabled and field
+        ]
+
+    def _sync_cad_label_rows(self, param, export_paths):
+        """Pidä jokaiselle valitulle vientitasolle oma labelkenttärivi."""
+        selected = self._export_paths_from_param(None, export_paths)
+        signature = tuple(self._cad_source_text_key(value) for value in selected)
+        if signature == self._cad_label_layer_signature:
+            return
+
+        try:
+            old_rows = list(getattr(param, "values", None) or [])
+        except Exception:
+            old_rows = []
+        selected_by_key = {
+            self._cad_source_text_key(value): value for value in selected
+        }
+        old_by_key = {}
+        for row in old_rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 3:
+                continue
+            key = self._cad_source_text_key(row[0])
+            if key in selected_by_key:
+                old_by_key[key] = [
+                    selected_by_key[key],
+                    row[1],
+                    self._cad_value_is_true(row[2]),
+                ]
+
+        rows = []
+        for value in selected:
+            key = self._cad_source_text_key(value)
+            rows.append(old_by_key.get(key) or [
+                value,
+                self._cad_default_table_field_for_source(value),
+                False,
+            ])
+        try:
+            param.values = rows
+        except Exception:
+            pass
+        self._cad_label_layer_signature = signature
+
+    def _cad_label_field_for_source(self, specs, in_src):
+        """Palauta yhden vientitason valittu labelkenttä tai tyhjä arvo."""
+        source_keys = self._cad_source_keys(in_src)
+        for layer, field in specs or []:
+            if source_keys.intersection(self._cad_source_keys(layer)):
+                return field
+        return ""
 
     def _cad_table_field_specs(self, param):
         """Lue GPValueTable riveiksi ``[(taso, kenttä), ...]``."""
@@ -1583,13 +1602,13 @@ class UniversalImportTool(object):
             self._build_export_path_in_folder(folder, fmt, combined_label)
         )
 
-        cad_label_field = ""
+        cad_label_specs = []
         use_map_symbology = True  # aina päällä
         cad_text_height = 10.0    # aina 10
         emit_attr_table = False
         attr_table_specs = []
         try:
-            cad_label_field = (parameters[8].valueAsText or "").strip()  # Index shifted from 7 to 8
+            cad_label_specs = self._cad_label_specs(parameters[8])
             emit_attr_table = bool(parameters[9].value) if len(parameters) > 9 else False  # Index shifted from 8 to 9
             if emit_attr_table and len(parameters) > 10:  # Updated length check
                 attr_table_specs = self._cad_table_field_specs(parameters[10])
@@ -1631,7 +1650,7 @@ class UniversalImportTool(object):
                                 [(fc_work, in_src)],
                                 out_one,
                                 messages,
-                                cad_label_field=cad_label_field,
+                                cad_label_specs=cad_label_specs,
                                 use_map_symbology=use_map_symbology,
                                 cad_text_height=cad_text_height,
                                 emit_attr_table=emit_attr_table,
@@ -1646,7 +1665,7 @@ class UniversalImportTool(object):
                             fc_pairs,
                             out_path,
                             messages,
-                            cad_label_field=cad_label_field,
+                            cad_label_specs=cad_label_specs,
                             use_map_symbology=use_map_symbology,
                             cad_text_height=cad_text_height,
                             emit_attr_table=emit_attr_table,
@@ -3115,6 +3134,7 @@ class UniversalImportTool(object):
         out_path,
         messages,
         cad_label_field="",
+        cad_label_specs=None,
         use_map_symbology=True,
         cad_text_height=10.0,
         emit_attr_table=False,
@@ -3137,6 +3157,9 @@ class UniversalImportTool(object):
         )
         next_table_x = table_x
         for pair_index, (fc_path, in_src) in enumerate(fc_source_pairs, 1):
+            layer_label_field = self._cad_label_field_for_source(
+                cad_label_specs or [], in_src
+            ) or cad_label_field
             table_fields = self._cad_table_fields_for_source(attr_table_specs or [], in_src)
             source_label = self.sanitize_name(self._export_source_label(in_src)) or f"TASO_{pair_index}"
             table_layer_name = f"ATTRIBUUTIT_{pair_index}_{source_label}"[:240]
@@ -3144,7 +3167,7 @@ class UniversalImportTool(object):
                 fc_path,
                 in_src,
                 messages,
-                cad_label_field,
+                layer_label_field,
                 use_map_symbology,
                 cad_text_height,
                 emit_attr_table,

@@ -109,6 +109,11 @@ class ImportFolderScanTests(unittest.TestCase):
         self.assertEqual(export_layers.datatype, "GPFeatureLayer")
         self.assertTrue(export_layers.multiValue)
         self.assertFalse(export_layers.enabled)
+        self.assertEqual(parameters[10].datatype, "GPValueTable")
+        self.assertEqual(
+            parameters[10].columns,
+            [["GPFeatureLayer", "Taso"], ["Field", "Taulukkoon vietävä kenttä"]],
+        )
 
     def test_shapefile_source_is_valid_export_input(self):
         self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
@@ -170,6 +175,9 @@ class ImportFolderScanTests(unittest.TestCase):
             def setErrorMessage(self, message):
                 self.error = message
 
+            def clearMessage(self):
+                self.error = None
+
         parameters = [Parameter("Tuonti"), Parameter(), Parameter()]
         parameters.extend(Parameter() for _ in range(14))
 
@@ -183,6 +191,7 @@ class ImportFolderScanTests(unittest.TestCase):
         self.tool.updateMessages(parameters)
 
         self.assertIn("aktiivisen kartan taso", parameters[15].error)
+        self.assertIsNone(parameters[1].error)
 
     def test_import_mode_restores_project_default_geodatabase_when_output_is_empty(self):
         project_gdb = r"C:\project\Project.gdb"
@@ -301,6 +310,183 @@ class ImportFolderScanTests(unittest.TestCase):
         self.assertEqual(
             self.tool._multi_export_packaging_from_param(param, 2, "Shapefile"),
             self.module.MULTI_EXPORT_PACKAGING_SEPARATE,
+        )
+
+    def test_duplicate_export_layers_are_removed_preserving_order(self):
+        param = types.SimpleNamespace(values=["Roads", "Water", "Roads"], valueAsText=None)
+
+        self.assertEqual(
+            self.tool._export_paths_from_param(param),
+            ["Roads", "Water"],
+        )
+
+    def test_cad_table_fields_are_selected_separately_for_each_layer(self):
+        specs = [
+            ("Roads", "name"),
+            ("Roads", "speed"),
+            ("Water", "depth"),
+        ]
+
+        self.assertEqual(
+            self.tool._cad_table_fields_for_source(specs, "Roads"),
+            ["name", "speed"],
+        )
+        self.assertEqual(
+            self.tool._cad_table_fields_for_source(specs, "Water"),
+            ["depth"],
+        )
+
+    def test_cad_table_rows_follow_selected_export_layers(self):
+        param = types.SimpleNamespace(
+            values=[["Roads", "name"], ["Roads", "speed"]],
+            valueAsText=None,
+        )
+
+        self.tool._sync_cad_table_rows(param, ["Roads", "Water"])
+
+        self.assertEqual(
+            param.values,
+            [["Roads", "name"], ["Roads", "speed"], ["Water", None]],
+        )
+
+    def test_cad_tables_are_positioned_side_by_side(self):
+        self.fake_arcpy.Exists = lambda _path: False
+        exported = []
+        self.fake_arcpy.conversion = types.SimpleNamespace(
+            ExportCAD=lambda *args: exported.append(args)
+        )
+        self.tool._cad_get_point_pdsize = lambda *_args, **_kwargs: None
+        self.tool._cad_attribute_table_layout_origin = lambda *_args: (100.0, 200.0, 10.0)
+        self.tool._export_source_label = lambda source: source
+        prepared = []
+
+        def prepare_pair(
+            fc_path,
+            in_src,
+            _messages,
+            _cad_label,
+            _symbology,
+            _height,
+            _emit_table,
+            fields,
+            anchor,
+            layer_name,
+            title,
+        ):
+            prepared.append((in_src, list(fields), anchor, layer_name, title))
+            return fc_path, None, [f"{fc_path}_table"], 50.0
+
+        self.tool._cad_prepare_pair_for_export = prepare_pair
+        messages = types.SimpleNamespace(
+            addMessage=lambda _message: None,
+            addWarningMessage=lambda _message: None,
+            addErrorMessage=lambda _message: None,
+        )
+
+        self.tool._export_to_cad(
+            [("roads_fc", "Roads"), ("water_fc", "Water")],
+            r"C:\output\combined.dwg",
+            messages,
+            emit_attr_table=True,
+            attr_table_specs=[
+                ("Roads", "name"),
+                ("Roads", "speed"),
+                ("Water", "depth"),
+            ],
+        )
+
+        self.assertEqual(prepared[0][1], ["name", "speed"])
+        self.assertEqual(prepared[1][1], ["depth"])
+        self.assertEqual(prepared[0][2], (100.0, 200.0))
+        self.assertEqual(prepared[1][2], (160.0, 200.0))
+        self.assertNotEqual(prepared[0][3], prepared[1][3])
+        self.assertEqual(len(exported), 1)
+
+    def test_export_does_not_add_outputs_to_active_map(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.fake_arcpy.Exists = lambda _path: False
+            self.fake_arcpy.mp = types.SimpleNamespace(
+                ArcGISProject=lambda _: self.fail("Vienti ei saa avata aktiivista karttaa")
+            )
+            parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(17)]
+            parameters[5].value = "stale-import-crs"
+            parameters[6].valueAsText = temp_dir
+            parameters[7].valueAsText = "GeoJSON"
+            parameters[8].valueAsText = ""
+            parameters[9].value = False
+            parameters[10].values = []
+            parameters[16].valueAsText = self.module.MULTI_EXPORT_PACKAGING_COMBINED
+            target_values = []
+
+            def prepare(source, target_sr, _messages, copy_source=True):
+                target_values.append(target_sr)
+                return source
+
+            self.tool._prepare_export_feature_class = prepare
+            self.tool._export_source_label = lambda _source: "roads"
+            self.tool._export_to_geojson = lambda _fc, out, _messages: out
+            messages = types.SimpleNamespace(
+                addMessage=lambda _message: None,
+                addWarningMessage=lambda _message: None,
+                addErrorMessage=lambda _message: None,
+            )
+
+            self.tool._execute_export(parameters, messages, ["Roads"])
+
+            self.assertEqual(target_values, [None])
+
+    def test_geopackage_schema_prefix_is_not_used_as_layer_name(self):
+        self.assertEqual(
+            self.tool._geopackage_import_output_name(
+                r"C:\data\nopeusrajoitus_20260911.gpkg",
+                "main.Nopeusrajoitus",
+            ),
+            "nopeusrajoitus",
+        )
+        self.assertEqual(
+            self.tool._geopackage_import_output_name(
+                r"C:\data\nopeusrajoitus_20260911.gpkg",
+                "main",
+            ),
+            "nopeusrajoitus_20260911",
+        )
+
+    def test_combined_geopackage_does_not_overwrite_duplicate_layer_name(self):
+        out_path = os.path.normpath(r"C:\output\combined.gpkg")
+        first_target = os.path.join(out_path, "roads")
+        existing = {
+            os.path.normcase(out_path),
+            os.path.normcase(first_target),
+        }
+        copied = []
+        self.fake_arcpy.Exists = lambda path: os.path.normcase(os.path.normpath(str(path))) in existing
+        self.fake_arcpy.Describe = lambda _path: types.SimpleNamespace(name="roads")
+        self.fake_arcpy.management = types.SimpleNamespace(
+            CopyFeatures=lambda source, target: copied.append((source, target)),
+            CreateSQLiteDatabase=lambda *_args: None,
+        )
+        messages = types.SimpleNamespace(
+            addMessage=lambda _message: None,
+            addWarningMessage=lambda _message: None,
+            addErrorMessage=lambda _message: None,
+        )
+
+        target = self.tool._export_to_geopackage(
+            "roads_fc", out_path, messages, source_label="roads"
+        )
+
+        self.assertEqual(target, os.path.join(out_path, "roads_2"))
+        self.assertEqual(copied, [("roads_fc", target)])
+
+    def test_combined_geopackage_counts_as_one_output_file(self):
+        paths = [
+            r"C:\output\combined.gpkg\roads",
+            r"C:\output\combined.gpkg\water",
+        ]
+
+        self.assertEqual(
+            self.tool._export_output_file_paths(paths),
+            [r"C:\output\combined.gpkg"],
         )
 
     def test_shapefile_wide_records_get_a_reduced_field_mapping(self):

@@ -69,7 +69,8 @@ class UniversalImportTool(object):
             "tuodaan tiedosto kerrallaan GDB:hen (CAD, GPKG, GeoJSON, KML, GPX, DFSU ja Shapefile). "
             "DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
             "Vienti: feature-tasot valitaan ArcGIS Pron omalla monitasovalitsimella. "
-            "CAD-vienti: tekstit (TxtValue), symbologia ja attribuuttitaulukko DWG/DXF:ään. "
+            "CAD-vienti: tekstit (TxtValue), symbologia sekä omat vierekkäiset attribuuttitaulukot "
+            "jokaiselle DWG/DXF-vientitasolle. "
             "Muut viennit: GeoJSON, Shapefile ja KML taso kerrallaan; GPKG/DWG/DXF-viennissä "
             "usealle tasolle voi valita yhteisen tai oman tiedoston."
         )
@@ -82,6 +83,7 @@ class UniversalImportTool(object):
         self._import_expansion_cache_key = None
         self._import_expansion_cache_value = None
         self._last_operation_mode = None
+        self._cad_table_layer_signature = None
 
     def getParameterInfo(self):
         # 0. Mitä haluat tehdä? (MODE) — tuonti tai vienti
@@ -222,16 +224,21 @@ class UniversalImportTool(object):
         param9.value = False
         param9.enabled = False
 
-        # 10. CAD-vienti: valittavat attribuuttikentät DWG-taulukkoon
+        # 10. CAD-vienti: tasokohtaiset attribuuttikentät DWG-taulukoihin.
+        # GPValueTable antaa jokaiselle riville oman taso- ja kenttävalikon;
+        # Field-sarake riippuu ArcGISissa automaattisesti ensimmäisen sarakkeen
+        # tasosta. Saman tason voi lisätä usealle riville, jos taulukkoon
+        # halutaan useita kenttiä.
         param10 = arcpy.Parameter(
-            displayName="[CAD-vienti] Taulukkoon vietävät kentät (monivalinta)",
+            displayName="[CAD-vienti] Tasokohtaiset taulukkokentät (yksi rivi / kenttä)",
             name="cad_attribute_text_fields",
-            datatype="GPString",
+            datatype="GPValueTable",
             parameterType="Optional",
             direction="Input")
-        param10.multiValue = True
-        param10.filter.type = "ValueList"
-        param10.filter.list = []
+        param10.columns = [
+            ["GPFeatureLayer", "Taso"],
+            ["Field", "Taulukkoon vietävä kenttä"],
+        ]
         param10.enabled = False
 
         # 11. DFSU-suodatin: käytössä?
@@ -341,6 +348,7 @@ class UniversalImportTool(object):
             self._clear_multivalue_parameter(p_input)
             self._clear_multivalue_parameter(p_export_layers)
             self._clear_multivalue_parameter(p_cad_attr_fields)
+            self._cad_table_layer_signature = None
             p_cad_label.value = None
             p_cad_emit_table.value = False
             p_dfsu_filter_en.value = False
@@ -468,18 +476,19 @@ class UniversalImportTool(object):
             if fmt_cad and has_dwg and paths:
                 opts = self._common_label_field_options(paths)
                 p_cad_label.filter.list = opts
-                p_cad_attr_fields.filter.list = opts
                 # Jos aiempi arvo ei enää kelpaa, tyhjennä se
                 cur = (p_cad_label.valueAsText or "").strip()
                 if cur and cur not in opts:
                     p_cad_label.value = None
-                cur_multi = self._multi_value_strings(p_cad_attr_fields)
-                keep = [x for x in opts if x in cur_multi]
-                p_cad_attr_fields.values = keep if keep else []
+                if p_cad_attr_fields.enabled:
+                    self._sync_cad_table_rows(p_cad_attr_fields, paths)
+                else:
+                    self._clear_multivalue_parameter(p_cad_attr_fields)
+                    self._cad_table_layer_signature = None
             else:
                 p_cad_label.filter.list = []
-                p_cad_attr_fields.filter.list = []
-                p_cad_attr_fields.values = []
+                self._clear_multivalue_parameter(p_cad_attr_fields)
+                self._cad_table_layer_signature = None
             
             # DFSU-suodatin pois päältä viennissä
             p_dfsu_filter_en.enabled = False
@@ -796,6 +805,12 @@ class UniversalImportTool(object):
             self.log(messages, f"  > Siivottiin {removed} väliaikaista aineistoa ajon lopussa.")
 
     def updateMessages(self, parameters):
+        # Poista edellisen validointikierroksen omat virheet ennen nykyisen
+        # tilan tarkistusta. Muuten ArcGIS Pro voi jättää jo korjatun kentän
+        # tilaan "missing or invalid parameter" erityisesti usean tason
+        # valinnan ja tuonti/vienti-moodin vaihdon jälkeen.
+        self._clear_parameter_messages(parameters, range(len(parameters)))
+
         p_mode = parameters[0]
         p_input = parameters[1]
         p_export_folder = parameters[6]
@@ -808,7 +823,7 @@ class UniversalImportTool(object):
         
         mode = (p_mode.valueAsText or "Tuonti").strip()
         is_import = mode.startswith("Tuonti")
-        
+
         selection_param = p_input if is_import else p_export_layers
         raw_paths = self._input_paths_from_param(selection_param)
         if is_import:
@@ -860,7 +875,7 @@ class UniversalImportTool(object):
                     return
             cad_lbl = (p_cad_label.valueAsText or "").strip()
             emit_attr_tbl = bool(p_cad_emit_table.value)
-            attr_fields = self._multi_value_strings(p_cad_attr_fields) if emit_attr_tbl else []
+            attr_specs = self._cad_table_field_specs(p_cad_attr_fields) if emit_attr_tbl else []
             if fmt in ("DWG", "DXF") and cad_lbl:
                 for pv in paths:
                     try:
@@ -874,14 +889,23 @@ class UniversalImportTool(object):
                     except Exception as e:
                         p_cad_label.setErrorMessage(f"Labelkentän tarkistus epäonnistui ({pv}): {e}")
                         return
-            if fmt in ("DWG", "DXF") and emit_attr_tbl and not attr_fields:
-                p_cad_attr_fields.setErrorMessage("Valitse vähintään yksi kenttä DWG-taulukkoon.")
+            if fmt in ("DWG", "DXF") and emit_attr_tbl and not attr_specs:
+                p_cad_attr_fields.setErrorMessage(
+                    "Valitse jokaiselle vientitasolle vähintään yksi taulukkokenttä. "
+                    "Lisää uusi rivi, kun haluat samasta tasosta useita kenttiä."
+                )
                 return
-            if fmt in ("DWG", "DXF") and emit_attr_tbl and attr_fields:
+            if fmt in ("DWG", "DXF") and emit_attr_tbl and attr_specs:
                 for pv in paths:
                     try:
                         catalog = self._resolve_export_catalog_path(pv)
-                        miss = [f for f in attr_fields if not self._cad_resolve_field_name(catalog, f)]
+                        layer_fields = self._cad_table_fields_for_source(attr_specs, pv)
+                        if not layer_fields:
+                            p_cad_attr_fields.setErrorMessage(
+                                f"Valitse tasolle '{pv}' vähintään yksi taulukkokenttä."
+                            )
+                            return
+                        miss = [f for f in layer_fields if not self._cad_resolve_field_name(catalog, f)]
                         if miss:
                             p_cad_attr_fields.setErrorMessage(
                                 f"Tasosta '{pv}' puuttuu kenttä(t): {', '.join(miss)}"
@@ -1011,6 +1035,14 @@ class UniversalImportTool(object):
             except Exception:
                 pass
 
+    def _clear_parameter_messages(self, parameters, indexes):
+        """Poista piilotettujen/pois kytkettyjen parametrien vanhat virheet."""
+        for index in indexes:
+            try:
+                parameters[index].clearMessage()
+            except Exception:
+                pass
+
     def _ensure_project_default_output_location(self, param):
         """Aseta tuonnin oletuskohteeksi aktiivisen projektin oletus-GDB.
 
@@ -1043,7 +1075,113 @@ class UniversalImportTool(object):
         """Palauta ArcGIS Pron GPFeatureLayer-monivalitsimen tasot listana."""
         if values is None:
             values = self._input_paths_from_param(param)
-        return [str(value).strip() for value in values if str(value).strip()]
+        out = []
+        seen = set()
+        for value in values or []:
+            text = str(value).strip()
+            if not text:
+                continue
+            key = self._cad_source_text_key(text)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+        return out
+
+    def _cad_source_text_key(self, value):
+        """Vakaa tekstivertailu ArcGISin layer-nimille ja catalogPath-poluille."""
+        text = str(value or "").strip().strip("'\"")
+        return text.replace("/", "\\").casefold()
+
+    def _cad_table_field_specs(self, param):
+        """Lue GPValueTable riveiksi ``[(taso, kenttä), ...]``."""
+        specs = []
+        try:
+            rows = getattr(param, "values", None) or []
+        except Exception:
+            rows = []
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 2:
+                continue
+            layer = str(row[0] or "").strip()
+            field = str(row[1] or "").strip()
+            if layer and field:
+                pair = (layer, field)
+                if pair not in specs:
+                    specs.append(pair)
+        return specs
+
+    def _sync_cad_table_rows(self, param, export_paths):
+        """Pidä yksi tasokohtainen kenttärivi valmiina joka vientitasolle.
+
+        Käyttäjä voi lisätä samalle tasolle uusia rivejä ja valita joka
+        rivillä oman kentän. Rivejä kirjoitetaan uudelleen vain, jos
+        vientitasojen joukko muuttuu, jotta ArcGIS Pron aktiivista solua ei
+        häiritä tavallisilla validaatiokierroksilla.
+        """
+        selected = self._export_paths_from_param(None, export_paths)
+        signature = tuple(self._cad_source_text_key(value) for value in selected)
+        if signature == self._cad_table_layer_signature:
+            return
+
+        try:
+            old_rows = list(getattr(param, "values", None) or [])
+        except Exception:
+            old_rows = []
+
+        selected_by_key = {
+            self._cad_source_text_key(value): value for value in selected
+        }
+        rows = []
+        represented = set()
+        for row in old_rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 2:
+                continue
+            layer_key = self._cad_source_text_key(row[0])
+            if layer_key not in selected_by_key:
+                continue
+            rows.append([selected_by_key[layer_key], row[1]])
+            represented.add(layer_key)
+
+        for value in selected:
+            key = self._cad_source_text_key(value)
+            if key not in represented:
+                rows.append([value, None])
+
+        try:
+            param.values = rows
+        except Exception:
+            pass
+        self._cad_table_layer_signature = signature
+
+    def _cad_source_keys(self, value):
+        """Palauta layerille tekstin ja catalogPathin vertailuavaimet."""
+        keys = {self._cad_source_text_key(value)}
+        try:
+            desc = arcpy.Describe(value)
+            for candidate in (
+                getattr(desc, "catalogPath", None),
+                getattr(desc, "name", None),
+                getattr(desc, "baseName", None),
+            ):
+                if candidate:
+                    keys.add(self._cad_source_text_key(candidate))
+        except Exception:
+            pass
+        return {key for key in keys if key}
+
+    def _cad_table_fields_for_source(self, specs, in_src):
+        """Palauta vain yhdelle vientitasolle valitut taulukkokentät."""
+        source_keys = self._cad_source_keys(in_src)
+        fields = []
+        for layer, field in specs or []:
+            if source_keys.intersection(self._cad_source_keys(layer)) and field not in fields:
+                fields.append(field)
+        if not fields and len({self._cad_source_text_key(s[0]) for s in specs or []}) == 1:
+            # Yhden tason ajossa ArcGIS voi esittää saman layerin eri
+            # tekstimuodossa GPFeatureLayer- ja GPValueTable-kontrolleissa.
+            fields = list(dict.fromkeys(field for _layer, field in specs or [] if field))
+        return fields
 
     def _list_supported_import_files(self, folder_path):
         """Palauta kansion ja sen alikansioiden tuetut tuontitiedostot.
@@ -1405,9 +1543,13 @@ class UniversalImportTool(object):
                 input_param,
                 self._input_paths_from_param(input_param),
             )  # Index shifted from 0 to 1
+        else:
+            input_paths = self._export_paths_from_param(None, input_paths)
         folder = (parameters[6].valueAsText or "").strip()  # Index shifted from 5 to 6
         fmt = (parameters[7].valueAsText or "GPKG").strip()  # Index shifted from 6 to 7
-        target_sr = self._spatial_ref_from_param(parameters[5].value)  # Index shifted from 4 to 5
+        # Parametri 5 kuuluu vain CAD-tuontiin. Piilotettu aiempi arvo ei saa
+        # projisoida vientiaineistoja huomaamatta.
+        target_sr = None
         multi_packaging = self._multi_export_packaging_from_param(
             parameters[16] if len(parameters) > 16 else None,
             len(input_paths),
@@ -1441,12 +1583,12 @@ class UniversalImportTool(object):
         use_map_symbology = True  # aina päällä
         cad_text_height = 10.0    # aina 10
         emit_attr_table = False
-        attr_text_fields = []
+        attr_table_specs = []
         try:
             cad_label_field = (parameters[8].valueAsText or "").strip()  # Index shifted from 7 to 8
             emit_attr_table = bool(parameters[9].value) if len(parameters) > 9 else False  # Index shifted from 8 to 9
             if emit_attr_table and len(parameters) > 10:  # Updated length check
-                attr_text_fields = self._multi_value_strings(parameters[10])  # Index shifted from 9 to 10
+                attr_table_specs = self._cad_table_field_specs(parameters[10])
         except Exception:
             pass
 
@@ -1489,7 +1631,7 @@ class UniversalImportTool(object):
                                 use_map_symbology=use_map_symbology,
                                 cad_text_height=cad_text_height,
                                 emit_attr_table=emit_attr_table,
-                                attr_text_fields=attr_text_fields,
+                                attr_table_specs=attr_table_specs,
                             )
                         )
                 else:
@@ -1504,7 +1646,7 @@ class UniversalImportTool(object):
                             use_map_symbology=use_map_symbology,
                             cad_text_height=cad_text_height,
                             emit_attr_table=emit_attr_table,
-                            attr_text_fields=attr_text_fields,
+                            attr_table_specs=attr_table_specs,
                         )
                     ]
 
@@ -1587,24 +1729,8 @@ class UniversalImportTool(object):
                     self.log(messages, f"Tuntematon vientiformaatti: {fmt}", "ERROR")
                     return
 
-            try:
-                aprx = arcpy.mp.ArcGISProject("CURRENT")
-                if aprx.activeMap and written_paths:
-                    for wp in written_paths:
-                        try:
-                            if wp and os.path.exists(str(wp)):
-                                aprx.activeMap.addDataFromPath(wp)
-                            elif wp:
-                                try:
-                                    if arcpy.Exists(wp):
-                                        aprx.activeMap.addDataFromPath(wp)
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            self.log(messages, f"Vienti valmis: {len(written_paths)} tuotosta.")
+            output_files = self._export_output_file_paths(written_paths)
+            self.log(messages, f"Vienti valmis: {len(output_files)} tiedostoa.")
 
         except Exception as e:
             self.log(messages, f"Vientivirhe: {str(e)}", "ERROR")
@@ -1620,12 +1746,34 @@ class UniversalImportTool(object):
             return d.catalogPath
         return in_src
 
+    def _export_output_file_paths(self, written_paths):
+        """Muunna mahdolliset GPKG:n sisäiset tasopolut tiedostopoluiksi."""
+        files = []
+        seen = set()
+        for value in written_paths or []:
+            if not value:
+                continue
+            text = str(value)
+            match = re.search(r"\.gpkg(?:[\\/]|$)", text, flags=re.IGNORECASE)
+            if match:
+                text = text[:match.start() + len(".gpkg")]
+            key = os.path.normcase(os.path.normpath(text))
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(text)
+        return files
+
     def _export_source_label(self, in_src):
         """Lyhyt nimi tiedostonimeä varten (taso / FC)."""
         try:
             d = arcpy.Describe(in_src)
             nm = getattr(d, "name", None) or ""
             if nm:
+                if "." in nm:
+                    schema, unqualified = nm.split(".", 1)
+                    if schema.casefold() in ("main", "temp") and unqualified:
+                        nm = unqualified
                 return nm
             cp = getattr(d, "catalogPath", None) or ""
             if cp:
@@ -2203,10 +2351,11 @@ class UniversalImportTool(object):
             self.log(messages, f"  > AddCADFields epäonnistui: {e}", "WARNING")
 
     def _cad_resolve_field_name(self, fc_path, requested):
-        rq = (requested or "").strip().lower()
+        rq = (requested or "").strip().strip("'\"").lower()
         if not rq:
             return None
-        if rq in ("objectid", "oid", "fid"):
+        rq_candidates = {rq, rq.rsplit(".", 1)[-1]}
+        if rq_candidates.intersection(("objectid", "oid", "fid")):
             try:
                 desc = arcpy.Describe(fc_path)
                 oid_name = getattr(desc, "OIDFieldName", None)
@@ -2219,7 +2368,7 @@ class UniversalImportTool(object):
                     if f.name.lower() == fallback.lower():
                         return f.name
         for f in arcpy.ListFields(fc_path):
-            if f.name.lower() == rq:
+            if f.name.lower() in rq_candidates:
                 return f.name
         return None
 
@@ -2587,10 +2736,13 @@ class UniversalImportTool(object):
         messages,
         text_height=10.0,
         layer_name="ATTRIBUUTIT",
+        anchor_x=None,
+        anchor_y=None,
+        table_title=None,
     ):
-        """Luo DWG:hen visuaalinen taulukko erillisistä viiva- ja tekstikerroksista."""
+        """Luo DWG:hen visuaalinen taulukko ja palauta ``(FC:t, leveys)``."""
         if not field_names:
-            return []
+            return [], 0.0
         actual = []
         for fn in field_names:
             af = self._cad_resolve_field_name(fc_path, fn)
@@ -2598,7 +2750,7 @@ class UniversalImportTool(object):
                 actual.append(af)
         if not actual:
             self.log(messages, "  > Attribuuttitaulukkoon ei löytynyt yhtään validia kenttää.", "WARNING")
-            return []
+            return [], 0.0
 
         parent = os.path.dirname(fc_path)
         base = os.path.basename(fc_path)
@@ -2629,8 +2781,12 @@ class UniversalImportTool(object):
 
         dx = max(100.0, width * 0.25)
         dy = max(100.0, height * 0.10)
-        anchor_x = x_max + dx
-        anchor_y = y_max + dy
+        if anchor_x is None:
+            anchor_x = x_max + dx
+        if anchor_y is None:
+            anchor_y = y_max + dy
+        anchor_x = float(anchor_x)
+        anchor_y = float(anchor_y)
         default_text_height = float(text_height)
         row_height = max(16.0, default_text_height * 2.1)
         text_x_pad = max(2.5, float(text_height) * 0.45)
@@ -2648,7 +2804,7 @@ class UniversalImportTool(object):
             self._cad_apply_add_cad_fields_full(grid_fc, messages)
         except Exception as e:
             self.log(messages, f"  > Attribuuttitaulukon FC:n luonti epäonnistui: {e}", "WARNING")
-            return []
+            return [], 0.0
 
         cad_tf = self._cad_pick_reserved_field(out_fc, ("CadType", "CADType"))
         txt_f = self._cad_pick_reserved_field(out_fc, ("TxtValue", "Text"))
@@ -2673,7 +2829,7 @@ class UniversalImportTool(object):
                 arcpy.management.Delete(grid_fc)
             except Exception:
                 pass
-            return []
+            return [], 0.0
 
         resolved_specs = []
         header_labels = []
@@ -2695,7 +2851,7 @@ class UniversalImportTool(object):
                 arcpy.management.Delete(grid_fc)
             except Exception:
                 pass
-            return []
+            return [], 0.0
 
         actual = [spec[1] for spec in resolved_specs]
         table_rows = [header_labels]
@@ -2714,7 +2870,7 @@ class UniversalImportTool(object):
                 arcpy.management.Delete(grid_fc)
             except Exception:
                 pass
-            return []
+            return [], 0.0
 
         if len(table_rows) <= 1:
             self.log(messages, "  > Attribuuttitaulukko: ei rivejä vietäväksi.", "WARNING")
@@ -2726,7 +2882,13 @@ class UniversalImportTool(object):
                 arcpy.management.Delete(grid_fc)
             except Exception:
                 pass
-            return []
+            return [], 0.0
+
+        header_row_count = 1
+        if table_title:
+            title_row = [str(table_title)] + ([""] * (len(actual) - 1))
+            table_rows.insert(0, title_row)
+            header_row_count = 2
 
         col_widths = []
         for col_idx in range(len(actual)):
@@ -2767,7 +2929,7 @@ class UniversalImportTool(object):
                             truncated += 1
                         usable_width = max(6.0, col_widths[col_idx] - (text_x_pad * 2.0))
                         char_count = max(1, len(txt))
-                        if row_idx == 0:
+                        if row_idx < header_row_count:
                             fit_height = usable_width / (char_count * fit_char_width_factor_header)
                         else:
                             fit_height = usable_width / (char_count * fit_char_width_factor_body)
@@ -2797,7 +2959,7 @@ class UniversalImportTool(object):
                 arcpy.management.Delete(grid_fc)
             except Exception:
                 pass
-            return []
+            return [], 0.0
 
         grid_fields = ["SHAPE@"] + ([grid_lyr_f] if grid_lyr_f else []) + ([grid_color_f] if grid_color_f else [])
         grid_count = 0
@@ -2844,7 +3006,7 @@ class UniversalImportTool(object):
                 arcpy.management.Delete(grid_fc)
             except Exception:
                 pass
-            return []
+            return [], 0.0
 
         self.log(
             messages,
@@ -2852,7 +3014,7 @@ class UniversalImportTool(object):
             f"kohtaan X={anchor_x:.2f}, Y={anchor_y:.2f}. Taso: {table_layer_name} (tekstit + ruudukko)."
             + (f" Leikattuja pitkiä solutekstejä: {truncated}." if truncated else ""),
         )
-        return [grid_fc, out_fc]
+        return [grid_fc, out_fc], float(col_edges[-1] - anchor_x)
 
     def _cad_prepare_pair_for_export(
         self,
@@ -2863,9 +3025,12 @@ class UniversalImportTool(object):
         use_map_symbology,
         cad_text_height=10.0,
         emit_attr_table=False,
-        attr_text_fields=None,
+        attr_table_fields=None,
+        attr_table_anchor=None,
+        attr_table_layer_name="ATTRIBUUTIT",
+        attr_table_title=None,
     ):
-        """Valmistelee yhden tason DWG-vientiä varten; palauttaa (pää-FC, valinnainen teksti-FC kopio)."""
+        """Valmistele yksi CAD-taso; palauta pää-/teksti-/taulukko-FC:t ja taulukon leveys."""
         self._cad_ensure_gis_objectid_field(fc_path, messages)
         self._cad_log_attribute_schema(fc_path, messages)
         self._cad_add_portable_field_clones_for_attributes(fc_path, messages)
@@ -2899,15 +3064,46 @@ class UniversalImportTool(object):
                 text_height=cad_text_height,
             )
         attrs_fcs = []
-        if emit_attr_table and attr_text_fields:
-            attrs_fcs = self._cad_prepare_attribute_table_text_layer_copy(
+        attrs_width = 0.0
+        if emit_attr_table and attr_table_fields:
+            anchor_x = attr_table_anchor[0] if attr_table_anchor else None
+            anchor_y = attr_table_anchor[1] if attr_table_anchor else None
+            attrs_fcs, attrs_width = self._cad_prepare_attribute_table_text_layer_copy(
                 fc_path,
-                attr_text_fields,
+                attr_table_fields,
                 messages,
                 text_height=cad_text_height,
-                layer_name="ATTRIBUUTIT",
+                layer_name=attr_table_layer_name,
+                anchor_x=anchor_x,
+                anchor_y=anchor_y,
+                table_title=attr_table_title,
             )
-        return fc_path, label_fc, attrs_fcs
+        return fc_path, label_fc, attrs_fcs, attrs_width
+
+    def _cad_attribute_table_layout_origin(self, fc_source_pairs, text_height=10.0):
+        """Yhteinen aloituspiste ja väli vierekkäisille tasotaulukoille."""
+        x_mins = []
+        x_maxs = []
+        y_mins = []
+        y_maxs = []
+        for fc_path, _in_src in fc_source_pairs or []:
+            try:
+                ext = getattr(arcpy.Describe(fc_path), "extent", None)
+                if ext:
+                    x_mins.append(float(ext.XMin))
+                    x_maxs.append(float(ext.XMax))
+                    y_mins.append(float(ext.YMin))
+                    y_maxs.append(float(ext.YMax))
+            except Exception:
+                continue
+        if not x_maxs:
+            return 100.0, 100.0, max(100.0, float(text_height) * 10.0)
+        width = max(x_maxs) - min(x_mins)
+        height = max(y_maxs) - min(y_mins)
+        offset_x = max(100.0, width * 0.05)
+        offset_y = max(100.0, height * 0.10)
+        gap = max(100.0, float(text_height) * 10.0)
+        return max(x_maxs) + offset_x, max(y_maxs) + offset_y, gap
 
     def _export_to_cad(
         self,
@@ -2918,7 +3114,7 @@ class UniversalImportTool(object):
         use_map_symbology=True,
         cad_text_height=10.0,
         emit_attr_table=False,
-        attr_text_fields=None,
+        attr_table_specs=None,
     ):
         """DWG/DXF: yksi tai useampi (fc_scratch, in_src) — Export To CAD samaan tiedostoon."""
         if arcpy.Exists(out_path):
@@ -2931,8 +3127,16 @@ class UniversalImportTool(object):
 
         cad_stack = []
         label_cleanup = []
-        for fc_path, in_src in fc_source_pairs:
-            main_fc, label_fc, attrs_fcs = self._cad_prepare_pair_for_export(
+        table_x, table_y, table_gap = self._cad_attribute_table_layout_origin(
+            fc_source_pairs,
+            cad_text_height,
+        )
+        next_table_x = table_x
+        for pair_index, (fc_path, in_src) in enumerate(fc_source_pairs, 1):
+            table_fields = self._cad_table_fields_for_source(attr_table_specs or [], in_src)
+            source_label = self.sanitize_name(self._export_source_label(in_src)) or f"TASO_{pair_index}"
+            table_layer_name = f"ATTRIBUUTIT_{pair_index}_{source_label}"[:240]
+            main_fc, label_fc, attrs_fcs, attrs_width = self._cad_prepare_pair_for_export(
                 fc_path,
                 in_src,
                 messages,
@@ -2940,7 +3144,10 @@ class UniversalImportTool(object):
                 use_map_symbology,
                 cad_text_height,
                 emit_attr_table,
-                attr_text_fields,
+                table_fields,
+                (next_table_x, table_y),
+                table_layer_name,
+                self._export_source_label(in_src),
             )
             cad_stack.append(main_fc)
             if label_fc:
@@ -2949,6 +3156,8 @@ class UniversalImportTool(object):
             for attrs_fc in attrs_fcs or []:
                 cad_stack.append(attrs_fc)
                 label_cleanup.append(attrs_fc)
+            if attrs_fcs:
+                next_table_x += max(float(attrs_width), 1.0) + table_gap
 
         cad_inputs = cad_stack
 
@@ -3271,11 +3480,13 @@ class UniversalImportTool(object):
                 raise
         target = os.path.join(out_path, layer_name)
         if arcpy.Exists(target):
-            try:
-                arcpy.management.Delete(target)
-            except Exception:
-                layer_name = layer_name + "_" + datetime.datetime.now().strftime("%H%M%S")
+            base_layer_name = layer_name
+            suffix = 2
+            while arcpy.Exists(target) and suffix < 10000:
+                suffix_text = f"_{suffix}"
+                layer_name = (base_layer_name[:max(1, 30 - len(suffix_text))] + suffix_text)
                 target = os.path.join(out_path, layer_name)
+                suffix += 1
         arcpy.management.CopyFeatures(fc_path, target)
         self.log(messages, f"GeoPackage-vienti valmis: {target}")
         return target
@@ -4432,6 +4643,30 @@ class UniversalImportTool(object):
                     pass
         if not made_any:
             self.log(messages, f"  > GeoJSON-tuonti: tiedostosta '{input_path}' ei saatu yhtään geometriaa.", "WARNING")
+    def _geopackage_import_output_name(self, input_path, feature_class_name):
+        """Poista ArcGISin ``main.``-skeema GPKG-tason tuontinimestä.
+
+        ArcGIS listaa esimerkiksi tason ``Nopeusrajoitus`` usein muodossa
+        ``main.Nopeusrajoitus``. ``os.path.splitext`` tulkitsisi loppuosan
+        tiedostopäätteeksi ja palauttaisi virheellisesti nimeksi ``main``.
+        """
+        raw = str(feature_class_name or "").strip().replace("/", "\\")
+        leaf = raw.rsplit("\\", 1)[-1]
+        if "." in leaf:
+            schema, qualified_name = leaf.split(".", 1)
+            if schema.casefold() in ("main", "temp") and qualified_name.strip():
+                leaf = qualified_name.strip()
+
+        if not leaf or leaf.casefold() in ("main", "temp"):
+            leaf = os.path.splitext(os.path.basename(str(input_path)))[0]
+
+        result = self.sanitize_name(leaf)
+        if not result:
+            result = self.sanitize_name(
+                os.path.splitext(os.path.basename(str(input_path)))[0]
+            ) or "gpkg_taso"
+        return result
+
     def process_geopackage(self, input_path, output_loc, is_folder, messages):
         prev_ws = arcpy.env.workspace
         try:
@@ -4453,7 +4688,7 @@ class UniversalImportTool(object):
                 if self._count_safe(src_path) == 0:
                     self.log(messages, f"  > Ohitetaan tyhjä GPKG-taso: {fc}")
                     continue
-                out_name = self.sanitize_name(os.path.splitext(os.path.basename(fc))[0])
+                out_name = self._geopackage_import_output_name(input_path, fc)
                 batch_items.append((src_path, out_name))
             if batch_items:
                 self.log(messages, f"  > GPKG-eräajo: {len(batch_items)} tasoa.")

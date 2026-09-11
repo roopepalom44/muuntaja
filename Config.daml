@@ -6,7 +6,7 @@
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
 	<AddInInfo id="{78512C46-1376-4F15-812E-2A0D8D900A9E}"
-			   version="1.1.1"
+			   version="1.2.0"
 			   desktopVersion="3.5.0"
 			   product="ArcGISPro">
 		<Name>Muuntaja</Name>
@@ -14,7 +14,7 @@
 		<Image>Images\muuntaja32.png</Image>
 		<Author>Roope Palomaa</Author>
 		<Company>Ramboll</Company>
-		<Date>2026-03-02</Date>
+		<Date>2026-09-11</Date>
 		<Subject>Framework</Subject>
 	</AddInInfo>
 

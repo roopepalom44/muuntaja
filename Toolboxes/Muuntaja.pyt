@@ -85,6 +85,8 @@ class UniversalImportTool(object):
         self._last_operation_mode = None
         self._cad_label_layer_signature = None
         self._cad_table_layer_signature = None
+        self._cad_label_source_by_display = {}
+        self._cad_table_source_by_prompt = {}
 
     def getParameterInfo(self):
         # 0. Mitä haluat tehdä? (MODE) — tuonti tai vienti
@@ -214,11 +216,13 @@ class UniversalImportTool(object):
             parameterType="Optional",
             direction="Input")
         param8.columns = [
-            ["GPFeatureLayer", "Taso"],
+            ["GPString", "Taso"],
             ["GPString", "Teksti-/labelkenttä"],
             ["GPBoolean", "Vie tekstit"],
         ]
         try:
+            param8.filters[0].type = "ValueList"
+            param8.filters[0].list = []
             param8.filters[1].type = "ValueList"
             param8.filters[1].list = []
         except Exception:
@@ -236,18 +240,17 @@ class UniversalImportTool(object):
         param9.value = False
         param9.enabled = False
 
-        # 10. CAD-vienti: yksinkertainen tasokohtainen taulukkovalinta.
-        # Valitun tason taulukkoon viedään kaikki tulostuskelpoiset kentät.
+        # 10. CAD-vienti: tasokohtainen checkbox-lista. Jokainen vaihtoehto
+        # kertoo suoraan, mille tasolle attribuuttitaulukko luodaan.
         param10 = arcpy.Parameter(
-            displayName="[CAD-vienti] Luo attribuuttitaulu tasoittain (kaikki kentät)",
+            displayName="[CAD-vienti] Luo attribuuttitaulukot tasoittain (kaikki kentät)",
             name="cad_attribute_tables_by_layer",
-            datatype="GPValueTable",
+            datatype="GPString",
             parameterType="Optional",
             direction="Input")
-        param10.columns = [
-            ["GPFeatureLayer", "Taso"],
-            ["GPBoolean", "Luo attribuuttitaulu"],
-        ]
+        param10.multiValue = True
+        param10.filter.type = "ValueList"
+        param10.filter.list = []
         param10.enabled = False
 
         # 11. DFSU-suodatin: käytössä?
@@ -997,11 +1000,11 @@ class UniversalImportTool(object):
         return text.replace("/", "\\").casefold()
 
     def _cad_ui_sources_from_parameter(self, param, fallback=None):
-        """Palauta GPFeatureLayer-arvot UI-taulukoihin alkuperäisinä objekteina.
+        """Palauta GPFeatureLayer-arvot CAD-valintojen taustalähteiksi.
 
-        Kenttätyyppinen GPValueTable-solu tarvitsee ensimmäiseen sarakkeeseen
-        varsinaisen layer-objektin tai catalogPathin. Pelkkä kartalla näkyvä
-        tekstinimi ei riitä luotettavasti ryhmätasoille.
+        Näkyvissä GPValueTable-riveissä käytetään erikseen muodostettua
+        tekstinimeä. Tässä säilytetään varsinainen layer-objekti tai
+        catalogPath, jotta kenttäluettelot ja vienti kohdistuvat oikeaan tasoon.
         """
         try:
             values = list(getattr(param, "values", None) or [])
@@ -1030,6 +1033,59 @@ class UniversalImportTool(object):
             seen.add(key)
             result.append(candidate)
         return result
+
+    def _cad_source_display_name(self, source):
+        """Muodosta käyttäjälle näkyvä nimi CAD:n tasokohtaisiin valintoihin."""
+        if source is None:
+            return "Taso"
+
+        if not isinstance(source, str):
+            for attr_name in ("longName", "name"):
+                try:
+                    value = str(getattr(source, attr_name, "") or "").strip()
+                except Exception:
+                    value = ""
+                if value:
+                    return value
+
+        try:
+            desc = arcpy.Describe(source)
+            for attr_name in ("name", "baseName"):
+                value = str(getattr(desc, attr_name, "") or "").strip()
+                if value:
+                    if value.casefold().endswith(".shp"):
+                        value = os.path.splitext(os.path.basename(value))[0]
+                    elif "." in value:
+                        value = value.split(".", 1)[-1]
+                    return value
+        except Exception:
+            pass
+
+        text = str(source or "").strip().strip("'\"")
+        if not text:
+            return "Taso"
+        normalized = text.replace("/", "\\").rstrip("\\")
+        tail = normalized.rsplit("\\", 1)[-1]
+        if tail:
+            if "." in tail and not tail.lower().endswith((".shp", ".gpkg")):
+                tail = tail.split(".", 1)[-1]
+            return tail
+        return text
+
+    def _cad_display_entries(self, sources):
+        """Palauta yksilölliset ``(näyttönimi, lähde)``-parit valituille tasoille."""
+        entries = []
+        counts = {}
+        for source in sources or []:
+            base = self._cad_source_display_name(source) or "Taso"
+            count = counts.get(base.casefold(), 0) + 1
+            counts[base.casefold()] = count
+            display = base if count == 1 else f"{base} ({count})"
+            entries.append((display, source))
+        return entries
+
+    def _cad_table_prompt(self, display_name):
+        return f"Luodaanko attribuuttitaulu tasosta {display_name}?"
 
     def _cad_label_field_names_for_source(self, source):
         """Palauta yhden tason labeliksi soveltuvat kentät."""
@@ -1094,7 +1150,8 @@ class UniversalImportTool(object):
         for row in rows:
             if not isinstance(row, (list, tuple)) or len(row) < 3:
                 continue
-            layer = row[0]
+            display = str(row[0] or "").strip()
+            layer = self._cad_label_source_by_display.get(display, row[0])
             field = str(row[1] or "").strip()
             if layer is not None and self._cad_source_text_key(layer):
                 result.append((layer, self._cad_value_is_true(row[2]), field))
@@ -1112,13 +1169,18 @@ class UniversalImportTool(object):
         """Pidä jokaiselle valitulle vientitasolle oma labelkenttärivi."""
         selected = list(export_paths or [])
         signature = tuple(self._cad_source_text_key(value) for value in selected)
-        if signature == self._cad_label_layer_signature:
+        if signature == self._cad_label_layer_signature and self._cad_label_source_by_display:
             return
 
+        old_lookup = dict(self._cad_label_source_by_display)
         try:
             old_rows = list(getattr(param, "values", None) or [])
         except Exception:
             old_rows = []
+        entries = self._cad_display_entries(selected)
+        self._cad_label_source_by_display = {
+            display: source for display, source in entries
+        }
         selected_by_key = {
             self._cad_source_text_key(value): value for value in selected
         }
@@ -1126,22 +1188,32 @@ class UniversalImportTool(object):
         for row in old_rows:
             if not isinstance(row, (list, tuple)) or len(row) < 3:
                 continue
-            key = self._cad_source_text_key(row[0])
+            old_display = str(row[0] or "").strip()
+            old_source = old_lookup.get(old_display, row[0])
+            key = self._cad_source_text_key(old_source)
             if key in selected_by_key:
                 old_by_key[key] = [
-                    selected_by_key[key],
+                    old_display,
                     row[1],
                     self._cad_value_is_true(row[2]),
                 ]
 
         rows = []
-        for value in selected:
+        for display, value in entries:
             key = self._cad_source_text_key(value)
-            rows.append(old_by_key.get(key) or [
-                value,
+            old_row = old_by_key.get(key)
+            rows.append(old_row or [
+                display,
                 self._cad_default_label_field_for_source(value),
                 False,
             ])
+            if old_row:
+                rows[-1][0] = display
+        try:
+            param.filters[0].type = "ValueList"
+            param.filters[0].list = [display for display, _source in entries]
+        except Exception:
+            pass
         try:
             param.values = rows
         except Exception:
@@ -1159,53 +1231,45 @@ class UniversalImportTool(object):
     def _cad_attribute_table_sources(self, param):
         """Palauta tasot, joille käyttäjä valitsi CAD-attribuuttitaulukon."""
         selected = []
-        try:
-            rows = getattr(param, "values", None) or []
-        except Exception:
-            rows = []
-        for row in rows:
-            if not isinstance(row, (list, tuple)) or len(row) < 2:
-                continue
-            layer = row[0]
-            if (
-                layer is not None
-                and self._cad_source_text_key(layer)
-                and self._cad_value_is_true(row[1])
-            ):
-                selected.append(layer)
+        for prompt in self._multi_value_strings(param):
+            source = self._cad_table_source_by_prompt.get(prompt)
+            if source is not None:
+                selected.append(source)
         return selected
 
     def _sync_cad_table_rows(self, param, export_paths):
-        """Pidä jokaiselle vientitasolle yksi attribuuttitaulukon checkbox-rivi."""
+        """Pidä jokaiselle vientitasolle yksi nimetty attribuuttitaulukon checkbox."""
         selected = list(export_paths or [])
         signature = tuple(self._cad_source_text_key(value) for value in selected)
-        if signature == self._cad_table_layer_signature:
+        if signature == self._cad_table_layer_signature and self._cad_table_source_by_prompt:
             return
 
-        try:
-            old_rows = list(getattr(param, "values", None) or [])
-        except Exception:
-            old_rows = []
-
-        selected_by_key = {
-            self._cad_source_text_key(value): value for value in selected
+        old_lookup = dict(self._cad_table_source_by_prompt)
+        old_selected_sources = []
+        for prompt in self._multi_value_strings(param):
+            source = old_lookup.get(prompt)
+            if source is not None:
+                old_selected_sources.append(source)
+        old_selected_keys = {
+            self._cad_source_text_key(source) for source in old_selected_sources
         }
-        enabled_by_key = {}
-        for row in old_rows:
-            if not isinstance(row, (list, tuple)) or len(row) < 2:
-                continue
-            layer_key = self._cad_source_text_key(row[0])
-            if layer_key not in selected_by_key:
-                continue
-            enabled_by_key[layer_key] = self._cad_value_is_true(row[1])
 
-        rows = [
-            [value, enabled_by_key.get(self._cad_source_text_key(value), False)]
-            for value in selected
+        entries = self._cad_display_entries(selected)
+        prompts = [self._cad_table_prompt(display) for display, _source in entries]
+        self._cad_table_source_by_prompt = {
+            prompt: source
+            for prompt, (_display, source) in zip(prompts, entries)
+        }
+        checked = [
+            prompt
+            for prompt, (_display, source) in zip(prompts, entries)
+            if self._cad_source_text_key(source) in old_selected_keys
         ]
 
         try:
-            param.values = rows
+            param.filter.type = "ValueList"
+            param.filter.list = prompts
+            param.values = checked
         except Exception:
             pass
         self._cad_table_layer_signature = signature
@@ -2258,21 +2322,13 @@ class UniversalImportTool(object):
         """Pakota Export To CAD käyttämään POINT-entiteettiä pistetasoille (varattu CadType-kenttä).
 
         Ilman CadType-arvoa jotkin lähteet vievät pisteet ympyröinä tai vääränä entiteettinä.
-        Jos geometria on polygon (esim. puskuroitu piste), POINT-pakotus ei auta — varoitetaan.
+        Muiden geometriatyyppien CAD-esitykseen ei puututa.
         """
         try:
             desc = arcpy.Describe(fc_path)
         except Exception:
             return
         st = (desc.shapeType or "").lower()
-        if st == "polygon":
-            self.log(
-                messages,
-                "  > Huom: lähteen geometria on polygon (esim. buffer/puskuri). DWG:hen tulee ympyrä — "
-                "muuta lähteessä oikeaksi pistetasoksi jos haluat CAD-POINTin.",
-                "WARNING",
-            )
-            return
         if st != "point":
             return
 

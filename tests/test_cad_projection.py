@@ -74,6 +74,15 @@ class CadProjectionTests(unittest.TestCase):
             [("scratch/Polygon", "output/polygon", target_sr, "datum-transform", source_sr)],
         )
 
+    def test_polygon_does_not_emit_misleading_circle_warning(self):
+        self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(shapeType="Polygon")
+        messages = []
+        self.tool.log = lambda target, message, level="INFO": target.append((level, message))
+
+        self.tool._cad_force_point_entity_type("scratch/Polygon", messages)
+
+        self.assertEqual(messages, [])
+
 
 if __name__ == "__main__":
     unittest.main()

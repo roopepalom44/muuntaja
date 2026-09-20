@@ -12,6 +12,7 @@ import importlib
 import xml.etree.ElementTree as ET
 import json
 import zipfile
+import struct
 
 class Toolbox(object):
     def __init__(self):
@@ -255,7 +256,19 @@ class UniversalImportTool(object):
         param13.value = MULTI_EXPORT_PACKAGING_COMBINED
         param13.enabled = False
 
-        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13]
+        # 14. DFSU-tuonnin mikeio-asennus. Oletus pois: ajon aikainen
+        # pip install muuttaa ArcGIS Pron jaettua Python-ymparistoa, kestaa
+        # minuutteja ja epaonnistuu lukitulla tyoasemalla kesken kaiken.
+        param14 = arcpy.Parameter(
+            displayName="DFSU: asenna puuttuva mikeio-kirjasto automaattisesti",
+            name="dfsu_auto_install",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input")
+        param14.value = False
+        param14.enabled = False
+
+        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14]
 
     def updateParameters(self, parameters):
         """Mode-perustainen parametrienhallinta: tuonti vs. vienti sekä DFSU-suodatin."""
@@ -274,6 +287,7 @@ class UniversalImportTool(object):
         p_dfsu_filter_val = parameters[11] # DFSU: value
         p_export_layers = parameters[12]  # Vienti: ArcGISin monitasovalitsin
         p_multi_packaging = parameters[13]  # Vienti: GPKG/DWG/DXF-paketointi
+        p_dfsu_auto_install = parameters[14] if len(parameters) > 14 else None
         
         # Lue käyttäjän valittu moodi
         mode = (p_mode.valueAsText or "Tuonti").strip()
@@ -330,6 +344,11 @@ class UniversalImportTool(object):
             p_export_fmt.enabled = False
             p_multi_packaging.enabled = False
             
+            if p_dfsu_auto_install is not None:
+                p_dfsu_auto_install.enabled = has_dfsu
+                if not has_dfsu:
+                    p_dfsu_auto_install.value = False
+
             # DFSU-suodatin näkyy vain DFSU-tuonnissa
             if has_dfsu:
                 p_dfsu_filter_en.enabled = True
@@ -399,6 +418,9 @@ class UniversalImportTool(object):
                     p_multi_packaging.value = MULTI_EXPORT_PACKAGING_COMBINED
             
             # DFSU-parametrit piilotetaan viennissä
+            if p_dfsu_auto_install is not None:
+                p_dfsu_auto_install.enabled = False
+                p_dfsu_auto_install.value = False
             p_dfsu_filter_en.enabled = False
             p_dfsu_filter_col.enabled = False
             p_dfsu_filter_op.enabled = False
@@ -446,30 +468,41 @@ class UniversalImportTool(object):
         return []
 
     def _read_dfsu_columns_uncached(self, dfsu_path):
-        """Lue DFSU-tiedoston sarakkeet/attribuutit.
+        """Lue DFSU-tiedoston item-nimet mikeio-kirjastolla.
 
-        DFSU on DHI MIKE SHE/FEFLOW -hydrologisen mallin binäärimuoto.
-        Yritetään lukea sarakkeiden nimet tiedostosta.
+        DFSU on DHI MIKE -mallien binäärimuoto. Ainoa luotettava tapa lukea
+        item-nimet on mikeio. Aiempi versio arvaili nimiä binääriheaderin
+        ASCII-pätkistä ja palautti viime kädessä keksityt nimet
+        ``["Element ID", "X", "Y", "Z"]``. Käyttäjä valitsi niistä suodattimeen
+        kentän, jota ei ollut olemassa, ja sai nolla osumaa ilman selitystä.
+        Nyt puuttuva kirjasto näkyy tyhjänä listana ja selkeänä virheenä
+        ajon yhteydessä.
 
-        Returns: lista sarakkeiden/attribuuttien nimistä
+        Returns: lista item-nimistä, tai tyhjä lista jos niitä ei voi lukea.
         """
         try:
-            try:
-                import mikeio
-                dfs = mikeio.open(dfsu_path)
-                cols = []
-                for item in getattr(dfs, "items", []) or []:
-                    name = getattr(item, "name", None)
-                    if name:
-                        cols.append(str(name).strip())
-                cols = [c for c in cols if c]
-                if cols:
-                    return cols
-            except Exception:
-                pass
+            import mikeio
+        except Exception:
+            return []
+        try:
+            dfs = mikeio.open(dfsu_path)
+            cols = []
+            for item in getattr(dfs, "items", []) or []:
+                name = getattr(item, "name", None)
+                if name:
+                    cols.append(str(name).strip())
+            return [c for c in cols if c]
+        except Exception:
+            return []
 
+    def _read_dfsu_columns_heuristic(self, dfsu_path):
+        """Vanha binääriheuristiikka; säilytetty vain vianmääritystä varten.
+
+        Ei käytetä käyttöliittymässä, koska tulos ei ole luotettava.
+        """
+        try:
             columns = []
-            
+
             with open(dfsu_path, 'rb') as f:
                 data = f.read(8192)  # Lue riittävä osa headeria
                 
@@ -517,15 +550,12 @@ class UniversalImportTool(object):
                 # Säilytä uniikit, max 20
                 columns = list(dict.fromkeys(columns))[:20]
             
-            if columns:
-                return columns
-            
-            # Fallback: yleiset DFSU-sarakkeet
-            return ["Element ID", "X", "Y", "Z", "Value"]
-        
-        except Exception as e:
-            # Jos kaikkea muu epäonnistuu, palauta perus-sarakkeet
-            return ["Element ID", "X", "Y", "Z"]
+            return columns
+
+        except Exception:
+            # Keksityt sarakenimet ovat huonompi vastaus kuin tyhja lista:
+            # niista valittu suodatin ei osu koskaan mihinkaan.
+            return []
 
     def _ensure_python_module(self, import_name, package_name=None, messages=None, auto_install=False):
         """Tuo Python-moduuli; haluttaessa yritä asentaa se aktiiviseen Python-ympäristöön."""
@@ -698,6 +728,21 @@ class UniversalImportTool(object):
         else:
             paths = self._export_paths_from_param(p_export_layers, raw_paths)
             import_paths = []
+        # DFSU-suodattimen sarakelista on tyhjä, jos mikeio puuttuu. Kerro se
+        # heti dialogissa sen sijaan, että käyttäjä valitsisi kentän, jota ei
+        # ole, ja ihmettelisi nolla osumaa vasta ajon jälkeen.
+        if is_import and len(parameters) > 9 and bool(parameters[8].value):
+            has_dfsu_selection = any(
+                str(path).lower().endswith(".dfsu") for path in (import_paths or [])
+            )
+            if has_dfsu_selection and not (parameters[9].filter.list or []):
+                parameters[9].setErrorMessage(
+                    "DFSU-itemien lukeminen ei onnistunut. Suodatus vaatii "
+                    "mikeio-kirjaston ArcGIS Pron Python-ympäristöön "
+                    "(conda install -c conda-forge mikeio), tai ota käyttöön "
+                    "valinta 'DFSU: asenna puuttuva mikeio-kirjasto automaattisesti'."
+                )
+
         if not paths:
             if is_import:
                 p_input.setErrorMessage(
@@ -1122,6 +1167,40 @@ class UniversalImportTool(object):
             pass
         return True
 
+    def _log_batch_summary(self, messages, operation, total, succeeded, failures):
+        """Raportoi eräajon tulos ja kaada ajo vasta, jos mikään ei onnistunut.
+
+        Aiemmin ensimmäinen virhe keskeytti koko erän, jolloin sen jälkeiset
+        tiedostot jäivät käsittelemättä ilman että käyttäjä sai tietää mitkä
+        olisivat onnistuneet.
+        """
+        succeeded = list(succeeded or [])
+        failures = list(failures or [])
+        if not failures:
+            if total > 1:
+                self.log(messages, f"{operation} valmis: {len(succeeded)}/{total} onnistui.")
+            return
+
+        self.log(
+            messages,
+            f"{operation} valmis osittain: {len(succeeded)}/{total} onnistui, "
+            f"{len(failures)} epäonnistui.",
+            "WARNING",
+        )
+        for path, reason in failures:
+            self.log(messages, f"  > EPÄONNISTUI: {path} — {reason}", "WARNING")
+
+        if not succeeded:
+            # Kaikki epäonnistuivat: ajo on aidosti virheellinen.
+            self.log(
+                messages,
+                f"{operation} epäonnistui: yksikään {total} kohteesta ei onnistunut.",
+                "ERROR",
+            )
+            raise arcpy.ExecuteError(
+                f"{operation} epäonnistui kaikkien {total} kohteen osalta."
+            )
+
     def _execute_import(self, parameters, messages, input_paths=None):
         if input_paths is None:
             input_paths = self._input_paths_from_param(parameters[1])  # Index shifted from 0 to 1
@@ -1152,11 +1231,25 @@ class UniversalImportTool(object):
         
         # Tarkista onko DFSU-tiedostoja ja asenna mikeio kerran alussa
         has_dfsu = any(f.lower().endswith('.dfsu') for f in input_paths)
+        dfsu_auto_install = bool(parameters[14].value) if len(parameters) > 14 else False
         if has_dfsu:
             try:
-                self._ensure_python_module("mikeio", package_name="mikeio", messages=messages, auto_install=True)
+                self._ensure_python_module(
+                    "mikeio", package_name="mikeio", messages=messages,
+                    auto_install=dfsu_auto_install,
+                )
             except Exception as e:
-                self.log(messages, f"DFSU-asennus epäonnistui: {str(e)}", "ERROR")
+                if dfsu_auto_install:
+                    self.log(messages, f"DFSU-asennus epäonnistui: {str(e)}", "ERROR")
+                else:
+                    self.log(
+                        messages,
+                        "DFSU-tuonti vaatii mikeio-kirjaston ArcGIS Pron Python-ympäristöön. "
+                        "Asenna se kerran komennolla 'conda install -c conda-forge mikeio' "
+                        "kloonattuun ympäristöön, tai valitse työkalussa "
+                        "'DFSU: asenna puuttuva mikeio-kirjasto automaattisesti'.",
+                        "ERROR",
+                    )
                 raise
         
         for raw_path in raw_input_paths:
@@ -1173,6 +1266,8 @@ class UniversalImportTool(object):
         if len(input_paths) > 1:
             self.log(messages, f"Tuonti — {len(input_paths)} tiedostoa peräkkäin.")
 
+        succeeded = []
+        failures = []
         try:
             for idx, input_path in enumerate(input_paths, 1):
                 if len(input_paths) > 1:
@@ -1201,10 +1296,24 @@ class UniversalImportTool(object):
                     else:
                         self.process_generic(input_path, output_loc, is_folder, messages)
 
+                    succeeded.append(input_path)
+
                 except Exception as e:
-                    self.log(messages, f"Kriittinen virhe (tiedosto {input_path}): {str(e)}", "ERROR")
-                    messages.addErrorMessage(traceback.format_exc())
-                    raise
+                    # Yksi rikkinäinen tiedosto ei saa hukata koko eräajoa.
+                    # Virhe kirjataan ja käsittely jatkuu seuraavaan tiedostoon;
+                    # yhteenveto ajon lopussa kertoo mikä epäonnistui.
+                    failures.append((input_path, str(e)))
+                    self.log(
+                        messages,
+                        f"Tiedoston '{input_path}' tuonti epäonnistui: {str(e)}. "
+                        f"Jatketaan seuraavaan tiedostoon.",
+                        "WARNING",
+                    )
+                    self.log(messages, traceback.format_exc(), "WARNING")
+
+            self._log_batch_summary(
+                messages, "Tuonti", len(input_paths), succeeded, failures
+            )
         finally:
             self._run_deferred_cleanup(messages)
 
@@ -1269,6 +1378,8 @@ class UniversalImportTool(object):
             else:
                 self.log(messages, f"  > Tasoja valittuna: {len(input_paths)} (yksi tiedosto tasoa kohden).")
 
+        export_succeeded = []
+        export_failures = []
         try:
             written_paths = []
             fc_pairs = []
@@ -1277,18 +1388,29 @@ class UniversalImportTool(object):
                 if separate_outputs:
                     for in_src in input_paths:
                         sub_src = self._export_source_label(in_src)
-                        self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
-                        fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
-                        out_one = self._unique_export_path(
-                            self._build_export_path_in_folder(folder, fmt, sub_src)
-                        )
-                        written_paths.append(
-                            self._export_to_cad(
-                                [(fc_work, in_src)],
-                                out_one,
-                                messages,
+                        try:
+                            self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
+                            fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
+                            out_one = self._unique_export_path(
+                                self._build_export_path_in_folder(folder, fmt, sub_src)
                             )
-                        )
+                            written_paths.append(
+                                self._export_to_cad(
+                                    [(fc_work, in_src)],
+                                    out_one,
+                                    messages,
+                                )
+                            )
+                            export_succeeded.append(sub_src)
+                        except Exception as layer_error:
+                            export_failures.append((sub_src, str(layer_error)))
+                            self.log(
+                                messages,
+                                f"Tason '{sub_src}' CAD-vienti epäonnistui: {layer_error}. "
+                                f"Jatketaan seuraavaan tasoon.",
+                                "WARNING",
+                            )
+                            self.log(messages, traceback.format_exc(), "WARNING")
                 else:
                     for in_src in input_paths:
                         fc_pairs.append((self._prepare_export_feature_class(in_src, target_sr, messages), in_src))
@@ -1319,68 +1441,67 @@ class UniversalImportTool(object):
                     return
 
             else:
-                if fmt == "GPKG":
-                    written_paths = []
-                    if separate_outputs:
-                        for in_src in input_paths:
-                            sub_src = self._export_source_label(in_src)
-                            self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
-                            fc_work = self._prepare_export_feature_class(
-                                in_src, target_sr, messages, copy_source=False
-                            )
-                            out_one = self._unique_export_path(
-                                self._build_export_path_in_folder(folder, "GPKG", sub_src)
-                            )
-                            written_paths.append(
-                                self._export_to_geopackage(fc_work, out_one, messages, source_label=sub_src)
-                            )
-                    else:
-                        for in_src in input_paths:
-                            sub_src = self._export_source_label(in_src)
-                            self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
-                            fc_work = self._prepare_export_feature_class(
-                                in_src, target_sr, messages, copy_source=False
-                            )
-                            written_paths.append(
-                                self._export_to_geopackage(fc_work, out_path, messages, source_label=sub_src)
-                            )
-
-                elif fmt == "GeoJSON":
-                    for in_src in input_paths:
-                        sub_nm = self.sanitize_name(self._export_source_label(in_src))[:35] or "layer"
-                        fc_work = self._prepare_export_feature_class(
-                            in_src, target_sr, messages, copy_source=False
-                        )
-                        out_one = self._unique_export_path(
-                            self._build_export_path_in_folder(folder, fmt, combined_label + "_" + sub_nm)
-                        )
-                        written_paths.append(self._export_to_geojson(fc_work, out_one, messages))
-                elif fmt == "Shapefile":
-                    for in_src in input_paths:
-                        sub_nm = self.sanitize_name(self._export_source_label(in_src))[:35] or "layer"
-                        fc_work = self._prepare_export_feature_class(
-                            in_src, target_sr, messages, copy_source=False
-                        )
-                        out_one = self._unique_export_path(
-                            self._build_export_path_in_folder(folder, fmt, combined_label + "_" + sub_nm)
-                        )
-                        written_paths.append(self._export_to_shapefile(fc_work, out_one, messages))
-                elif fmt in ("KML", "KMZ"):
-                    for in_src in input_paths:
-                        sub_nm = self.sanitize_name(self._export_source_label(in_src))[:35] or "layer"
-                        fc_work = self._prepare_export_feature_class(
-                            in_src, target_sr, messages, copy_source=False
-                        )
-                        out_one = self._unique_export_path(
-                            self._build_export_path_in_folder(folder, fmt, combined_label + "_" + sub_nm)
-                        )
-                        written_paths.append(self._export_to_kml(fc_work, out_one, messages))
-                else:
+                # Monitasovienti: GPKG voi mennä yhteiseen tai omiin tiedostoihin,
+                # muut formaatit aina omaan tiedostoonsa. Kaikki kulkevat saman
+                # suojatun kierroksen läpi, jotta yksi rikkinäinen taso ei
+                # hukkaa muita.
+                simple_exporters = {
+                    "GeoJSON": self._export_to_geojson,
+                    "Shapefile": self._export_to_shapefile,
+                    "KML": self._export_to_kml,
+                    "KMZ": self._export_to_kml,
+                }
+                if fmt != "GPKG" and fmt not in simple_exporters:
                     self.log(messages, f"Tuntematon vientiformaatti: {fmt}", "ERROR")
                     return
 
+                written_paths = []
+                for in_src in input_paths:
+                    sub_src = self._export_source_label(in_src)
+                    try:
+                        self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
+                        fc_work = self._prepare_export_feature_class(
+                            in_src, target_sr, messages, copy_source=False
+                        )
+                        if fmt == "GPKG":
+                            gpkg_target = out_path
+                            if separate_outputs:
+                                gpkg_target = self._unique_export_path(
+                                    self._build_export_path_in_folder(folder, "GPKG", sub_src)
+                                )
+                            written_paths.append(
+                                self._export_to_geopackage(
+                                    fc_work, gpkg_target, messages, source_label=sub_src
+                                )
+                            )
+                        else:
+                            sub_nm = self.sanitize_name(sub_src)[:35] or "layer"
+                            out_one = self._unique_export_path(
+                                self._build_export_path_in_folder(
+                                    folder, fmt, combined_label + "_" + sub_nm
+                                )
+                            )
+                            written_paths.append(
+                                simple_exporters[fmt](fc_work, out_one, messages)
+                            )
+                        export_succeeded.append(sub_src)
+                    except Exception as layer_error:
+                        export_failures.append((sub_src, str(layer_error)))
+                        self.log(
+                            messages,
+                            f"Tason '{sub_src}' vienti epäonnistui: {layer_error}. "
+                            f"Jatketaan seuraavaan tasoon.",
+                            "WARNING",
+                        )
+                        self.log(messages, traceback.format_exc(), "WARNING")
+
             output_files = self._export_output_file_paths(written_paths)
             self.log(messages, f"Vienti valmis: {len(output_files)} tiedostoa.")
+            if export_failures:
+                self._log_batch_summary(
+                    messages, "Vienti", len(input_paths),
+                    export_succeeded, export_failures,
+                )
 
         except Exception as e:
             self.log(messages, f"Vientivirhe: {str(e)}", "ERROR")
@@ -3168,6 +3289,75 @@ class UniversalImportTool(object):
             return "POLYLINE"
         return "POINT"
 
+    @staticmethod
+    def _dfsu_element_xy(idx, node_coords, element_table, shape_type, element_coordinates=None):
+        """Palauta yhden elementin (x, y) -pisteet tunnistetun tyypin mukaan."""
+        if element_table is not None and node_coords is not None:
+            nodes = element_table[idx]
+            if nodes is not None and len(nodes) > 0:
+                return [
+                    (float(node_coords[int(n)][0]), float(node_coords[int(n)][1]))
+                    for n in nodes
+                ]
+        if element_coordinates is not None:
+            coords = element_coordinates[idx]
+            return [(float(coords[0]), float(coords[1]))]
+        return []
+
+    @staticmethod
+    def _wkb_point(x, y):
+        # 1 = little endian, 1 = wkbPoint
+        return struct.pack("<BIdd", 1, 1, x, y)
+
+    @staticmethod
+    def _wkb_linestring(points):
+        parts = [struct.pack("<BII", 1, 2, len(points))]
+        for x, y in points:
+            parts.append(struct.pack("<dd", x, y))
+        return b"".join(parts)
+
+    @staticmethod
+    def _wkb_polygon(points):
+        ring = list(points)
+        # WKB-polygonin rengas on suljettava eksplisiittisesti.
+        if ring and ring[0] != ring[-1]:
+            ring.append(ring[0])
+        parts = [struct.pack("<BIII", 1, 3, 1, len(ring))]
+        for x, y in ring:
+            parts.append(struct.pack("<dd", x, y))
+        return b"".join(parts)
+
+    def _make_dfsu_wkb(self, idx, node_coords, element_table, shape_type,
+                       element_coordinates=None):
+        """Muodosta elementin geometria suoraan WKB-tavuina.
+
+        Aiemmin jokaiselle elementille rakennettiin arcpy.Array ja N kpl
+        arcpy.Point-olioita. Miljoonan elementin meshissä se tarkoitti
+        miljoonia COM-rajapinnan yli meneviä olioita, ja hallitsi tuonnin
+        kokonaisaikaa. SHAPE@WKB ohittaa koko olioketjun.
+        """
+        points = self._dfsu_element_xy(
+            idx, node_coords, element_table, shape_type, element_coordinates
+        )
+        if not points:
+            raise ValueError(f"Elementti {idx}: geometriaa ei voitu muodostaa.")
+
+        if shape_type == "POLYGON":
+            if len(points) < 3:
+                raise ValueError(f"Elementti {idx}: polygon vaatii vähintään 3 solmua.")
+            return self._wkb_polygon(points)
+        if shape_type == "POLYLINE":
+            if len(points) < 2:
+                raise ValueError(f"Elementti {idx}: viiva vaatii vähintään 2 solmua.")
+            return self._wkb_linestring(points)
+
+        if len(points) == 1:
+            return self._wkb_point(points[0][0], points[0][1])
+        # Monisolmuisesta elementistä piste = solmujen keskipiste, kuten ennen.
+        mean_x = sum(px for px, _ in points) / float(len(points))
+        mean_y = sum(py for _, py in points) / float(len(points))
+        return self._wkb_point(mean_x, mean_y)
+
     def _make_dfsu_arcpy_geometry(self, idx, node_coords, element_table, shape_type, spatial_ref, element_coordinates=None):
         """Muodosta yhden elementin ArcGIS-geometria tunnistetun tyypin mukaan."""
         if shape_type in ("POLYGON", "POLYLINE"):
@@ -3215,6 +3405,9 @@ class UniversalImportTool(object):
         - target_sr: Kohde-koordinaatisto (valinnainen)
         """
         temp_fc = None
+        direct_target_path = None
+        import_completed = False
+        restore_gp_env = {}
         try:
             try:
                 import math
@@ -3273,14 +3466,70 @@ class UniversalImportTool(object):
                     source_sr = None
             create_sr = source_sr or target_sr
 
-            scratch = arcpy.env.scratchGDB
-            stamp = datetime.datetime.now().strftime("%H%M%S%f")
-            temp_fc = os.path.join(scratch, f"dfsu_{safe_name[:32]}_{stamp}")
-            if arcpy.Exists(temp_fc):
-                arcpy.management.Delete(temp_fc)
-            self.log(messages, f"  > Luodaan väliaikainen {shape_type}-feature class...")
-            arcpy.management.CreateFeatureclass(scratch, os.path.basename(temp_fc), shape_type, spatial_reference=create_sr)
-            arcpy.management.AddField(temp_fc, "element_id", "LONG")
+            # Iso InsertCursor hyötyy samoista GP-asetuksista kuin CAD-polku:
+            # harvempi commit ja ilman spatiaali-indeksin ylläpitoa kirjoituksen
+            # aikana.
+            prev_gp_env = {}
+            for env_key, env_value in (
+                ("autoCommit", 10000),
+                ("maintainSpatialIndex", False),
+                ("buildStats", "NONE"),
+                ("parallelProcessingFactor", "100%"),
+            ):
+                try:
+                    prev_gp_env[env_key] = getattr(arcpy.env, env_key)
+                except Exception:
+                    prev_gp_env[env_key] = None
+                try:
+                    setattr(arcpy.env, env_key, env_value)
+                except Exception:
+                    pass
+            restore_gp_env = prev_gp_env
+
+            # Kun kohde on file GDB eikä projisointia tarvita, kirjoitetaan
+            # suoraan lopulliseen tasoon. Muuten iso mesh kirjoitettaisiin
+            # levylle kahdesti: ensin scratchiin ja heti perässä CopyFeaturesilla
+            # kohteeseen.
+            direct_target_path = None
+            if not is_folder and not self._needs_projection(source_sr, target_sr):
+                try:
+                    direct_name, direct_path = self._resolve_output_path(
+                        output_loc, safe_name, is_folder
+                    )
+                    direct_target_path = direct_path
+                    self.log(
+                        messages,
+                        f"  > Kirjoitetaan suoraan kohteeseen '{direct_name}' "
+                        f"(ei erillistä välikopiota).",
+                    )
+                except Exception as resolve_error:
+                    self.log(
+                        messages,
+                        f"  > Suoran kirjoituksen valmistelu epäonnistui ({resolve_error}); "
+                        f"käytetään väliaikaista feature classia.",
+                        "WARNING",
+                    )
+                    direct_target_path = None
+
+            if direct_target_path:
+                work_fc = direct_target_path
+                work_workspace = os.path.dirname(direct_target_path)
+                self.log(messages, f"  > Luodaan {shape_type}-feature class...")
+            else:
+                scratch = arcpy.env.scratchGDB
+                stamp = datetime.datetime.now().strftime("%H%M%S%f")
+                temp_fc = os.path.join(scratch, f"dfsu_{safe_name[:32]}_{stamp}")
+                work_fc = temp_fc
+                work_workspace = scratch
+                if arcpy.Exists(temp_fc):
+                    arcpy.management.Delete(temp_fc)
+                self.log(messages, f"  > Luodaan väliaikainen {shape_type}-feature class...")
+
+            arcpy.management.CreateFeatureclass(
+                work_workspace, os.path.basename(work_fc), shape_type,
+                spatial_reference=create_sr,
+            )
+            arcpy.management.AddField(work_fc, "element_id", "LONG")
 
             field_map = []
             used_fields = {"element_id"}
@@ -3293,7 +3542,7 @@ class UniversalImportTool(object):
                     field_name = f"{trimmed}_{suffix}"
                     suffix += 1
                 used_fields.add(field_name.lower())
-                arcpy.management.AddField(temp_fc, field_name, "DOUBLE")
+                arcpy.management.AddField(work_fc, field_name, "DOUBLE")
                 field_map.append((str(item_name), field_name))
             self.log(messages, f"  > Luotiin {len(field_map)} attribuuttikenttää.")
 
@@ -3500,7 +3749,8 @@ class UniversalImportTool(object):
                 "POLYGON": "polygoneja",
             }.get(shape_type, "geometrioita")
             self.log(messages, f"  > Kirjoitetaan elementeistä {geom_action} feature classiin...")
-            insert_fields = ["SHAPE@", "element_id"] + [field_name for _, field_name in field_map]
+            # SHAPE@WKB ohittaa arcpy.Point/arcpy.Array-olioketjun kokonaan.
+            insert_fields = ["SHAPE@WKB", "element_id"] + [field_name for _, field_name in field_map]
 
             if candidate_indices is not None:
                 iterable_indices = candidate_indices.tolist()
@@ -3509,41 +3759,108 @@ class UniversalImportTool(object):
                 iterable_indices = range(total_elements)
                 total_scan = total_elements
 
-            with arcpy.da.InsertCursor(temp_fc, insert_fields) as cursor:
+            # numpy-taulukon indeksointi palauttaa boksatun skalaarin joka
+            # kutsulla. Listaksi muuntaminen kerran on selvästi halvempaa kuin
+            # miljoona indeksointia silmukassa.
+            column_values = []
+            for item_name, _field_name in field_map:
+                values = values_by_item[item_name]
+                try:
+                    column_values.append(values.tolist())
+                except AttributeError:
+                    column_values.append(list(values))
+            filter_list = filter_values
+            if filter_values is not None:
+                try:
+                    filter_list = filter_values.tolist()
+                except AttributeError:
+                    filter_list = list(filter_values)
+
+            geometry_errors = 0
+            with arcpy.da.InsertCursor(work_fc, insert_fields) as cursor:
                 for idx in iterable_indices:
                     processed += 1
-                    raw_filter_value = None if filter_values is None else filter_values[idx]
+                    raw_filter_value = None if filter_list is None else filter_list[idx]
                     if candidate_indices is None and not _passes_filter(raw_filter_value):
                         if processed % progress_step == 0:
                             self.log(messages, f"  > Eteneminen: käsitelty {processed}/{total_scan} elementtiä, osumia {inserted}.")
                         continue
-                    geom = self._make_dfsu_arcpy_geometry(
-                        idx, node_coords, element_table, shape_type, create_sr, element_coordinates
-                    )
+                    try:
+                        geom = self._make_dfsu_wkb(
+                            idx, node_coords, element_table, shape_type, element_coordinates
+                        )
+                    except Exception:
+                        # Yksittäinen viallinen elementti ei saa kaataa koko
+                        # meshin tuontia.
+                        geometry_errors += 1
+                        continue
                     row = [geom, idx]
-                    for item_name, _field_name in field_map:
-                        _v = values_by_item[item_name][idx]
+                    for column in column_values:
+                        _v = column[idx]
                         row.append(None if (_v is None or _v != _v) else float(_v))
                     cursor.insertRow(row)
                     inserted += 1
                     if processed % progress_step == 0:
                         self.log(messages, f"  > Eteneminen: käsitelty {processed}/{total_scan} elementtiä, osumia {inserted}.")
 
+            if geometry_errors:
+                self.log(
+                    messages,
+                    f"  > VAROITUS: {geometry_errors} elementin geometriaa ei voitu muodostaa; "
+                    f"ne ohitettiin.",
+                    "WARNING",
+                )
+
             self.log(messages, f"DFSU-tuonti: muodostettiin {inserted} {geom_action}.")
             if filter_enabled and filter_column and inserted == 0:
                 self.log(messages, "DFSU-suodatin ei tuottanut yhtään osumaa; tasoa ei luoda.", "WARNING")
+                if direct_target_path:
+                    try:
+                        arcpy.management.Delete(direct_target_path)
+                    except Exception:
+                        pass
                 return
 
-            self.log(messages, f"  > Tallennetaan lopullinen taso nimellä '{safe_name}'...")
-            self.save_and_reproject(temp_fc, output_loc, safe_name, is_folder, None, source_sr, target_sr, messages)
+            if direct_target_path:
+                # Taso on jo kohteessa: leimataan vain koordinaatisto ja
+                # lisätään kartalle.
+                if source_sr:
+                    try:
+                        arcpy.management.DefineProjection(work_fc, source_sr)
+                    except Exception as define_error:
+                        self.log(
+                            messages,
+                            f"  > Koordinaatiston leimaus epäonnistui: {define_error}",
+                            "WARNING",
+                        )
+                self._add_layers_to_map([work_fc], messages)
+                self.log(messages, f"DFSU-tuonti valmis: {work_fc}")
+            else:
+                self.log(messages, f"  > Tallennetaan lopullinen taso nimellä '{safe_name}'...")
+                self.save_and_reproject(work_fc, output_loc, safe_name, is_folder, None, source_sr, target_sr, messages)
+            import_completed = True
         except Exception as e:
             self.log(messages, f"DFSU-tuonti epäonnistui: {str(e)}", "ERROR")
             self.log(messages, traceback.format_exc(), "ERROR")
             raise
         finally:
+            # Palauta globaalit GP-asetukset, jottei tila vuoda seuraavaan
+            # tiedostoon eräajossa.
+            for env_key, env_value in (restore_gp_env or {}).items():
+                try:
+                    setattr(arcpy.env, env_key, env_value)
+                except Exception:
+                    pass
             if temp_fc and arcpy.Exists(temp_fc):
                 try:
                     arcpy.management.Delete(temp_fc)
+                except Exception:
+                    pass
+            # Keskeneräistä tasoa ei jätetä kohteeseen näyttämään valmiilta.
+            if direct_target_path and not import_completed:
+                try:
+                    if arcpy.Exists(direct_target_path):
+                        arcpy.management.Delete(direct_target_path)
                 except Exception:
                     pass
 

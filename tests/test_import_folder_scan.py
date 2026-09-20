@@ -107,7 +107,10 @@ class ImportFolderScanTests(unittest.TestCase):
         parameters = self.tool.getParameterInfo()
         export_layers = parameters[12]
 
-        self.assertEqual(len(parameters), 14)
+        self.assertEqual(len(parameters), 15)
+        # Uudet parametrit lisataan aina loppuun, jotta aiemmat indeksit pysyvat.
+        self.assertEqual(parameters[14].name, "dfsu_auto_install")
+        self.assertFalse(parameters[14].value)
         self.assertEqual(export_layers.datatype, "GPFeatureLayer")
         self.assertTrue(export_layers.multiValue)
         self.assertFalse(export_layers.enabled)

@@ -5,6 +5,7 @@
 ## Ominaisuudet
 - **Tiedostojen muuntaminen:** Tuo CAD-, GPKG-, Shapefile-, GeoJSON-, GPX-, KML/KMZ- ja DFSU-aineistoja suoraan projektiin.
 - **Kansiotuonti:** Anna tuonnissa yhden kansion polku. Muuntaja käy kansion ja sen alikansiot läpi, tunnistaa kaikki tuetut tiedostomuodot ja lisää muunnetut tasot työtilaan.
+- **Rasterituonti ryhmiteltynä:** Tuonti tunnistaa myös rasterit (TIFF, JP2, IMG sekä PNG/JPG, joiden vieressä on world-tiedosto kuten `.pgw`). Rasterit lisätään työtilaan ryhmätasoihin lähimmän `taustakartta_`-alkuisen kansion mukaan, joten MML:n latauskansion voi antaa sellaisenaan (ks. alla).
 - **Tasovalinta viennissä:** Vientitilassa tasot valitaan ArcGIS Pron omalla monitasovalitsimella aktiivisesta kartasta tai selaamalla.
 - **Monitasoviennin paketointi:** Shapefile-, GeoJSON- ja KML/KMZ-viennit tehdään aina omiksi tiedostoiksi tasoittain. GPKG-, DWG- ja DXF-vienneissä voi valita yhden yhteisen tiedoston tai oman tiedoston jokaiselle tasolle.
 - **Selkeä CAD-vienti:** DWG/DXF-vientiin kirjoitetaan vain valittujen tasojen geometriat. Labeltekstejä tai erillisiä attribuuttitaulukoita ei muodosteta.
@@ -33,6 +34,30 @@ Skripti rakentaa Release-version, paketoi sen ja luo GitHub-releasen `v<versio>`
 4. Valitse tuonnissa joko tiedostoja tai kansio. Kansiota käytettäessä kansioon voi kerätä eri muotoja sekaisin; Muuntaja skannaa myös alikansiot, ohittaa Shapefilen sivutiedostot (DBF/SHX/PRJ) ja tuo jokaisen varsinaisen aineiston erikseen.
 5. Valitse viennissä tasot ArcGIS Pron monitasovalitsimella ja määritä vientiformaatti sekä vientikansio. Usean tason GPKG-, DWG- tai DXF-viennissä valitse lisäksi yhteinen tai tasokohtainen tiedosto.
 6. CAD-vienti vie valitut tasot DWG/DXF-tiedostoon geometrioina ilman labeltekstejä tai erillisiä attribuuttitaulukoita.
+
+## Rasterit (esim. MML:n taustakarttasarja)
+
+MML:n tiedostopalvelusta ladatut karttalehdet tulevat syvään kansiorakenteeseen,
+esim. `Maanmittauslaitos_Tiedostopalvelu_REST-…/taustakarttasarja_jhs180/taustakartta_20k/4m/etrs89/png/R4/R43/R4324.png`.
+Anna tuonnissa pelkkä yläkansio (esim. `Downloads\rasterit`), niin Muuntaja:
+
+- etsii kaikki rasterit alikansioineen; PNG/JPG otetaan mukaan vain, jos
+  vieressä on world-tiedosto (`.pgw`, `.jgw`, `.wld`) tai `.aux.xml`
+- luo aktiiviseen karttaan ryhmätason jokaiselle `taustakartta_`-kansiolle
+  (`taustakartta_20k`, `taustakartta_5k` …) ja lisää karttalehdet sen alle.
+  Eri latauksista tulevat saman nimiset ryhmät yhdistetään, ja tarkin
+  mittakaava jää sisällysluettelossa ylimmäksi
+- määrittää koordinaatiston rasterille, jolta se puuttuu (MML:n PNG:t):
+  ensisijaisesti world-tiedoston koordinaateista (TM35FIN, GK-kaistat, KKJ),
+  sitten kansiopolusta (`etrs89` → ETRS-TM35FIN). Lähtökoordinaatisto-valinnalla
+  voi pakottaa koordinaatiston. Määritys kirjoittaa `.aux.xml`-tiedoston rasterin viereen
+- ohittaa karttalehdet, jotka ovat jo samassa ryhmässä, joten uudelleenajo ei tuplaa niitä
+
+Jos rasterit eivät ole `taustakartta_`-kansiossa, ryhmä nimetään syötekansion
+ensimmäisen alikansion mukaan (MML:n latauskohtainen kansio ohitetaan).
+Rasterit lisätään **viittauksina alkuperäisiin tiedostoihin** eikä niitä
+kopioida tallennuspaikkaan, joten latauskansio kannattaa siirtää pysyvään
+paikkaan ennen tuontia.
 
 ## Suorituskyky ja virheensieto
 

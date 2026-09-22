@@ -21,9 +21,19 @@ class Toolbox(object):
         self.tools = [UniversalImportTool]
 
 # Tuonti: nämä tiedostopäätteet → syöte tulkitaan tiedostoksi (tuonti)
-IMPORT_FILE_EXTENSIONS = (
+VECTOR_IMPORT_FILE_EXTENSIONS = (
     ".gpkg", ".geojson", ".json", ".kml", ".kmz", ".gpx", ".dwg", ".dxf", ".dfsu", ".shp"
 )
+# Rasterit lisätään työtilaan viittauksina alkuperäisiin tiedostoihin ja
+# ryhmitellään ryhmätasoihin (esim. MML:n taustakartta_20k / taustakartta_5k).
+RASTER_IMPORT_FILE_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg", ".jp2", ".img")
+# Näissä muodoissa ei ole omaa sijaintitietoa: kansioskannaus ottaa ne mukaan
+# vain, jos vieressä on world-tiedosto (.pgw/.jgw/.wld) tai .aux.xml. Muuten
+# kansiosta tulisi mukaan esim. kuvakaappaukset ja logot.
+RASTER_WORLD_FILE_REQUIRED_EXTENSIONS = (".png", ".jpg", ".jpeg")
+RASTER_GROUP_FOLDER_PREFIX = "taustakartta_"
+MML_DOWNLOAD_FOLDER_PREFIX = "maanmittauslaitos_tiedostopalvelu"
+IMPORT_FILE_EXTENSIONS = VECTOR_IMPORT_FILE_EXTENSIONS + RASTER_IMPORT_FILE_EXTENSIONS
 # Vientiformaatit (dropdown) → tiedostopääte
 EXPORT_FORMAT_TO_EXT = {
     "GPKG": ".gpkg",
@@ -48,6 +58,49 @@ MULTI_EXPORT_PACKAGING_FORMATS = ("GPKG", "DWG", "DXF")
 # pieni varmuusvara ArcGISin omille kenttämäärittelyille.
 SHAPEFILE_MAX_RECORD_LENGTH = 4000
 SHAPEFILE_SAFE_RECORD_LENGTH = SHAPEFILE_MAX_RECORD_LENGTH - 100
+IMPORT_MODE_LABEL = "Tuonti (gpkg, geojson, json, kml, kmz, gpx, dwg, dxf, dfsu, shp, rasterit)"
+
+
+def classify_finnish_xy(x, y):
+    """Palauttaa Suomessa käytetyn koordinaatiston EPSG-koodin tai None."""
+    if not x or not y: return None
+    if abs(x) < 1e-6 and abs(y) < 1e-6: return None
+
+    # WGS84 lat/lon (Suomi: lon 19-32, lat 59-71)
+    if 19.0 <= x <= 32.5 and 59.0 <= y <= 71.5:
+        return 4326
+
+    # Suomen pohjoiskoordinaatti (Y) on aina tässä haarukassa metrijärjestelmissä.
+    # Jos Y ei osu tähän, ei voida varmuudella tunnistaa Suomen CRS:ää.
+    if not (6_400_000 <= y <= 7_900_000):
+        return None
+
+    # TM35FIN: X 20k-800k, ei prefiksiä (EPSG:3067)
+    if 20_000 <= x <= 800_000:
+        return 3067
+
+    # KKJ-kaistat (X = Kxxxxxxx jossa K = kaistanumero 1-4)
+    # KKJ1 (EPSG:2391): X ~1.0M-1.8M, keskimeridiaani 21E
+    # KKJ2 (EPSG:2392): X ~2.0M-2.8M, keskimeridiaani 24E
+    # KKJ3 / YKJ (EPSG:2393): X ~3.0M-3.8M, keskimeridiaani 27E (Yhtenäiskoordinaatisto)
+    # KKJ4 (EPSG:2394): X ~4.0M-4.8M, keskimeridiaani 30E
+    if 1_000_000 <= x <= 1_900_000: return 2391
+    if 2_000_000 <= x <= 2_900_000: return 2392
+    if 3_000_000 <= x <= 3_900_000: return 2393
+    if 4_000_000 <= x <= 4_900_000: return 2394
+
+    # ETRS-GKn prefiksoituna (X = ZZxxxxxx, ZZ = 19-31)
+    if 19_000_000 <= x <= 32_000_000:
+        zone = int(str(int(x))[:2])
+        gk_epsg = {
+            19: 3873, 20: 3874, 21: 3875, 22: 3876, 23: 3877, 24: 3878,
+            25: 3879, 26: 3880, 27: 3881, 28: 3882, 29: 3883, 30: 3884, 31: 3885
+        }
+        return gk_epsg.get(zone)
+
+    return None
+
+
 class UniversalImportTool(object):
     def __init__(self):
         self.label = "Muuntaja"
@@ -55,6 +108,8 @@ class UniversalImportTool(object):
             "Tuonti tai vienti — syötteenä voi valita useita tiedostoja tai tasoja. "
             "Tuonti: valitse tiedostoja tai kansio; kansio skannataan myös alikansioineen ja kaikki tuetut muodot "
             "tuodaan tiedosto kerrallaan GDB:hen (CAD, GPKG, GeoJSON, KML, GPX, DFSU ja Shapefile). "
+            "Rasterit (tif, png/jpg + world-tiedosto, jp2, img) lisätään työtilaan ryhmätasoihin "
+            "taustakartta_-alkuisen kansion mukaan (esim. MML:n latauskansio sellaisenaan). "
             "DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
             "Vienti: feature-tasot valitaan ArcGIS Pron omalla monitasovalitsimella. "
             "CAD-vienti vie DWG/DXF-tiedostoihin vain valittujen tasojen geometriat. "
@@ -81,10 +136,10 @@ class UniversalImportTool(object):
             direction="Input")
         param0.filter.type = "ValueList"
         param0.filter.list = [
-            "Tuonti (gpkg, geojson, json, kml, kmz, gpx, dwg, dxf, dfsu, shp)",
+            IMPORT_MODE_LABEL,
             "Vienti (gpkg, dwg, dxf, geojson, shp, kml, kmz)"
         ]
-        param0.value = "Tuonti (gpkg, geojson, json, kml, kmz, gpx, dwg, dxf, dfsu, shp)"
+        param0.value = IMPORT_MODE_LABEL
 
         # 1. Tuonnin syöte: tiedosto(t) tai kansio(t)
         param1 = arcpy.Parameter(
@@ -127,7 +182,7 @@ class UniversalImportTool(object):
 
         # 4. Input SR - value-list jossa "Automaattinen" oletuksena ja Suomen CRS:t valmiina (tuonti)
         param4 = arcpy.Parameter(
-            displayName="[CAD] Lähtökoordinaatisto",
+            displayName="[CAD/rasteri] Lähtökoordinaatisto",
             name="input_sr",
             datatype="GPString",
             parameterType="Optional",
@@ -327,7 +382,8 @@ class UniversalImportTool(object):
             if is_import
             else bool(paths)
         )
-       
+        has_raster = is_import and any(self._is_raster_import_path(p) for p in paths)
+
         # ===== TUONTI-HAARA =====
         if is_import:
             p_input.enabled = True
@@ -337,7 +393,9 @@ class UniversalImportTool(object):
             self._ensure_project_default_output_location(p_output_loc)
             # DWG-parametrit näkyvät vain jos on DWG-tiedostoja
             p_mapper.enabled = has_dwg
-            p_input_sr.enabled = has_dwg
+            # Lähtökoordinaatistolla voi myös määrätä rasterien CRS:n, jos
+            # tiedostossa ei ole sitä eikä sitä voi päätellä world-tiedostosta.
+            p_input_sr.enabled = has_dwg or has_raster
             p_target_sr.enabled = has_dwg
             
             p_export_folder.enabled = False
@@ -969,6 +1027,11 @@ class UniversalImportTool(object):
                     if extension not in IMPORT_FILE_EXTENSIONS:
                         continue
                     full_path = os.path.join(current_root, file_name)
+                    if (
+                        extension in RASTER_WORLD_FILE_REQUIRED_EXTENSIONS
+                        and not self._raster_has_georeference(full_path)
+                    ):
+                        continue
                     try:
                         if os.path.isfile(full_path):
                             out.append(full_path)
@@ -1266,12 +1329,18 @@ class UniversalImportTool(object):
         if len(input_paths) > 1:
             self.log(messages, f"Tuonti — {len(input_paths)} tiedostoa peräkkäin.")
 
+        # Rasterit käsitellään yhtenä eränä vektorien jälkeen, jotta ne voidaan
+        # ryhmitellä ryhmätasoihin kansiorakenteen mukaan.
+        raster_paths = [p for p in input_paths if self._is_raster_import_path(p)]
+        file_paths = [p for p in input_paths if not self._is_raster_import_path(p)]
+        folder_roots = [p for p in raw_input_paths if os.path.isdir(p)]
+
         succeeded = []
         failures = []
         try:
-            for idx, input_path in enumerate(input_paths, 1):
-                if len(input_paths) > 1:
-                    self.log(messages, f"Tuonti — ({idx}/{len(input_paths)}) {input_path}")
+            for idx, input_path in enumerate(file_paths, 1):
+                if len(file_paths) > 1:
+                    self.log(messages, f"Tuonti — ({idx}/{len(file_paths)}) {input_path}")
                 try:
                     ext = os.path.splitext(input_path)[1].lower()
 
@@ -1310,6 +1379,13 @@ class UniversalImportTool(object):
                         "WARNING",
                     )
                     self.log(messages, traceback.format_exc(), "WARNING")
+
+            if raster_paths:
+                raster_ok, raster_failures = self._import_rasters(
+                    raster_paths, folder_roots, input_sr, messages
+                )
+                succeeded.extend(raster_ok)
+                failures.extend(raster_failures)
 
             self._log_batch_summary(
                 messages, "Tuonti", len(input_paths), succeeded, failures
@@ -2061,44 +2137,7 @@ class UniversalImportTool(object):
         from collections import Counter
         MAX_SAMPLES = 200
 
-        def classify(x, y):
-            """Palauttaa EPSG-koodin tai None."""
-            if not x or not y: return None
-            if abs(x) < 1e-6 and abs(y) < 1e-6: return None
-
-            # WGS84 lat/lon (Suomi: lon 19-32, lat 59-71)
-            if 19.0 <= x <= 32.5 and 59.0 <= y <= 71.5:
-                return 4326
-
-            # Suomen pohjoiskoordinaatti (Y) on aina tässä haarukassa metrijärjestelmissä.
-            # Jos Y ei osu tähän, ei voida varmuudella tunnistaa Suomen CRS:ää.
-            if not (6_400_000 <= y <= 7_900_000):
-                return None
-
-            # TM35FIN: X 20k-800k, ei prefiksiä (EPSG:3067)
-            if 20_000 <= x <= 800_000:
-                return 3067
-
-            # KKJ-kaistat (X = Kxxxxxxx jossa K = kaistanumero 1-4)
-            # KKJ1 (EPSG:2391): X ~1.0M-1.8M, keskimeridiaani 21E
-            # KKJ2 (EPSG:2392): X ~2.0M-2.8M, keskimeridiaani 24E
-            # KKJ3 / YKJ (EPSG:2393): X ~3.0M-3.8M, keskimeridiaani 27E (Yhtenäiskoordinaatisto)
-            # KKJ4 (EPSG:2394): X ~4.0M-4.8M, keskimeridiaani 30E
-            if 1_000_000 <= x <= 1_900_000: return 2391
-            if 2_000_000 <= x <= 2_900_000: return 2392
-            if 3_000_000 <= x <= 3_900_000: return 2393
-            if 4_000_000 <= x <= 4_900_000: return 2394
-
-            # ETRS-GKn prefiksoituna (X = ZZxxxxxx, ZZ = 19-31)
-            if 19_000_000 <= x <= 32_000_000:
-                zone = int(str(int(x))[:2])
-                gk_epsg = {
-                    19: 3873, 20: 3874, 21: 3875, 22: 3876, 23: 3877, 24: 3878,
-                    25: 3879, 26: 3880, 27: 3881, 28: 3882, 29: 3883, 30: 3884, 31: 3885
-                }
-                return gk_epsg.get(zone)
-
-            return None
+        classify = classify_finnish_xy
 
         epsg_labels = {
             3067: "ETRS-TM35FIN",
@@ -2339,6 +2378,297 @@ class UniversalImportTool(object):
             self._delete_if_exists(scratch_intermediate)
 
         return check_path
+
+    # --- RASTERIT ---
+    def _is_raster_import_path(self, path):
+        return os.path.splitext(str(path or ""))[1].lower() in RASTER_IMPORT_FILE_EXTENSIONS
+
+    def _world_file_candidates(self, path):
+        """World-tiedoston mahdolliset nimet: R4324.pgw, R4324.pngw, R4324.wld."""
+        base, ext = os.path.splitext(str(path))
+        ext = ext.lower()
+        candidates = []
+        if len(ext) >= 3:
+            candidates.append(base + "." + ext[1] + ext[-1] + "w")
+        candidates.append(base + ext + "w")
+        candidates.append(base + ".wld")
+        return candidates
+
+    def _raster_has_georeference(self, path):
+        """True jos kuvatiedoston vieressä on world-tiedosto tai .aux.xml."""
+        candidates = self._world_file_candidates(path) + [str(path) + ".aux.xml"]
+        return any(os.path.isfile(candidate) for candidate in candidates)
+
+    def _read_world_file_origin(self, path):
+        """Palauta world-tiedoston vasemman yläkulman (X, Y) tai None."""
+        for candidate in self._world_file_candidates(path):
+            if not os.path.isfile(candidate):
+                continue
+            try:
+                with open(candidate, "r", encoding="ascii", errors="ignore") as handle:
+                    values = [
+                        float(line.strip().replace(",", "."))
+                        for line in handle
+                        if line.strip()
+                    ]
+            except (OSError, ValueError):
+                continue
+            if len(values) >= 6:
+                return values[4], values[5]
+        return None
+
+    def _guess_raster_epsg(self, path):
+        """Päättele rasterin EPSG world-tiedostosta tai kansiopolusta.
+
+        Palauttaa (epsg, lähde) tai (None, None). MML:n latauksissa
+        koordinaatisto näkyy myös polussa (…/etrs89/png/…), mutta
+        world-tiedoston koordinaatit ovat luotettavampi ensisijainen lähde.
+        """
+        origin = self._read_world_file_origin(path)
+        if origin:
+            epsg = classify_finnish_xy(*origin)
+            if epsg:
+                return epsg, "world-tiedosto"
+        parts = [part.lower() for part in re.split(r"[\\/]+", str(path)) if part]
+        if "etrs89" in parts or any("tm35" in part for part in parts):
+            return 3067, "kansiopolku"
+        if "kkj" in parts or "ykj" in parts:
+            return 2393, "kansiopolku"
+        return None, None
+
+    def _ensure_raster_spatial_reference(self, path, input_sr, messages):
+        """Määritä koordinaatisto rasterille, jolta se puuttuu.
+
+        MML:n PNG-karttalehdissä on vain .pgw ilman koordinaatistoa, jolloin Pro
+        piirtäisi ne tuntemattomina. DefineProjection kirjoittaa .aux.xml:n
+        rasterin viereen. Palauttaa määritetyn koordinaatiston nimen tai None.
+        """
+        try:
+            current = arcpy.Describe(path).spatialReference
+            if current is not None and (getattr(current, "name", "") or "Unknown") != "Unknown":
+                return None
+        except Exception:
+            pass
+
+        if input_sr is not None:
+            target = input_sr
+        else:
+            epsg, _source = self._guess_raster_epsg(path)
+            if not epsg:
+                self.log(
+                    messages,
+                    f"  > Rasterin '{os.path.basename(path)}' koordinaatistoa ei tunnistettu. "
+                    "Valitse tarvittaessa Lähtökoordinaatisto.",
+                    "WARNING",
+                )
+                return None
+            target = arcpy.SpatialReference(epsg)
+
+        try:
+            arcpy.management.DefineProjection(path, target)
+        except Exception as e:
+            self.log(
+                messages,
+                f"  > Koordinaatiston määritys epäonnistui ({os.path.basename(path)}): {e}",
+                "WARNING",
+            )
+            return None
+        return getattr(target, "name", None) or "määritetty"
+
+    def _normalized_path_key(self, path):
+        try:
+            return os.path.normcase(os.path.abspath(str(path)))
+        except Exception:
+            return str(path).casefold()
+
+    def _raster_group_name(self, path, folder_roots=None):
+        """Ryhmätason nimi rasterille.
+
+        1) Lähin taustakartta_-alkuinen yläkansio (taustakartta_20k, _5k …).
+        2) Muuten ensimmäinen kansio syötekansion alla, ohittaen MML:n
+           latauskohtaiset Maanmittauslaitos_Tiedostopalvelu_*-kansiot.
+        3) Yksittäin valitulle tiedostolle sen oma kansio.
+        """
+        directory = os.path.dirname(os.path.abspath(str(path)))
+        parts = [part for part in re.split(r"[\\/]+", directory) if part]
+        for part in reversed(parts):
+            if part.lower().startswith(RASTER_GROUP_FOLDER_PREFIX):
+                return part
+
+        path_key = self._normalized_path_key(path)
+        best_root = None
+        for root in folder_roots or []:
+            root_key = self._normalized_path_key(root).rstrip("\\/")
+            if path_key.startswith(root_key + os.sep):
+                if best_root is None or len(root_key) > len(self._normalized_path_key(best_root)):
+                    best_root = root
+        if best_root is not None:
+            relative = os.path.relpath(directory, os.path.abspath(best_root))
+            components = [
+                part for part in re.split(r"[\\/]+", relative)
+                if part and part != "."
+                and not part.lower().startswith(MML_DOWNLOAD_FOLDER_PREFIX)
+            ]
+            if components:
+                return components[0]
+            return os.path.basename(os.path.abspath(best_root).rstrip("\\/")) or "Rasterit"
+
+        return os.path.basename(directory) or "Rasterit"
+
+    def _group_raster_paths(self, raster_paths, folder_roots=None):
+        """Ryhmittele rasterit {ryhmän nimi: [polut]}; saman niminen ryhmä
+        eri latauksista yhdistetään."""
+        groups = {}
+        names_by_key = {}
+        for path in raster_paths or []:
+            name = self._raster_group_name(path, folder_roots)
+            name = names_by_key.setdefault(name.casefold(), name)
+            groups.setdefault(name, []).append(path)
+        return groups
+
+    def _raster_group_sort_key(self, name):
+        """Lisäysjärjestys: tarkin mittakaava lisätään viimeisenä, jolloin se
+        jää sisällysluettelossa ylimmäksi (5k yli 20k:n)."""
+        lowered = str(name).lower()
+        match = re.search(r"(\d+)\s*k(?![a-z])", lowered)
+        if match:
+            scale = int(match.group(1)) * 1000
+        else:
+            match = re.search(r"(\d+)", lowered)
+            scale = int(match.group(1)) if match else None
+        return (0 if scale is None else 1, -(scale or 0), lowered)
+
+    def _get_or_create_group_layer(self, active_map, name):
+        """Käytä olemassa olevaa ylätason ryhmätasoa tai luo uusi."""
+        for layer in active_map.listLayers():
+            if (
+                getattr(layer, "isGroupLayer", False)
+                and layer.name == name
+                and getattr(layer, "longName", name) == name
+            ):
+                return layer
+        create = getattr(active_map, "createGroupLayer", None)
+        if callable(create):
+            return create(name)
+        return self._add_group_layer_from_lyrx(active_map, name)
+
+    def _add_group_layer_from_lyrx(self, active_map, name):
+        """Varatapa vanhemmille Pro-versioille, joissa ei ole createGroupLayeria."""
+        import tempfile
+        document = {
+            "type": "CIMLayerDocument",
+            "version": "3.0.0",
+            "layers": ["CIMPATH=muuntaja/group.json"],
+            "layerDefinitions": [{
+                "type": "CIMGroupLayer",
+                "name": name,
+                "uRI": "CIMPATH=muuntaja/group.json",
+                "layerType": "Operational",
+                "showLegends": True,
+                "visibility": True,
+                "expanded": False,
+                "layers": [],
+            }],
+        }
+        handle, lyrx_path = tempfile.mkstemp(suffix=".lyrx")
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as out:
+                json.dump(document, out)
+            added = active_map.addLayer(arcpy.mp.LayerFile(lyrx_path), "TOP")
+        finally:
+            try:
+                os.remove(lyrx_path)
+            except OSError:
+                pass
+        if isinstance(added, (list, tuple)):
+            added = added[0] if added else None
+        if added is None:
+            raise RuntimeError("ryhmätason lisäys ei palauttanut tasoa")
+        return added
+
+    def _group_layer_data_sources(self, group_layer):
+        sources = set()
+        try:
+            layers = group_layer.listLayers()
+        except Exception:
+            return sources
+        for layer in layers:
+            try:
+                if layer.supports("DATASOURCE"):
+                    sources.add(self._normalized_path_key(layer.dataSource))
+            except Exception:
+                continue
+        return sources
+
+    def _import_rasters(self, raster_paths, folder_roots, input_sr, messages):
+        """Lisää rasterit aktiiviseen karttaan ryhmätasoihin.
+
+        Rasterit lisätään viittauksina alkuperäisiin tiedostoihin: satojen
+        karttalehtien kopiointi GDB:hen olisi hidasta eikä paranna näyttöä.
+        Jo ryhmässä oleva sama tiedosto ohitetaan, joten uudelleenajo ei
+        tuplaa karttalehtiä. Palauttaa (onnistuneet, [(polku, syy)]).
+        """
+        succeeded = []
+        failures = []
+        try:
+            active_map = arcpy.mp.ArcGISProject("CURRENT").activeMap
+        except Exception:
+            active_map = None
+        if active_map is None:
+            reason = "aktiivista karttaa ei ole (avaa kartta ennen rasterien tuontia)"
+            self.log(messages, f"Rasterit: {reason}.", "WARNING")
+            return succeeded, [(path, reason) for path in raster_paths]
+
+        groups = self._group_raster_paths(raster_paths, folder_roots)
+        self.log(
+            messages,
+            f"Rasterit — {len(raster_paths)} tiedostoa {len(groups)} ryhmään. "
+            "Rasterit lisätään viittauksina alkuperäisiin tiedostoihin (ei kopioida tallennuspaikkaan).",
+        )
+        for group_name in sorted(groups, key=self._raster_group_sort_key):
+            paths = groups[group_name]
+            try:
+                group_layer = self._get_or_create_group_layer(active_map, group_name)
+            except Exception as e:
+                reason = f"ryhmätason '{group_name}' luonti epäonnistui: {e}"
+                self.log(messages, f"  > {reason}", "WARNING")
+                failures.extend((path, reason) for path in paths)
+                continue
+
+            existing = self._group_layer_data_sources(group_layer)
+            added = skipped = 0
+            defined_crs = set()
+            for path in paths:
+                key = self._normalized_path_key(path)
+                if key in existing:
+                    skipped += 1
+                    succeeded.append(path)
+                    continue
+                try:
+                    crs_name = self._ensure_raster_spatial_reference(path, input_sr, messages)
+                    if crs_name:
+                        defined_crs.add(crs_name)
+                    layer = active_map.addDataFromPath(path)
+                    active_map.addLayerToGroup(group_layer, layer)
+                    active_map.removeLayer(layer)
+                    existing.add(key)
+                    added += 1
+                    succeeded.append(path)
+                except Exception as e:
+                    failures.append((path, str(e)))
+                    self.log(
+                        messages,
+                        f"  > Rasterin '{path}' lisäys epäonnistui: {e}",
+                        "WARNING",
+                    )
+
+            summary = f"  > Ryhmä '{group_name}': {added} rasteria lisätty"
+            if skipped:
+                summary += f", {skipped} oli jo ryhmässä"
+            if defined_crs:
+                summary += f"; koordinaatisto määritetty: {', '.join(sorted(defined_crs))}"
+            self.log(messages, summary + ".")
+        return succeeded, failures
 
     def _add_layers_to_map(self, paths, messages):
         if not paths:

@@ -6,15 +6,15 @@
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
 	<AddInInfo id="{78512C46-1376-4F15-812E-2A0D8D900A9E}"
-			   version="1.2.4"
+			   version="1.3.0"
 			   desktopVersion="3.5.0"
 			   product="ArcGISPro">
 		<Name>Muuntaja</Name>
-		<Description>Muuntaja-lataustyökalu (CAD/GPX/KML jne. import)</Description>
+		<Description>Muuntaja-lataustyökalu (CAD/GPX/KML/rasterit jne. import)</Description>
 		<Image>Images\muuntaja32.png</Image>
 		<Author>Roope Palomaa</Author>
 		<Company>Ramboll</Company>
-		<Date>2026-09-11</Date>
+		<Date>2026-09-22</Date>
 		<Subject>Framework</Subject>
 	</AddInInfo>
 

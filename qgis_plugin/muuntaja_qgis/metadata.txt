@@ -1,0 +1,11 @@
+[general]
+name=Muuntaja
+description=Paikkatietoaineistojen tuonti ja vienti QGISissä
+about=Muuntaja tuo vektori- ja rasteriaineistoja kansioista sekä vie projektin vektoritasoja yleisiin tiedostomuotoihin.
+version=0.1.0
+qgisMinimumVersion=3.44
+author=Roope Palomaa
+repository=https://github.com/roopepalom44/muuntaja
+category=Vector
+icon=icon.png
+experimental=True

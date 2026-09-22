@@ -10,3 +10,4 @@ __pycache__/
 *.dwg
 *.user
 *.suo
+qgis_plugin/dist/

@@ -32,6 +32,8 @@ RASTER_IMPORT_FILE_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg", ".jp2
 # kansiosta tulisi mukaan esim. kuvakaappaukset ja logot.
 RASTER_WORLD_FILE_REQUIRED_EXTENSIONS = (".png", ".jpg", ".jpeg")
 RASTER_GROUP_FOLDER_PREFIX = "taustakartta_"
+RASTER_PROGRESS_INTERVAL = 10
+RASTER_MOSAIC_DATASET_PREFIX = "raster_"
 MML_DOWNLOAD_FOLDER_PREFIX = "maanmittauslaitos_tiedostopalvelu"
 IMPORT_FILE_EXTENSIONS = VECTOR_IMPORT_FILE_EXTENSIONS + RASTER_IMPORT_FILE_EXTENSIONS
 # Vientiformaatit (dropdown) → tiedostopääte
@@ -1382,7 +1384,8 @@ class UniversalImportTool(object):
 
             if raster_paths:
                 raster_ok, raster_failures = self._import_rasters(
-                    raster_paths, folder_roots, input_sr, messages
+                    raster_paths, folder_roots, input_sr, messages,
+                    output_loc=output_loc, is_folder=is_folder,
                 )
                 succeeded.extend(raster_ok)
                 failures.extend(raster_failures)
@@ -2600,7 +2603,119 @@ class UniversalImportTool(object):
                 continue
         return sources
 
-    def _import_rasters(self, raster_paths, folder_roots, input_sr, messages):
+    def _supports_mosaic_raster_import(self, output_loc, is_folder):
+        """Mosaiikkiaineisto vaatii GDB-kohteen ja Standard/Advanced-lisenssin."""
+        if not output_loc or is_folder:
+            return False
+        try:
+            product = str(arcpy.ProductInfo()).strip().casefold()
+        except Exception:
+            return False
+        return product in {"arceditor", "arcinfo", "standard", "advanced"}
+
+    def _common_raster_spatial_reference(self, paths, input_sr):
+        """Palauta yhteinen CRS nopeaa mosaiikkituontia varten tai None.
+
+        Automaattitilassa nopeaa reittiä käytetään vain, kun jokaisen
+        rasterin EPSG voidaan päätellä ja se on koko ryhmässä sama.
+        """
+        if input_sr is not None:
+            return input_sr
+        epsg_codes = set()
+        for path in paths:
+            epsg, _source = self._guess_raster_epsg(path)
+            if not epsg:
+                return None
+            epsg_codes.add(epsg)
+            if len(epsg_codes) > 1:
+                return None
+        if not epsg_codes:
+            return None
+        return arcpy.SpatialReference(epsg_codes.pop())
+
+    def _is_mosaic_dataset(self, path):
+        try:
+            data_type = str(arcpy.Describe(path).dataType)
+        except Exception:
+            return False
+        return data_type.replace(" ", "").casefold() == "mosaicdataset"
+
+    def _mosaic_dataset_path(self, output_loc, group_name):
+        """Palauta ryhmän olemassa oleva mosaiikki tai vapaa GDB-nimi."""
+        base_name = self.sanitize_name(RASTER_MOSAIC_DATASET_PREFIX + group_name)
+        try:
+            base_name = arcpy.ValidateTableName(base_name, output_loc)
+        except Exception:
+            pass
+        candidate_name = base_name
+        suffix = 2
+        while True:
+            candidate_path = os.path.join(output_loc, candidate_name)
+            if not arcpy.Exists(candidate_path):
+                return candidate_path, candidate_name, False
+            if self._is_mosaic_dataset(candidate_path):
+                return candidate_path, candidate_name, True
+            candidate_name = f"{base_name}_{suffix}"
+            suffix += 1
+
+    def _import_raster_group_as_mosaic(
+        self, active_map, group_layer, group_name, paths, output_loc, source_sr, messages
+    ):
+        """Lisää rasteriryhmän GDB-mosaiikkiin yhdellä eräoperaatiolla."""
+        mosaic_path, mosaic_name, existed = self._mosaic_dataset_path(
+            output_loc, group_name
+        )
+        if not existed:
+            arcpy.management.CreateMosaicDataset(
+                output_loc, mosaic_name, source_sr
+            )
+
+        self.log(
+            messages,
+            f"  > Ryhmä '{group_name}': lisätään {len(paths)} rasteria "
+            "mosaiikkiaineistoon yhtenä eränä...",
+        )
+        arcpy.management.AddRastersToMosaicDataset(
+            in_mosaic_dataset=mosaic_path,
+            raster_type="Raster Dataset",
+            input_path=list(paths),
+            update_cellsize_ranges="UPDATE_CELL_SIZES",
+            update_boundary="UPDATE_BOUNDARY",
+            update_overviews="NO_OVERVIEWS",
+            spatial_reference=source_sr,
+            sub_folder="NO_SUBFOLDERS",
+            duplicate_items_action="EXCLUDE_DUPLICATES",
+            build_pyramids="NO_PYRAMIDS",
+            calculate_statistics="NO_STATISTICS",
+            build_thumbnails="NO_THUMBNAILS",
+            force_spatial_reference="FORCE_SPATIAL_REFERENCE",
+            estimate_statistics="NO_STATISTICS",
+            enable_pixel_cache="NO_PIXEL_CACHE",
+        )
+
+        existing_sources = self._group_layer_data_sources(group_layer)
+        if self._normalized_path_key(mosaic_path) not in existing_sources:
+            try:
+                layer = active_map.addDataFromPath(mosaic_path)
+                active_map.addLayerToGroup(group_layer, layer)
+                active_map.removeLayer(layer)
+            except Exception as e:
+                self.log(
+                    messages,
+                    f"  > Mosaiikkiaineisto '{mosaic_name}' luotiin, mutta sen "
+                    f"lisääminen kartalle epäonnistui: {e}",
+                    "WARNING",
+                )
+        self.log(
+            messages,
+            f"  > Ryhmä '{group_name}': {len(paths)} rasteria käsitelty "
+            f"mosaiikkiaineistoon '{mosaic_name}'.",
+        )
+
+    def _import_rasters(
+        self, raster_paths, folder_roots, input_sr, messages,
+        output_loc=None, is_folder=True,
+    ):
         """Lisää rasterit aktiiviseen karttaan ryhmätasoihin.
 
         Rasterit lisätään viittauksina alkuperäisiin tiedostoihin: satojen
@@ -2625,6 +2740,9 @@ class UniversalImportTool(object):
             f"Rasterit — {len(raster_paths)} tiedostoa {len(groups)} ryhmään. "
             "Rasterit lisätään viittauksina alkuperäisiin tiedostoihin (ei kopioida tallennuspaikkaan).",
         )
+        mosaic_import_enabled = self._supports_mosaic_raster_import(
+            output_loc, is_folder
+        )
         for group_name in sorted(groups, key=self._raster_group_sort_key):
             paths = groups[group_name]
             try:
@@ -2635,32 +2753,65 @@ class UniversalImportTool(object):
                 failures.extend((path, reason) for path in paths)
                 continue
 
+            if mosaic_import_enabled:
+                source_sr = self._common_raster_spatial_reference(paths, input_sr)
+                if source_sr is not None:
+                    try:
+                        self._import_raster_group_as_mosaic(
+                            active_map, group_layer, group_name, paths,
+                            output_loc, source_sr, messages,
+                        )
+                        succeeded.extend(paths)
+                        continue
+                    except Exception as e:
+                        self.log(
+                            messages,
+                            f"  > Ryhmän '{group_name}' nopea mosaiikkituonti "
+                            f"epäonnistui ({e}). Jatketaan rasterit yksitellen.",
+                            "WARNING",
+                        )
+
             existing = self._group_layer_data_sources(group_layer)
             added = skipped = 0
             defined_crs = set()
-            for path in paths:
+            group_total = len(paths)
+            for processed, path in enumerate(paths, 1):
                 key = self._normalized_path_key(path)
                 if key in existing:
                     skipped += 1
                     succeeded.append(path)
-                    continue
-                try:
-                    crs_name = self._ensure_raster_spatial_reference(path, input_sr, messages)
-                    if crs_name:
-                        defined_crs.add(crs_name)
-                    layer = active_map.addDataFromPath(path)
-                    active_map.addLayerToGroup(group_layer, layer)
-                    active_map.removeLayer(layer)
-                    existing.add(key)
-                    added += 1
-                    succeeded.append(path)
-                except Exception as e:
-                    failures.append((path, str(e)))
-                    self.log(
-                        messages,
-                        f"  > Rasterin '{path}' lisäys epäonnistui: {e}",
-                        "WARNING",
+                else:
+                    try:
+                        crs_name = self._ensure_raster_spatial_reference(path, input_sr, messages)
+                        if crs_name:
+                            defined_crs.add(crs_name)
+                        layer = active_map.addDataFromPath(path)
+                        active_map.addLayerToGroup(group_layer, layer)
+                        active_map.removeLayer(layer)
+                        existing.add(key)
+                        added += 1
+                        succeeded.append(path)
+                    except Exception as e:
+                        failures.append((path, str(e)))
+                        self.log(
+                            messages,
+                            f"  > Rasterin '{path}' lisäys epäonnistui: {e}",
+                            "WARNING",
+                        )
+
+                if group_total >= RASTER_PROGRESS_INTERVAL and (
+                    processed % RASTER_PROGRESS_INTERVAL == 0 or processed == group_total
+                ):
+                    failed = processed - added - skipped
+                    status = (
+                        f"  > Ryhmä '{group_name}': {processed}/{group_total} rasteria käsitelty "
+                        f"({added} lisätty"
                     )
+                    if skipped:
+                        status += f", {skipped} ohitettu"
+                    if failed:
+                        status += f", {failed} epäonnistui"
+                    self.log(messages, status + ").")
 
             summary = f"  > Ryhmä '{group_name}': {added} rasteria lisätty"
             if skipped:

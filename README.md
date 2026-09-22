@@ -44,13 +44,17 @@ Anna tuonnissa pelkkä yläkansio (esim. `Downloads\rasterit`), niin Muuntaja:
 - etsii kaikki rasterit alikansioineen; PNG/JPG otetaan mukaan vain, jos
   vieressä on world-tiedosto (`.pgw`, `.jgw`, `.wld`) tai `.aux.xml`
 - luo aktiiviseen karttaan ryhmätason jokaiselle `taustakartta_`-kansiolle
-  (`taustakartta_20k`, `taustakartta_5k` …) ja lisää karttalehdet sen alle.
-  Eri latauksista tulevat saman nimiset ryhmät yhdistetään, ja tarkin
-  mittakaava jää sisällysluettelossa ylimmäksi
+  (`taustakartta_20k`, `taustakartta_5k` …). GDB-kohteella ja ArcGIS Pro
+  Standard/Advanced -lisenssillä kaikki ryhmän karttalehdet lisätään yhdellä
+  eräoperaatiolla mosaiikkiaineistoon ja kartalle tulee vain yksi taso ryhmää
+  kohti. Basic-lisenssillä tai kansiokohteella karttalehdet lisätään ryhmään
+  yksittäisinä tasoina. Eri latauksista tulevat saman nimiset ryhmät
+  yhdistetään, ja tarkin mittakaava jää sisällysluettelossa ylimmäksi
 - määrittää koordinaatiston rasterille, jolta se puuttuu (MML:n PNG:t):
   ensisijaisesti world-tiedoston koordinaateista (TM35FIN, GK-kaistat, KKJ),
   sitten kansiopolusta (`etrs89` → ETRS-TM35FIN). Lähtökoordinaatisto-valinnalla
-  voi pakottaa koordinaatiston. Määritys kirjoittaa `.aux.xml`-tiedoston rasterin viereen
+  voi pakottaa koordinaatiston. Mosaiikkituonnissa CRS annetaan koko erälle;
+  yksittäistuonnissa määritys kirjoittaa `.aux.xml`-tiedoston rasterin viereen
 - ohittaa karttalehdet, jotka ovat jo samassa ryhmässä, joten uudelleenajo ei tuplaa niitä
 
 Jos rasterit eivät ole `taustakartta_`-kansiossa, ryhmä nimetään syötekansion

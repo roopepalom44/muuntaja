@@ -212,6 +212,81 @@ class RasterImportTests(unittest.TestCase):
         self.assertEqual(ok, [])
         self.assertEqual([path for path, _ in failures], ["a.tif", "b.tif"])
 
+    def test_import_rasters_logs_group_progress_every_ten_and_at_end(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raster_paths = [str(root / "bulk" / f"tile_{i:02d}.tif") for i in range(23)]
+            fake_map = FakeMap()
+            input_sr = types.SimpleNamespace(name="EPSG:3067", factoryCode=3067)
+            self.fake_arcpy.mp = types.SimpleNamespace(
+                ArcGISProject=lambda _: types.SimpleNamespace(activeMap=fake_map)
+            )
+            self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
+                spatialReference=input_sr
+            )
+
+            ok, failures = self.tool._import_rasters(
+                raster_paths, [str(root)], input_sr, None
+            )
+
+            self.assertEqual(len(ok), 23)
+            self.assertEqual(failures, [])
+            progress = [text for _, text in self.logs if "rasteria käsitelty" in text]
+            self.assertEqual(
+                progress,
+                [
+                    "  > Ryhmä 'bulk': 10/23 rasteria käsitelty (10 lisätty).",
+                    "  > Ryhmä 'bulk': 20/23 rasteria käsitelty (20 lisätty).",
+                    "  > Ryhmä 'bulk': 23/23 rasteria käsitelty (23 lisätty).",
+                ],
+            )
+
+    def test_gdb_import_uses_one_mosaic_operation_and_one_map_layer(self):
+        root = Path(r"C:\data\etrs89")
+        raster_paths = [str(root / "bulk" / f"tile_{i:02d}.png") for i in range(23)]
+        fake_map = FakeMap()
+        created = []
+        added_batches = []
+        existing = set()
+        source_sr = types.SimpleNamespace(name="EPSG:3067", factoryCode=3067)
+
+        def create_mosaic(workspace, name, spatial_reference):
+            created.append((workspace, name, spatial_reference.factoryCode))
+            existing.add(os.path.normcase(os.path.join(workspace, name)))
+
+        def add_rasters(**kwargs):
+            added_batches.append(kwargs)
+
+        self.fake_arcpy.mp = types.SimpleNamespace(
+            ArcGISProject=lambda _: types.SimpleNamespace(activeMap=fake_map)
+        )
+        self.fake_arcpy.ProductInfo = lambda: "ArcInfo"
+        self.fake_arcpy.SpatialReference = lambda code: source_sr
+        self.fake_arcpy.ValidateTableName = lambda name, workspace: name
+        self.fake_arcpy.Exists = lambda path: os.path.normcase(path) in existing
+        self.fake_arcpy.management = types.SimpleNamespace(
+            CreateMosaicDataset=create_mosaic,
+            AddRastersToMosaicDataset=add_rasters,
+        )
+
+        ok, failures = self.tool._import_rasters(
+            raster_paths, [str(root)], None, None,
+            output_loc=r"C:\output\project.gdb", is_folder=False,
+        )
+
+        self.assertEqual(len(ok), 23)
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            created,
+            [(r"C:\output\project.gdb", "raster_bulk", 3067)],
+        )
+        self.assertEqual(len(added_batches), 1)
+        self.assertEqual(added_batches[0]["input_path"], raster_paths)
+        self.assertEqual(added_batches[0]["duplicate_items_action"], "EXCLUDE_DUPLICATES")
+        self.assertEqual(fake_map.created_groups, ["bulk"])
+        self.assertEqual(len(fake_map.layers), 1)
+        self.assertEqual(len(fake_map.layers[0].children), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

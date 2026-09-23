@@ -1,6 +1,6 @@
-## Muuntaja QGIS 0.2.0 — esijulkaisu
+## Muuntaja QGIS 0.2.1 — esijulkaisu
 
-Asenna lataamalla `Muuntaja-QGIS-0.2.0.zip` ja valitsemalla QGISissä **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta**. Vaatii QGIS 3.44:n.
+Uusi Windows-asennus: lataa `Muuntaja-QGIS-0.2.1-Windows.zip`, pura se ja suorita `install_windows.bat` QGISin ollessa suljettu. Asennin kopioi lisäosan QGIS-profiileihin ja aktivoi sen. Vaihtoehtoisesti asenna `Muuntaja-QGIS-0.2.1.zip` QGISin **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta** -toiminnolla. Vaatii QGIS 3.44:n.
 
 Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rasterien VRT-mosaiikki ryhmittäin, DFSU-tuonti `mikeio`-kirjastolla sekä GPKG-, GeoJSON-, Shapefile-, KML-, KMZ- ja DXF-vienti. Valinnainen DWG-vienti muuntaa DXF:n DWG:ksi ODA File Converterilla. QGIS 3.44:ssä on testattu näiden formaattien vienti, yhdistetty GPKG/DXF-vienti, CAD-tuonti, rasterimosaiikin uudelleenajo ja jäljitelty DFSU-suodatus. DWG-työnkulku on testattu jäljitellyllä ODA-muuntimella, ei oikealla asennuksella.
 

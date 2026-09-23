@@ -1,12 +1,12 @@
-# Muuntaja QGIS (esijulkaisu 0.2.0)
+# Muuntaja QGIS (esijulkaisu 0.2.1)
 
 QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus pysyy samassa projektissa.
 
 ## Asennus
 
-1. Lataa [Muuntaja-QGIS-0.2.0.zip](https://github.com/roopepalom44/muuntaja/releases/download/qgis-v0.2.0/Muuntaja-QGIS-0.2.0.zip).
-2. Avaa QGISissä **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta**.
-3. Valitse ladattu ZIP. Muuntaja näkyy lisäosavalikossa ja työkalurivillä.
+**Windows, suoraviivainen asennus:** Lataa [Muuntaja-QGIS-0.2.1-Windows.zip](https://github.com/roopepalom44/muuntaja/releases/download/qgis-v0.2.1/Muuntaja-QGIS-0.2.1-Windows.zip), pura ZIP ja kaksoisnapsauta `install_windows.bat`. Sulje QGIS ennen asennusta. Asennin kopioi lisäosan käyttäjän kaikkiin olemassa oleviin QGIS 3 -profiileihin (tai luo `default`-profiilin) ja ottaa lisäosan käyttöön. Käynnistä QGIS asennuksen jälkeen.
+
+**QGISin oma asennus:** Lataa [Muuntaja-QGIS-0.2.1.zip](https://github.com/roopepalom44/muuntaja/releases/download/qgis-v0.2.1/Muuntaja-QGIS-0.2.1.zip) ja valitse QGISissä **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta**.
 
 ## Toimii tässä versiossa
 

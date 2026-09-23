@@ -2,7 +2,10 @@
 
 import os
 import re
+import shutil
 import struct
+import subprocess
+import tempfile
 from pathlib import Path
 
 from qgis.core import (
@@ -146,6 +149,50 @@ def _write_combined_dxf(layers, path):
     target = None
     datasource = None
     return path
+
+
+def find_oda_converter():
+    candidates = [shutil.which("ODAFileConverter"),
+                  Path("C:/Program Files/ODA/ODAFileConverter/ODAFileConverter.exe"),
+                  Path("C:/Program Files/ODA/ODAFileConverter/ODAFileConverter_QT5.exe")]
+    return next((str(path) for path in candidates if path and Path(path).is_file()), "")
+
+
+def _export_dwg(layers, folder, combined, converter):
+    converter = Path(converter or find_oda_converter())
+    if not converter.is_file():
+        raise RuntimeError("DWG-vienti vaatii ODA File Converter -ohjelman. Valitse sen .exe-tiedosto.")
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="muuntaja_dwg_") as temp:
+        input_folder = Path(temp) / "dxf"
+        output_folder = Path(temp) / "dwg"
+        input_folder.mkdir()
+        output_folder.mkdir()
+        if combined:
+            dxfs = [_write_combined_dxf(layers, input_folder / "muuntaja_vienti.dxf")]
+        else:
+            dxfs = []
+            for layer in layers:
+                path = unique_path(input_folder / f"{safe_name(layer.name())}.dxf")
+                dxfs.append(_write_vector(layer, path, "DXF"))
+        command = [str(converter), str(input_folder), str(output_folder),
+                   "ACAD2018", "DWG", "0", "1", "*.DXF"]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            raise RuntimeError(f"ODA File Converter epäonnistui (exit {result.returncode}): {result.stderr[-500:]}")
+        written = []
+        for dxf in dxfs:
+            produced = output_folder / f"{dxf.stem}.dwg"
+            if not produced.is_file() or produced.stat().st_size < 512:
+                raise RuntimeError(f"ODA ei tuottanut DWG-tiedostoa: {dxf.name}")
+            probe = QgsVectorLayer(str(produced), produced.stem, "ogr")
+            if not probe.isValid():
+                raise RuntimeError(f"ODA:n DWG-tiedosto ei avaudu QGISissä: {produced.name}")
+            target = unique_path(folder / produced.name)
+            shutil.move(str(produced), str(target))
+            written.append(str(target))
+        return ([written[0] for _ in layers] if combined else written), []
 
 
 def _open_vector_layers(path):
@@ -315,6 +362,60 @@ def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_co
     QgsProject.instance().addMapLayer(result)
 
 
+def _add_raster_group(project, group_name, paths, destination, source_crs):
+    """Represent a raster group by one VRT when multiple tiles are present."""
+    from osgeo import gdal
+    group = project.layerTreeRoot().findGroup(group_name) or project.layerTreeRoot().addGroup(group_name)
+    existing = []
+    prior_vrt_layers = []
+    for node in group.findLayers():
+        layer = node.layer()
+        if layer is None:
+            continue
+        saved = layer.customProperty("muuntaja/source_paths", [])
+        if saved:
+            existing.extend(str(path) for path in saved)
+            prior_vrt_layers.append(layer)
+        else:
+            existing.append(layer.source())
+            prior_vrt_layers.append(layer)
+    combined = list(dict.fromkeys(existing + [str(path) for path in paths]))
+    rasters = []
+    for path in combined:
+        raster = QgsRasterLayer(path, Path(path).stem)
+        if not raster.isValid():
+            raise RuntimeError(f"Rasteria ei voitu avata: {path}")
+        if not raster.crs().isValid():
+            guessed = source_crs if source_crs and source_crs.isValid() else inferred_crs(raster, path)
+            if guessed:
+                raster.setCrs(guessed)
+        rasters.append(raster)
+    if len(rasters) == 1:
+        if not prior_vrt_layers:
+            project.addMapLayer(rasters[0], False)
+            group.addLayer(rasters[0])
+        return
+    root = destination.parent if destination.suffix.lower() in {".gpkg", ".gdb"} else destination
+    output = root / f"muuntaja_{safe_name(destination.stem)}_{safe_name(group_name)}.vrt"
+    temp_output = output.with_name(output.stem + "_uusi.vrt")
+    options = None
+    if rasters[0].crs().isValid():
+        options = gdal.BuildVRTOptions(outputSRS=rasters[0].crs().authid())
+    vrt = gdal.BuildVRT(str(temp_output), combined, options=options)
+    if vrt is None:
+        raise RuntimeError(f"Rasterimosaiikin luonti epäonnistui: {group_name}")
+    vrt = None
+    for layer in prior_vrt_layers:
+        project.removeMapLayer(layer.id())
+    os.replace(temp_output, output)
+    layer = QgsRasterLayer(str(output), group_name)
+    if not layer.isValid():
+        raise RuntimeError(f"Rasterimosaiikkia ei voitu avata: {output}")
+    layer.setCustomProperty("muuntaja/source_paths", combined)
+    project.addMapLayer(layer, False)
+    group.addLayer(layer)
+
+
 def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=False,
                 progress=None, dfsu_filter_column="", dfsu_filter_operator="=", dfsu_filter_value=""):
     """Import vectors to a GeoPackage or folder; add located rasters by reference."""
@@ -331,31 +432,14 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
     else:
         destination.mkdir(parents=True, exist_ok=True)
     successes, failures = [], []
-    groups = {}
+    raster_groups = {}
     for index, path in enumerate(items, 1):
         if progress:
             progress(index, len(items), str(path))
         try:
             if path.suffix.lower() in RASTER_EXTENSIONS:
-                raster = QgsRasterLayer(str(path), path.stem)
-                if not raster.isValid():
-                    raise RuntimeError("Rasteria ei voitu avata")
-                if not raster.crs().isValid() and source_crs and source_crs.isValid():
-                    raster.setCrs(source_crs)
-                elif not raster.crs().isValid():
-                    inferred = inferred_crs(raster, path)
-                    if inferred:
-                        raster.setCrs(inferred)
                 group_name = raster_group(path)
-                group = groups.get(group_name)
-                if group is None:
-                    group = project.layerTreeRoot().findGroup(group_name) or project.layerTreeRoot().addGroup(group_name)
-                    groups[group_name] = group
-                if any(node.layer() and node.layer().source() == str(path) for node in group.findLayers()):
-                    continue
-                project.addMapLayer(raster, False)
-                group.addLayer(raster)
-                successes.append(str(path))
+                raster_groups.setdefault(group_name, []).append(path)
                 continue
             if path.suffix.lower() == ".dfsu":
                 _import_dfsu(path, destination, workspace, source_crs, target_crs,
@@ -404,14 +488,22 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
             raise
         except Exception as exc:
             failures.append((str(path), str(exc)))
+    for group_name, paths in raster_groups.items():
+        try:
+            _add_raster_group(project, group_name, paths, destination, source_crs)
+            successes.extend(str(path) for path in paths)
+        except Exception as exc:
+            failures.extend((str(path), str(exc)) for path in paths)
     if not successes:
         raise RuntimeError("Yksikään tiedosto ei onnistunut: " + "; ".join(f"{p}: {e}" for p, e in failures))
     return successes, failures
 
 
-def export_data(layers, folder, format_name, combined=False, progress=None):
+def export_data(layers, folder, format_name, combined=False, progress=None, oda_converter=""):
     if format_name == "DWG":
-        raise RuntimeError("DWG-vienti tarvitsee erillisen DWG-kirjoittimen. QGISin GDAL tukee vain DWG-lukua.")
+        if not layers:
+            raise ValueError("Valitse vähintään yksi vektoritaso.")
+        return _export_dwg(layers, folder, combined, oda_converter)
     if format_name not in DRIVERS:
         raise ValueError(f"Tuntematon vientimuoto: {format_name}")
     if not layers:

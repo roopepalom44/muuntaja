@@ -46,6 +46,23 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as folder:
     cad_layer = QgsVectorLayer(cad_written[0], 'cad_check', 'ogr')
     assert cad_layer.isValid() and cad_layer.featureCount() == 2
     print('combined DXF passed', flush=True)
+    from unittest.mock import patch
+    from muuntaja_qgis import core as muuntaja_core
+    fake_converter = Path(folder) / 'ODAFileConverter.exe'
+    fake_converter.write_bytes(b'fake')
+    def fake_oda(command, **kwargs):
+        assert command[0] == str(fake_converter)
+        assert command[3:5] == ['ACAD2018', 'DWG']
+        assert command[-1] == '*.DXF'
+        for source in Path(command[1]).glob('*.dxf'):
+            (Path(command[2]) / (source.stem + '.dwg')).write_bytes(b'DWG' * 200)
+        return types.SimpleNamespace(returncode=0, stderr='')
+    with patch.object(muuntaja_core.subprocess, 'run', side_effect=fake_oda), \
+         patch.object(muuntaja_core, 'QgsVectorLayer') as probe:
+        probe.return_value.isValid.return_value = True
+        dwg_written, dwg_failed = export_data([layer], folder, 'DWG', oda_converter=str(fake_converter))
+    assert len(dwg_written) == 1 and not dwg_failed and Path(dwg_written[0]).is_file()
+    print('ODA DWG orchestration passed (mock converter)', flush=True)
     cad_imported, cad_import_failed = import_data([cad_written[0]], str(Path(folder) / 'cad_import.gpkg'),
                                                  clean_cad=True)
     assert len(cad_imported) == 1 and not cad_import_failed, cad_import_failed
@@ -83,10 +100,29 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as folder:
     dataset.SetProjection(spatial.ExportToWkt())
     dataset.GetRasterBand(1).Fill(10)
     dataset = None
+    second_path = tiles / 'tile2.tif'
+    second = gdal.GetDriverByName('GTiff').Create(str(second_path), 2, 2, 1)
+    second.SetGeoTransform([2, 1, 0, 2, 0, -1])
+    second.SetProjection(spatial.ExportToWkt())
+    second.GetRasterBand(1).Fill(20)
+    second = None
     raster_written, raster_failed = import_data([str(tiles)], str(Path(folder) / 'raster_out'))
-    assert len(raster_written) == 1 and not raster_failed
-    assert QgsProject.instance().layerTreeRoot().findGroup('taustakartta_20k')
-    print('raster group passed', flush=True)
+    assert len(raster_written) == 2 and not raster_failed
+    group = QgsProject.instance().layerTreeRoot().findGroup('taustakartta_20k')
+    assert group and len(group.findLayers()) == 1
+    assert group.findLayers()[0].layer().source().endswith('.vrt')
+    import_data([str(tiles)], str(Path(folder) / 'raster_out'))
+    assert len(group.findLayers()) == 1
+    third_path = tiles / 'tile3.tif'
+    third = gdal.GetDriverByName('GTiff').Create(str(third_path), 2, 2, 1)
+    third.SetGeoTransform([4, 1, 0, 2, 0, -1])
+    third.SetProjection(spatial.ExportToWkt())
+    third.GetRasterBand(1).Fill(30)
+    third = None
+    import_data([str(third_path)], str(Path(folder) / 'raster_out'))
+    assert len(group.findLayers()) == 1
+    assert len(group.findLayers()[0].layer().customProperty('muuntaja/source_paths')) == 3
+    print('raster mosaic passed', flush=True)
     QgsProject.instance().removeAllMapLayers()
 dialog = MuuntajaDialog()
 print('dialog constructed', flush=True)

@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsCoordinateReferenceSystem, QgsProject, QgsVectorLayer
 
-from .core import DRIVERS, OperationCanceled, export_data, import_data
+from .core import DRIVERS, OperationCanceled, export_data, find_oda_converter, import_data
 
 
 class MuuntajaDialog(QDialog):
@@ -95,12 +95,20 @@ class MuuntajaDialog(QDialog):
         row.addWidget(browse)
         form.addRow("Vientikansio", row)
         self.format = QComboBox()
-        self.format.addItems(list(DRIVERS))
+        self.format.addItems(list(DRIVERS) + ["DWG"])
         form.addRow("Formaatti", self.format)
-        self.combined = QCheckBox("Kaikki tasot yhteen tiedostoon (GPKG/DXF)")
+        self.combined = QCheckBox("Kaikki tasot yhteen tiedostoon (GPKG/DXF/DWG)")
         form.addRow(self.combined)
+        converter_row = QHBoxLayout()
+        self.oda_converter = QLineEdit(find_oda_converter())
+        self.oda_converter.setPlaceholderText("ODAFileConverter.exe — tarvitaan vain DWG-vientiin")
+        converter_row.addWidget(self.oda_converter)
+        converter_button = QPushButton("Selaa…")
+        converter_button.clicked.connect(self._choose_oda_converter)
+        converter_row.addWidget(converter_button)
+        form.addRow("DWG-muunnin", converter_row)
         layout.addLayout(form)
-        layout.addWidget(QLabel("DWG-vienti vaatii erillisen DWG-kirjoittimen. DXF-vienti toimii ilman lisäasennuksia."))
+        layout.addWidget(QLabel("DWG-vienti vaatii ODA File Converterin. DXF-vienti toimii ilman lisäasennuksia."))
         run = QPushButton("Vie tasot")
         run.clicked.connect(self._run_export)
         layout.addWidget(run)
@@ -127,6 +135,11 @@ class MuuntajaDialog(QDialog):
         path = QFileDialog.getExistingDirectory(self, "Valitse vientikansio")
         if path:
             self.export_folder.setText(path)
+
+    def _choose_oda_converter(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Valitse ODA File Converter", "", "Ohjelmat (*.exe)")
+        if path:
+            self.oda_converter.setText(path)
 
     def refresh_layers(self):
         self.layers.clear()
@@ -186,7 +199,8 @@ class MuuntajaDialog(QDialog):
         self.progress.setWindowModality(Qt.WindowModal)
         try:
             successes, failures = export_data(layers, folder, self.format.currentText(),
-                                              self.combined.isChecked(), self._progress)
+                                              self.combined.isChecked(), self._progress,
+                                              self.oda_converter.text().strip())
             self._show_result("Vienti", successes, failures)
         except Exception as exc:
             QMessageBox.critical(self, "Muuntaja", str(exc))

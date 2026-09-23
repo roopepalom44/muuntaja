@@ -1,7 +1,7 @@
-## Muuntaja QGIS 0.1.0 — esijulkaisu
+## Muuntaja QGIS 0.2.0 — esijulkaisu
 
-Asenna lataamalla `Muuntaja-QGIS-0.1.0.zip` ja valitsemalla QGISissä **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta**. Vaatii QGIS 3.44:n.
+Asenna lataamalla `Muuntaja-QGIS-0.2.0.zip` ja valitsemalla QGISissä **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta**. Vaatii QGIS 3.44:n.
 
-Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rasterien ryhmittely, DFSU-tuonti `mikeio`-kirjastolla sekä GPKG-, GeoJSON-, Shapefile-, KML-, KMZ- ja DXF-vienti. QGIS 3.44:ssä on testattu näiden formaattien vienti, yhdistetty GPKG/DXF-vienti, CAD-tuonti, rasteriryhmä ja jäljitelty DFSU-suodatus.
+Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rasterien VRT-mosaiikki ryhmittäin, DFSU-tuonti `mikeio`-kirjastolla sekä GPKG-, GeoJSON-, Shapefile-, KML-, KMZ- ja DXF-vienti. Valinnainen DWG-vienti muuntaa DXF:n DWG:ksi ODA File Converterilla. QGIS 3.44:ssä on testattu näiden formaattien vienti, yhdistetty GPKG/DXF-vienti, CAD-tuonti, rasterimosaiikin uudelleenajo ja jäljitelty DFSU-suodatus. DWG-työnkulku on testattu jäljitellyllä ODA-muuntimella, ei oikealla asennuksella.
 
-**Tämä ei vielä ole toiminnallisesti identtinen ArcGIS Pro -version kanssa.** DWG-vienti tarvitsee erillisen DWG-kirjoittimen; automaattinen rasterimosaiikki puuttuu. Tarkempi tilanne: [QGIS-ohje](https://github.com/roopepalom44/muuntaja/blob/main/qgis_plugin/README.md).
+**Tämä ei vielä ole toiminnallisesti identtinen ArcGIS Pro -version kanssa.** DWG-vienti tarvitsee erillisen ODA File Converter -asennuksen. QGISin VRT-mosaiikki käyttää eri tallennusmuotoa kuin ArcGIS Pron FileGDB-mosaiikki. Tarkempi tilanne: [QGIS-ohje](https://github.com/roopepalom44/muuntaja/blob/main/qgis_plugin/README.md).

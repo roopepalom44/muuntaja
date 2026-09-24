@@ -1,3 +1,9 @@
+## Muuntaja QGIS 0.2.2
+
+- Jäsensi tuonnin tallennustavat erillisiksi GeoPackage-tiedostoiksi, yhdeksi GeoPackageksi tai File Geodatabaseksi. Tiedostonvalitsin ja kentän ohjeteksti vaihtuvat tallennustavan mukaan.
+- Siirsi CRS-, CAD- ja DFSU-valinnat lisäasetuksiin ja ottaa tiedostokohtaiset asetukset käyttöön vain, kun syöte voi sisältää kyseistä aineistoa.
+- Selkeytti vientiasetuksia: yhdistetty tiedosto on tarjolla vain GPKG-, DXF- ja DWG-muodoille, ja ODA-muunnin näkyy vain DWG-viennissä.
+
 ## Muuntaja QGIS 0.2.1 — esijulkaisu
 
 Uusi Windows-asennus: lataa `Muuntaja-QGIS-0.2.1-Windows.zip`, pura se ja suorita `install_windows.bat` QGISin ollessa suljettu. Asennin kopioi lisäosan QGIS-profiileihin ja aktivoi sen. Vaihtoehtoisesti asenna `Muuntaja-QGIS-0.2.1.zip` QGISin **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta** -toiminnolla. Vaatii QGIS 3.44:n.

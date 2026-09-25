@@ -18,6 +18,7 @@ from .core import DRIVERS, OperationCanceled, export_data, find_oda_converter, i
 class MuuntajaDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._automatic_import_destination = ""
         self.setWindowTitle("Muuntaja — QGIS")
         self.resize(760, 680)
         layout = QVBoxLayout(self)
@@ -28,6 +29,21 @@ class MuuntajaDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    @staticmethod
+    def _project_directory():
+        project_file = QgsProject.instance().fileName()
+        return str(Path(project_file).parent) if project_file else ""
+
+    def _default_import_destination(self, mode):
+        directory = self._project_directory()
+        if not directory:
+            return ""
+        if mode == "gpkg":
+            return str(Path(directory) / "muuntaja_tuonti.gpkg")
+        if mode == "gdb":
+            return str(Path(directory) / "muuntaja_tuonti.gdb")
+        return directory
 
     @staticmethod
     def _scroll_page(content, layout):
@@ -85,6 +101,8 @@ class MuuntajaDialog(QDialog):
         output_form.addRow("Tallennustapa", self.destination_mode)
         self.import_output = QLineEdit()
         self.import_output.setPlaceholderText("Valitse kohdekansio")
+        self._automatic_import_destination = self._default_import_destination("folder")
+        self.import_output.setText(self._automatic_import_destination)
         self.import_browse = QPushButton("Valitse…")
         self.import_browse.clicked.connect(self._choose_import_destination)
         output_form.addRow("Tallennuspaikka", self._row_widget(self._line_and_button(self.import_output, self.import_browse)))
@@ -166,6 +184,7 @@ class MuuntajaDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.export_folder = QLineEdit()
         self.export_folder.setPlaceholderText("Valitse vientikansio")
+        self.export_folder.setText(self._project_directory())
         browse = QPushButton("Valitse…")
         browse.clicked.connect(self._choose_export_folder)
         form.addRow("Vientikansio", self._row_widget(self._line_and_button(self.export_folder, browse)))
@@ -199,6 +218,11 @@ class MuuntajaDialog(QDialog):
 
     def _update_import_destination_controls(self, *_):
         mode = self.destination_mode.currentData()
+        current = self.import_output.text().strip()
+        default = self._default_import_destination(mode)
+        if not current or current == self._automatic_import_destination:
+            self.import_output.setText(default)
+        self._automatic_import_destination = default
         placeholders = {
             "folder": "Kansio, johon tasot tallennetaan erillisinä GeoPackage-tiedostoina",
             "gpkg": "Esimerkiksi C:/Aineistot/tuonti.gpkg",

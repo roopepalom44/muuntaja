@@ -15,3 +15,6 @@ Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rast
 
 - Julkaistaan samassa GitHub-releasessa ArcGIS Pro AddInX:n kanssa sekä QGISin omana asennus-ZIPinä että Windows-asennus-ZIPinä.
 - GeoJSON-vienti muuntaa koordinaatit WGS84:ään ja hylkää puuttuvan lähtökoordinaatiston. Tarkistettu QGIS 3.44:llä.
+## Muuntaja QGIS 0.2.4
+
+- Tallennetun QGIS-projektin kansio täyttyy oletuksena tuonnin ja viennin tallennuspaikaksi. GeoPackage- ja FileGDB-tallennustavat saavat tiedostonimen samasta kansiosta.

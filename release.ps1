@@ -5,7 +5,7 @@
   Versio luetaan Config.daml:sta. Release-tagi on v<versio>. Liitteen nimi on
   aina Muuntaja.esriAddInX, joten vakaa latauslinkki on
   https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja.esriAddInX
-  Vaatii ArcGIS Pro -asennuksen (käännösviitteet) ja gh-komennon (gh auth login).
+  Vaatii .NET 8 SDK:n, täyden MSBuildin, Pro 3.5 Extensions NuGet -paketin sekä gh-kirjautumisen.
 #>
 [CmdletBinding()]
 param(
@@ -34,6 +34,15 @@ if ($daml -notmatch '(?<=\s)version="(\d+(\.\d+){1,3})"') { throw 'Versiota ei l
 $version = $Matches[1]
 $tag = "v$version"
 
+if ($daml -notmatch 'desktopVersion="3\.5(?:\.|\")') {
+    throw 'Config.daml:n ArcGIS Pro -vähimmäisversion pitää olla 3.5.'
+}
+$project = [xml](Get-Content -LiteralPath (Join-Path $root 'Muuntaja.csproj') -Raw)
+$apiPackage = $project.SelectSingleNode('/Project/ItemGroup/PackageReference[@Include="Esri.ArcGISPro.Extensions30"]')
+if ($null -eq $apiPackage -or $apiPackage.GetAttribute('Version') -ne '3.5.0.57366') {
+    throw 'Julkaisu pitää kääntää Esri.ArcGISPro.Extensions30 3.5.0.57366 -paketilla.'
+}
+
 Invoke-Native { gh auth status } 'gh ei ole kirjautunut (aja: gh auth login)'
 if (git status --porcelain) { throw 'Työhakemistossa on commitoimattomia muutoksia. Commitoi ne ensin.' }
 if ((git rev-parse --abbrev-ref HEAD) -ne $branch) { throw "Julkaise -haarasta." }
@@ -48,8 +57,7 @@ $ErrorActionPreference = 'Stop'
 if ($exists) { throw "Release $tag on jo olemassa. Nosta versiota Config.daml:ssa." }
 
 if (-not $SkipBuild) {
-    Invoke-Native { dotnet build (Join-Path $root 'Muuntaja.csproj') -c $configuration --nologo } 'Käännös epäonnistui'
-    Invoke-Native { & (Join-Path $root 'package-addin-fixed.ps1') -Configuration $configuration -TargetFramework $framework } 'Paketointi epäonnistui'
+    Invoke-Native { & (Join-Path $root 'build-addin.ps1') -Configuration $configuration -TargetFramework $framework } 'Käännös/paketointi epäonnistui'
 }
 
 $package = Join-Path $root "bin\$configuration\$framework\Muuntaja.esriAddInX"
@@ -61,7 +69,8 @@ Copy-Item -LiteralPath $package -Destination $asset -Force
 $ghArgs = @('release', 'create', $tag, $asset, '-R', $repo, '--target', (git rev-parse HEAD), '--title', "Muuntaja $version")
 if ($Notes) { $ghArgs += @('--notes', $Notes) } else { $ghArgs += '--generate-notes' }
 if ($Draft) { $ghArgs += '--draft' }
-Invoke-Native { gh @args } 'Releasen luonti epäonnistui'
+& gh @ghArgs
+if ($LASTEXITCODE -ne 0) { throw "Releasen luonti epäonnistui (exit $LASTEXITCODE)." }
 
 Remove-Item -LiteralPath $asset -Force
 Write-Output "Julkaistu: https://github.com/$repo/releases/tag/$tag"

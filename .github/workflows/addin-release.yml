@@ -1,0 +1,117 @@
+name: Build and release ArcGIS Pro Add-InX
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out pushed commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Validate Pro 3.5 API baseline and prepare unique AddInX version
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $sdks = & dotnet --list-sdks
+          if ($LASTEXITCODE -ne 0 -or -not ($sdks | Where-Object { $_ -match '^8\.' })) {
+            throw 'The release runner must have the .NET 8 SDK installed.'
+          }
+
+          $configPath = Join-Path $env:GITHUB_WORKSPACE 'Config.daml'
+          $daml = [IO.File]::ReadAllText($configPath)
+          [xml]$config = $daml
+          $namespaces = [Xml.XmlNamespaceManager]::new($config.NameTable)
+          $namespaces.AddNamespace('daml', 'http://schemas.esri.com/DADF/Registry')
+          $addInInfo = $config.SelectSingleNode('/daml:ArcGIS/daml:AddInInfo', $namespaces)
+          if ($null -eq $addInInfo) {
+            throw 'Could not find ArcGIS AddInInfo in Config.daml.'
+          }
+
+          $desktopVersion = $addInInfo.GetAttribute('desktopVersion')
+          if ($desktopVersion -notmatch '^3\.5(?:\.|$)') {
+            throw "Config.daml must keep ArcGIS Pro 3.5 as its minimum version; found $desktopVersion."
+          }
+
+          $projectPath = Join-Path $env:GITHUB_WORKSPACE 'Muuntaja.csproj'
+          [xml]$project = [IO.File]::ReadAllText($projectPath)
+          $apiPackage = $project.SelectSingleNode('/Project/ItemGroup/PackageReference[@Include="Esri.ArcGISPro.Extensions30"]')
+          if ($null -eq $apiPackage -or $apiPackage.GetAttribute('Version') -ne '3.5.0.57366') {
+            throw 'The add-in must compile against Esri.ArcGISPro.Extensions30 3.5.0.57366.'
+          }
+
+          $versionPattern = [regex]'(?s)(<AddInInfo\b[^>]*\bversion=")(?<version>[^"]+)(")'
+          $versionMatches = $versionPattern.Matches($daml)
+          if ($versionMatches.Count -ne 1) {
+            throw 'Expected exactly one AddInInfo version in Config.daml.'
+          }
+          $match = $versionMatches[0]
+          $baseVersion = $match.Groups['version'].Value
+          if ($baseVersion -notmatch '^\d+(?:\.\d+){0,2}$') {
+            throw "Config.daml version must have one to three numeric parts before CI adds its run number; found $baseVersion."
+          }
+
+          $releaseVersion = "$baseVersion.$env:GITHUB_RUN_NUMBER"
+          $versionStart = $match.Groups['version'].Index
+          $daml = $daml.Remove($versionStart, $match.Groups['version'].Length)
+          $daml = $daml.Insert($versionStart, $releaseVersion)
+          [IO.File]::WriteAllText($configPath, $daml, [Text.UTF8Encoding]::new($false))
+
+          $tag = "v$releaseVersion"
+          $outputs = "version=$releaseVersion`ntag=$tag`n"
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, $outputs, [Text.UTF8Encoding]::new($false))
+          Write-Host "Building Pro 3.5-compatible AddInX $releaseVersion ($tag)."
+
+      - name: Build AddInX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\build-addin.ps1 -Configuration Release -TargetFramework net8.0-windows
+          if ($LASTEXITCODE -ne 0) {
+            throw "AddInX build failed with exit code $LASTEXITCODE."
+          }
+
+          $package = Join-Path $env:GITHUB_WORKSPACE 'bin\Release\net8.0-windows\Muuntaja.esriAddInX'
+          if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
+            throw "The expected AddInX package was not created: $package"
+          }
+          Get-Item -LiteralPath $package | Select-Object FullName, Length
+          $asset = Join-Path $env:RUNNER_TEMP 'Muuntaja.esriAddInX'
+          Copy-Item -LiteralPath $package -Destination $asset -Force
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $asset = Join-Path $env:RUNNER_TEMP 'Muuntaja.esriAddInX'
+          $ghArgs = @(
+            'release', 'create', $env:RELEASE_TAG, $asset,
+            '--repo', $env:GITHUB_REPOSITORY,
+            '--target', $env:GITHUB_SHA,
+            '--title', "Muuntaja $env:RELEASE_VERSION",
+            '--generate-notes'
+          )
+          & gh @ghArgs
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub release creation failed with exit code $LASTEXITCODE."
+          }

@@ -20,14 +20,34 @@
 2. Lataa uusin [Muuntaja.esriAddInX](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja.esriAddInX) ([kaikki julkaisut](https://github.com/roopepalom44/muuntaja/releases)).
 3. Sulje ArcGIS Pro ja asenna `.esriAddInX`-tiedosto kaksoisklikkaamalla sitä, jolloin se asentuu ArcGIS Pron Add-In -kansioon.
 
-### Julkaisun tekeminen (kehittäjille)
+### Automaattiset GitHub-julkaisut
+
+Jokainen `main`-haaraan tehty push käynnistää työnkulun
+`.github/workflows/addin-release.yml`. Se kääntää ja paketoi AddInX:n sekä luo
+GitHub-releasen, jonka liitteenä on `Muuntaja.esriAddInX`. Paketin versio
+muodostuu `Config.daml`-version ja GitHub-ajon numeron perusteella, joten
+jokaisella pushilla on yksilöllinen versio.
+
+Työnkulku kääntää virallisilla ArcGIS Pro 3.5 SDK -viitteillä
+`Esri.ArcGISPro.Extensions30` NuGet-paketista `3.5.0.57366`; Pro 3.5 on myös
+AddInX:n vähimmäisversio. Runnerille ei tarvitse asentaa ArcGIS Prota.
+GitHub Actionsin pitää sallia työnkulun `GITHUB_TOKEN`-oikeus `contents: write`,
+jotta se voi luoda releasen.
+
+Uusin AddInX on saatavilla suoraan osoitteesta
+<https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja.esriAddInX>.
+
+### Julkaisun tekeminen paikallisesti (kehittäjille)
+
 Nosta versio `Config.daml`-tiedostossa, commitoi ja pushaa, ja aja sitten:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\release.ps1
 ```
 
-Skripti rakentaa Release-version, paketoi sen ja luo GitHub-releasen `v<versio>` (vaatii ArcGIS Pron ja `gh auth login`).
+Skripti rakentaa Release-version, paketoi sen ja luo GitHub-releasen `v<versio>`.
+Se käyttää .NET 8 SDK:ta, täyttä MSBuildia, virallista Pro 3.5 NuGet -pakettia
+sekä `gh auth login` -kirjautumista.
 
 ## Käyttö
 1. Käynnistä ArcGIS Pro.

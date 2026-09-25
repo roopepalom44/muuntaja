@@ -25,7 +25,8 @@ function Resolve-MSBuildPath {
     if (Test-Path -LiteralPath $vsWhere -PathType Leaf) {
         $installations = @(& $vsWhere -all -products * -requires Microsoft.Component.MSBuild -property installationPath)
         $installations = @($installations | Sort-Object {
-            if ($_ -match '\\2022\\') { 0 }
+            if ($_ -match 'BuildTools') { 3 }
+            elseif ($_ -match '\\2022\\') { 0 }
             elseif ($_ -match '\\18\\') { 1 }
             else { 2 }
         })

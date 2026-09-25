@@ -206,7 +206,10 @@ class UniversalImportTool(object):
             "ETRS-GK29 (3883)",
             "ETRS-GK30 (3884)",
             "ETRS-GK31 (3885)",
-            "KKJ Yhtenäiskoordinaatisto (2393)"
+            "KKJ kaista 1 (2391)",
+            "KKJ kaista 2 (2392)",
+            "KKJ Yhtenäiskoordinaatisto (2393)",
+            "KKJ kaista 4 (2394)"
         ]
         param4.value = "Automaattinen"
 
@@ -2138,11 +2141,25 @@ class UniversalImportTool(object):
         return out_path
 
     # --- SUOMEN KOORDINAATISTON PÄÄTTELY ---
-    def detect_finnish_crs(self, feature_class, messages):
+    def detect_finnish_crs(self, feature_class, messages, input_path=None):
         """Päättelee koordinaatiston useasta pisteestä enemmistöäänellä.
         Käyttää SEKÄ X että Y -tarkastelua, kattaa TM35FIN, GK-kaistat (prefiksoidut ja kompaktit),
-        KKJ-kaistat 1-4, YKJ ja WGS84 lat/lon.
+        KKJ-kaistat 1-4, YKJ ja WGS84 lat/lon. Tukee myös .prj-sivutiedostoja.
         """
+        # Tarkistetaan ensin mahdollinen .prj-sivutiedosto CAD-tiedoston vierestä
+        if input_path:
+            base, _ = os.path.splitext(input_path)
+            for prj_candidate in (base + ".prj", input_path + ".prj"):
+                if os.path.isfile(prj_candidate):
+                    try:
+                        sr = arcpy.SpatialReference(prj_candidate)
+                        if sr and getattr(sr, "name", "") and sr.name != "Unknown":
+                            code = self._sr_factory_code(sr)
+                            label = f"EPSG:{code}" if code else sr.name
+                            self.log(messages, f"  > Luettu koordinaatisto .prj-sivutiedostosta: {sr.name} ({label})")
+                            return sr
+                    except Exception:
+                        pass
         from collections import Counter
         MAX_SAMPLES = 200
 
@@ -2839,7 +2856,10 @@ class UniversalImportTool(object):
                 if path and arcpy.Exists(path):
                     active_map.addDataFromPath(path)
         except Exception as e:
-            self.log(messages, f"  > Karttalisäys epäonnistui: {e}", "WARNING")
+            if str(e).strip() == "CURRENT":
+                pass  # Headless-ajo ilman aktiivista ArcGIS Pro -käyttöliittymäprojektia
+            else:
+                self.log(messages, f"  > Karttalisäys epäonnistui: {e}", "WARNING")
 
     def _save_cad_layer_fallback(self, input_data, output_loc, output_name, is_folder,
                                  field_mappings, input_sr, target_sr, messages, check_path, feat_count=None):
@@ -2945,6 +2965,23 @@ class UniversalImportTool(object):
             work_input = input_data
 
             if field_mappings:
+                if not do_projection and not remote:
+                    # Nopea suora kirjoitus: FeatureClassToFeatureClass suoraan kohteeseen
+                    # ilman turhaa scratchGDB-välitallennusta ja toista CopyFeatures-kutsua!
+                    t0 = time.perf_counter()
+                    try:
+                        arcpy.conversion.FeatureClassToFeatureClass(
+                            input_data, output_loc, output_name, field_mapping=field_mappings
+                        )
+                        self._log_elapsed(messages, "Tallennus (kenttäsuodatus)", t0)
+                        return check_path
+                    except Exception as e:
+                        self.log(
+                            messages,
+                            f"  > Suora FeatureClassToFeatureClass epäonnistui ({e}), kokeillaan scratch-reittiä.",
+                            "WARNING",
+                        )
+
                 stamp = datetime.datetime.now().strftime("%H%M%S%f")
                 scratch_name = self.sanitize_name(f"cad_{output_name}_{stamp}")[:50]
                 scratch_intermediate = os.path.join(scratch, scratch_name)
@@ -3131,7 +3168,7 @@ class UniversalImportTool(object):
                             fc_count = self._count_safe(fc_path)
                             feat_count_cache[fc_path] = fc_count
                             if fc_count > 0:
-                                detected_sr = self.detect_finnish_crs(fc_path, messages)
+                                detected_sr = self.detect_finnish_crs(fc_path, messages, input_path=input_path)
                                 if detected_sr: break
                     except Exception:
                         continue
@@ -3152,10 +3189,12 @@ class UniversalImportTool(object):
                 geom_type = (desc_fc.shapeType or "").lower()
                 is_anno = (getattr(desc_fc, 'featureType', '') == 'Annotation')
 
+                fc_name_lower = str(fc).lower()
                 suffix = geom_type or "unknown"
                 if geom_type == 'polyline': suffix = 'line'
-                if geom_type == 'multipatch': suffix = 'multipatch'
-                if is_anno: suffix = 'anno'
+                elif geom_type == 'multipatch': suffix = 'multipatch'
+                elif is_anno: suffix = 'anno'
+                elif 'textpoint' in fc_name_lower: suffix = 'textpoint'
                 final_name = f"{sanitized_name}_{suffix}"
 
                 # Shapefile-kansio ei tue annotation/multipatch hyvin
@@ -3482,9 +3521,14 @@ class UniversalImportTool(object):
             arcpy.management.CreateFeatureclass(
                 scratch, os.path.basename(tmp_fc), "POLYLINE", spatial_reference=sr
             )
+            try:
+                arcpy.management.AddField(tmp_fc, "name", "TEXT", field_length=255)
+            except Exception:
+                pass
             count = 0
-            with arcpy.da.InsertCursor(tmp_fc, ["SHAPE@"]) as cur:
+            with arcpy.da.InsertCursor(tmp_fc, ["SHAPE@", "name"]) as cur:
                 for trk in root.findall(f'{p}trk'):
+                    trk_name = (trk.findtext(f'{p}name') or "").strip()
                     for seg in trk.findall(f'{p}trkseg'):
                         pts = [
                             arcpy.Point(float(pt.get('lon')), float(pt.get('lat')))
@@ -3492,16 +3536,17 @@ class UniversalImportTool(object):
                             if pt.get('lat') and pt.get('lon')
                         ]
                         if len(pts) >= 2:
-                            cur.insertRow([arcpy.Polyline(arcpy.Array(pts), sr)])
+                            cur.insertRow([arcpy.Polyline(arcpy.Array(pts), sr), trk_name])
                             count += 1
                 for rte in root.findall(f'{p}rte'):
+                    rte_name = (rte.findtext(f'{p}name') or "").strip()
                     pts = [
                         arcpy.Point(float(pt.get('lon')), float(pt.get('lat')))
                         for pt in rte.findall(f'{p}rtept')
                         if pt.get('lat') and pt.get('lon')
                     ]
                     if len(pts) >= 2:
-                        cur.insertRow([arcpy.Polyline(arcpy.Array(pts), sr)])
+                        cur.insertRow([arcpy.Polyline(arcpy.Array(pts), sr), rte_name])
                         count += 1
             if count > 0:
                 self.convert_and_add(tmp_fc, output_loc, f"{base_name}_tracks", is_folder, messages)
@@ -3588,8 +3633,14 @@ class UniversalImportTool(object):
                         arcpy.management.Delete(p)
                 except Exception:
                     pass
-            try: shutil.rmtree(work_dir, ignore_errors=True)
-            except Exception: pass
+            try:
+                arcpy.management.ClearWorkspaceCache()
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            except Exception:
+                pass
 
     def _detect_geojson_geometry_types(self, input_path):
         """Palauttaa löydetyt geometriatyypit joukkona: {'POINT','POLYLINE','POLYGON'} tai None."""

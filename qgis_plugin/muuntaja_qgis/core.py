@@ -531,7 +531,10 @@ def export_data(layers, folder, format_name, combined=False, progress=None, oda_
                 layer_name = f"{base_name[:65]}_{number}"
                 number += 1
             used_names.add(layer_name)
+            if format_name == "GeoJSON" and not layer.crs().isValid():
+                raise RuntimeError("GeoJSON-vienti vaatii tunnetun lähtökoordinaatiston")
             _write_vector(layer, path, driver, layer_name if format_name == "GPKG" else None,
+                          target_crs=QgsCoordinateReferenceSystem("EPSG:4326") if format_name == "GeoJSON" else None,
                           append=bool(common_path and path.exists()))
             successes.append(str(path))
         except OperationCanceled:

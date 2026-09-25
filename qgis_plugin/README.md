@@ -1,12 +1,12 @@
-# Muuntaja QGIS (esijulkaisu 0.2.1)
+# Muuntaja QGIS (esijulkaisu 0.2.3)
 
 QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus pysyy samassa projektissa.
 
 ## Asennus
 
-**Windows, suoraviivainen asennus:** Lataa [Muuntaja-QGIS-0.2.1-Windows.zip](https://github.com/roopepalom44/muuntaja/releases/download/qgis-v0.2.1/Muuntaja-QGIS-0.2.1-Windows.zip), pura ZIP ja kaksoisnapsauta `install_windows.bat`. Sulje QGIS ennen asennusta. Asennin kopioi lisäosan käyttäjän kaikkiin olemassa oleviin QGIS 3 -profiileihin (tai luo `default`-profiilin) ja ottaa lisäosan käyttöön. Käynnistä QGIS asennuksen jälkeen.
+**Windows, suoraviivainen asennus:** Lataa uusimmasta [yhteisestä julkaisusta](https://github.com/roopepalom44/muuntaja/releases/latest) `Muuntaja-QGIS-0.2.3-Windows.zip`, pura ZIP ja kaksoisnapsauta `install_windows.bat`. Sulje QGIS ennen asennusta. Asennin kopioi lisäosan käyttäjän kaikkiin olemassa oleviin QGIS 3 -profiileihin (tai luo `default`-profiilin) ja ottaa lisäosan käyttöön. Käynnistä QGIS asennuksen jälkeen.
 
-**QGISin oma asennus:** Lataa [Muuntaja-QGIS-0.2.1.zip](https://github.com/roopepalom44/muuntaja/releases/download/qgis-v0.2.1/Muuntaja-QGIS-0.2.1.zip) ja valitse QGISissä **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta**.
+**QGISin oma asennus:** Lataa samasta julkaisusta `Muuntaja-QGIS-0.2.3.zip` ja valitse QGISissä **Lisäosat → Hallitse ja asenna lisäosia → Asenna ZIP-tiedostosta**.
 
 ## Toimii tässä versiossa
 
@@ -16,6 +16,7 @@ QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus py
 - Suomen koordinaatiston tunnistus koordinaateista sekä valinnainen lähtö- ja kohde-CRS.
 - DFSU-tuonti ensimmäisestä aika-askeleesta ja sarakesuodatus. Tämä vaatii erikseen `mikeio`-kirjaston QGISin Python-ympäristöön.
 - Projektin vektoritasojen vienti GPKG-, GeoJSON-, Shapefile-, KML-, KMZ- ja DXF-muotoon. Yhdistetty GPKG- ja DXF-vienti. DWG-vienti toimii valinnaisen ODA File Converter -ohjelman avulla: valitse ohjelman `.exe` vientinäkymässä. Myös yhdistetty DWG-vienti on käytettävissä.
+- GeoJSON-vienti muuntaa tunnetun lähtökoordinaatiston WGS84:ään, kuten ArcGIS Pro -versio.
 
 ## Erot ArcGIS Pro -versioon
 
@@ -24,7 +25,7 @@ QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus py
 - DFSU-tuontia on testattu jäljitellyllä `mikeio`-aineistolla, ei oikealla DFSU-tiedostolla.
 - QGISin ja ArcGIS Pron vientiajurien erot voivat muuttaa joidenkin attribuuttien nimiä ja tyyppejä.
 
-Lisäosa on merkitty esijulkaisuksi, koska se ei vielä täytä tavoitetta täysin identtisestä toiminnasta.
+Lisäosa on merkitty esijulkaisuksi, koska käyttöliittymä, aineiston käsittely ja käytettävissä olevat formaattiajurit eroavat ArcGIS Pro -versiosta. Molempien versioiden muutoksia ei voi olettaa automaattisesti samoiksi.
 
 ## Kehitys ja testaus
 

@@ -11,3 +11,7 @@ Uusi Windows-asennus: lataa `Muuntaja-QGIS-0.2.1-Windows.zip`, pura se ja suorit
 Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rasterien VRT-mosaiikki ryhmittäin, DFSU-tuonti `mikeio`-kirjastolla sekä GPKG-, GeoJSON-, Shapefile-, KML-, KMZ- ja DXF-vienti. Valinnainen DWG-vienti muuntaa DXF:n DWG:ksi ODA File Converterilla. QGIS 3.44:ssä on testattu näiden formaattien vienti, yhdistetty GPKG/DXF-vienti, CAD-tuonti, rasterimosaiikin uudelleenajo ja jäljitelty DFSU-suodatus. DWG-työnkulku on testattu jäljitellyllä ODA-muuntimella, ei oikealla asennuksella.
 
 **Tämä ei vielä ole toiminnallisesti identtinen ArcGIS Pro -version kanssa.** DWG-vienti tarvitsee erillisen ODA File Converter -asennuksen. QGISin VRT-mosaiikki käyttää eri tallennusmuotoa kuin ArcGIS Pron FileGDB-mosaiikki. Tarkempi tilanne: [QGIS-ohje](https://github.com/roopepalom44/muuntaja/blob/main/qgis_plugin/README.md).
+## Muuntaja QGIS 0.2.3
+
+- Julkaistaan samassa GitHub-releasessa ArcGIS Pro AddInX:n kanssa sekä QGISin omana asennus-ZIPinä että Windows-asennus-ZIPinä.
+- GeoJSON-vienti muuntaa koordinaatit WGS84:ään ja hylkää puuttuvan lähtökoordinaatiston. Tarkistettu QGIS 3.44:llä.

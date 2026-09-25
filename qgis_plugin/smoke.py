@@ -29,6 +29,12 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as folder:
         format_written, format_failed = export_data([layer], folder, format_name)
         assert len(format_written) == 1 and not format_failed, (format_name, format_failed)
         assert QgsVectorLayer(format_written[0], format_name, 'ogr').isValid(), format_name
+        if format_name == 'GeoJSON':
+            import json
+            payload = json.loads(Path(format_written[0]).read_text(encoding='utf-8'))
+            assert payload['type'] == 'FeatureCollection'
+            x, y = payload['features'][0]['geometry']['coordinates'][:2]
+            assert 19 <= x <= 32.5 and 59 <= y <= 71.5, (x, y)
     print('export formats passed', flush=True)
     loaded, failed = import_data(written, str(Path(folder) / 'imported.gpkg'))
     assert len(loaded) == 1 and not failed

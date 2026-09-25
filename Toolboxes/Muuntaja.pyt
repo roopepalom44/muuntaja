@@ -1850,7 +1850,13 @@ class UniversalImportTool(object):
                 arcpy.management.Delete(out_path)
             except Exception:
                 pass
-        arcpy.conversion.FeaturesToJSON(fc_path, out_path)
+        arcpy.conversion.FeaturesToJSON(
+            fc_path, out_path, geoJSON="GEOJSON", outputToWGS84="WGS84"
+        )
+        if not os.path.isfile(out_path):
+            raise RuntimeError(
+                f"ArcGIS Pro ei luonut pyydettyä GeoJSON-tiedostoa: {out_path}"
+            )
         self.log(messages, f"GeoJSON-vienti valmis: {out_path}")
         return out_path
 

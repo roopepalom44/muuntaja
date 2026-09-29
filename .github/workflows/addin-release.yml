@@ -1,16 +1,46 @@
-name: Build and release ArcGIS Pro Add-InX
+name: Test, build and release
 
 on:
   push:
     branches:
       - main
+  pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install QGIS Python bindings
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            python3-qgis qgis-providers python3-gdal
+
+      - name: Lint
+        run: |
+          pipx run ruff check --select F,E9 --extension pyt:python \
+            Toolboxes/Muuntaja.pyt qgis_plugin tests
+
+      - name: Unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: /usr/bin/python3 -m unittest discover -s tests -v
+
   build-and-release:
+    needs: test
+    if: github.event_name == 'push'
     runs-on: windows-2025
+    permissions:
+      contents: write
     timeout-minutes: 60
     steps:
       - name: Check out pushed commit

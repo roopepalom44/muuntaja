@@ -3741,14 +3741,18 @@ class UniversalImportTool(object):
                 leaf = qualified_name.strip()
 
         if not leaf or leaf.casefold() in ("main", "temp"):
-            leaf = os.path.splitext(os.path.basename(str(input_path)))[0]
+            leaf = self._file_stem(input_path)
 
         result = self.sanitize_name(leaf)
         if not result:
-            result = self.sanitize_name(
-                os.path.splitext(os.path.basename(str(input_path)))[0]
-            ) or "gpkg_taso"
+            result = self.sanitize_name(self._file_stem(input_path)) or "gpkg_taso"
         return result
+
+    @staticmethod
+    def _file_stem(path):
+        """Tiedostonimi ilman päätettä; tunnistaa sekä \\- että /-erottimet."""
+        leaf = re.split(r"[\\/]", str(path or "").rstrip("\\/"))[-1]
+        return os.path.splitext(leaf)[0]
 
     def process_geopackage(self, input_path, output_loc, is_folder, messages):
         prev_ws = arcpy.env.workspace

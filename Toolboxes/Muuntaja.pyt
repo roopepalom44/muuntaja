@@ -2708,17 +2708,11 @@ class UniversalImportTool(object):
                     self._log_elapsed(messages, "Projisointi (fallback)", t1)
                     return check_path
 
-                projected_name = output_name + "_proj"
-                try:
-                    validated_projected = arcpy.ValidateTableName(projected_name, output_loc)
-                    if validated_projected:
-                        projected_name = validated_projected
-                except Exception:
-                    pass
-                if is_folder:
-                    projected_path = os.path.join(output_loc, projected_name + ".shp")
-                else:
-                    projected_path = os.path.join(output_loc, projected_name)
+                # Vapaa nimi: saman geometriatyypin toinen CAD-taso ei saa
+                # ylikirjoittaa edellisen tason projisoitua tulosta.
+                _projected_name, projected_path = self._resolve_output_path(
+                    output_loc, output_name + "_proj", is_folder
+                )
 
                 arcpy.management.Project(work_path, projected_path, target_sr, _tr)
                 self._log_elapsed(messages, "Projisointi (fallback)", t1)
@@ -2895,7 +2889,23 @@ class UniversalImportTool(object):
         # scratchGDB:hen ja projisoidaan siitä. Tämä vähentää toistuvaa DWG-lukua.
         use_bulk_scratch = len(fcs_direct) >= 2 and (remote_output or target_sr is not None)
 
+        # Cache rivimäärille: vältetään saman tason GetCount-kutsu useaan kertaan.
+        feat_count_cache = {}
+        detected_sr = None
+        crs_detection_done = False
+        cad_dataset_sr = input_sr
+
         if use_bulk_scratch:
+            # CADToGeodatabase tekee tuntemattomaan koordinaatistoon feature
+            # datasetin, jonka tasoja ArcGIS ei suostu projisoimaan edes
+            # lähtö-CRS:n kanssa (ERROR 000289/000599). Tunnistetaan CRS siksi
+            # jo suoraan luetuista tasoista ja annetaan se muunnokselle.
+            if not input_sr:
+                detected_sr = self._detect_cad_source_sr(
+                    fcs_direct, input_path, input_path, messages, feat_count_cache
+                )
+                crs_detection_done = True
+                cad_dataset_sr = detected_sr
             temp_gdb = arcpy.env.scratchGDB
             ds_name = f"cad_{sanitized_name}_{datetime.datetime.now().strftime('%H%M%S')}"
             if remote_output:
@@ -2910,7 +2920,10 @@ class UniversalImportTool(object):
                 )
             try:
                 t0 = time.perf_counter()
-                arcpy.conversion.CADToGeodatabase(input_path, temp_gdb, ds_name, 1000)
+                cad_args = [input_path, temp_gdb, ds_name, 1000]
+                if cad_dataset_sr is not None:
+                    cad_args.append(cad_dataset_sr)
+                arcpy.conversion.CADToGeodatabase(*cad_args)
                 self._log_elapsed(messages, "CADToGeodatabase", t0)
                 dataset_path = os.path.join(temp_gdb, ds_name)
                 arcpy.env.workspace = dataset_path
@@ -2948,24 +2961,11 @@ class UniversalImportTool(object):
 
             fcs = sorted(fcs, key=lambda fc: self._cad_layer_sort_key(fc, dataset_path))
 
-            # Cache rivimäärille: vältetään saman tason GetCount-kutsu useaan kertaan.
-            feat_count_cache = {}
-
             # Automaattitunnistus (ensimmäisestä EI-tyhjästä point/line/polygon-tasosta)
-            detected_sr = None
-            if not input_sr:
-                for fc in fcs:
-                    try:
-                        desc_check = arcpy.Describe(fc)
-                        if desc_check.shapeType in ['Point', 'Polyline', 'Polygon']:
-                            fc_path = os.path.join(dataset_path, fc)
-                            fc_count = self._count_safe(fc_path)
-                            feat_count_cache[fc_path] = fc_count
-                            if fc_count > 0:
-                                detected_sr = self.detect_finnish_crs(fc_path, messages, input_path=input_path)
-                                if detected_sr: break
-                    except Exception:
-                        continue
+            if not input_sr and not crs_detection_done:
+                detected_sr = self._detect_cad_source_sr(
+                    fcs, dataset_path, input_path, messages, feat_count_cache
+                )
 
             final_input_sr = input_sr if input_sr else detected_sr
             if not final_input_sr:
@@ -3079,6 +3079,23 @@ class UniversalImportTool(object):
                 full_ds = os.path.join(temp_gdb, ds_name)
                 self._queue_deferred_cleanup(full_ds)
 
+    def _detect_cad_source_sr(self, fcs, dataset_path, input_path, messages, feat_count_cache):
+        """Tunnista CAD-aineiston CRS ensimmäisestä ei-tyhjästä piste-/viiva-/aluetasosta."""
+        for fc in sorted(fcs, key=lambda name: self._cad_layer_sort_key(name, dataset_path)):
+            try:
+                fc_path = os.path.join(dataset_path, fc)
+                if arcpy.Describe(fc_path).shapeType not in ("Point", "Polyline", "Polygon"):
+                    continue
+                fc_count = self._count_safe(fc_path)
+                feat_count_cache[fc_path] = fc_count
+                if fc_count > 0:
+                    detected = self.detect_finnish_crs(fc_path, messages, input_path=input_path)
+                    if detected:
+                        return detected
+            except Exception:
+                continue
+        return None
+
     def _count_safe(self, fc_path):
         """Palauttaa rivimäärän, 0 jos ei saada luettua."""
         try:
@@ -3136,16 +3153,11 @@ class UniversalImportTool(object):
                 
                 self.log(messages, f"  > Muunnetaan koordinaatistoon: {out_name_log}...")
                 
-                projected_name = output_name + "_proj"
-                try:
-                    validated_projected = arcpy.ValidateTableName(projected_name, output_loc)
-                    if validated_projected:
-                        projected_name = validated_projected
-                except Exception:
-                    pass
-                if is_folder: projected_path = os.path.join(output_loc, projected_name + ".shp")
-                else: projected_path = os.path.join(output_loc, projected_name)
-                
+                # Vapaa nimi, jottei aiemman tuonnin projisoitu taso ylikirjoitu.
+                _projected_name, projected_path = self._resolve_output_path(
+                    output_loc, output_name + "_proj", is_folder
+                )
+
                 t1 = time.perf_counter()
                 arcpy.management.Project(check_path, projected_path, target_sr)
                 self._log_elapsed(messages, "Projisointi", t1)

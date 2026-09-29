@@ -3,6 +3,7 @@
 
 import importlib.machinery
 import importlib.util
+import os
 import sys
 import tempfile
 import types
@@ -80,6 +81,66 @@ class ArcGisFixTests(unittest.TestCase):
 
         names = [name for name, _args, _kwargs in self.arcpy.management.calls]
         self.assertEqual(names, ["CopyFeatures"])
+
+    def test_projected_cad_import_gives_detected_crs_to_cad_conversion(self):
+        # Tuntemattomaan koordinaatistoon muunnetun feature datasetin tasoja
+        # ArcGIS ei projisoi (ERROR 000289/000599), joten CRS annetaan jo
+        # CADToGeodatabaselle.
+        self.arcpy.env = types.SimpleNamespace(scratchGDB=r"C:\scratch.gdb", workspace=None)
+        self.arcpy.ListFeatureClasses = lambda: ["Point", "Polyline"]
+        self.arcpy.Describe = lambda _path: types.SimpleNamespace(shapeType="Polyline", featureType="Simple")
+        detected = types.SimpleNamespace(name="ETRS89 / TM35FIN", factoryCode=3067)
+        target = types.SimpleNamespace(name="ETRS89 / GK25", factoryCode=3879)
+        detections = []
+
+        def detect(path, _messages, input_path=None):
+            detections.append(path)
+            return detected
+
+        saved = []
+        self.tool.detect_finnish_crs = detect
+        self.tool._count_safe = lambda _path: 3
+        self.tool._is_remote_output = lambda _output: False
+        self.tool._add_layers_to_map = lambda _paths, _messages: None
+        self.tool._save_cad_layer = lambda *args, **_kwargs: saved.append(args) or args[2]
+
+        self.tool.process_cad(r"C:\cad\drawing.dwg", r"C:\out.gdb", False, False, None, target, None)
+
+        conversion = [args for name, args, _kwargs in self.arcpy.conversion.calls if name == "CADToGeodatabase"]
+        self.assertEqual(len(conversion), 1)
+        self.assertIs(conversion[0][-1], detected)
+        self.assertEqual(len(detections), 1)
+        self.assertTrue(saved and all(args[5] is detected for args in saved))
+
+    def test_fallback_projection_does_not_overwrite_earlier_layer(self):
+        existing = {os.path.join(r"C:\out.gdb", "drawing_line_proj")}
+        self.arcpy.Exists = lambda path: path in existing
+        source = types.SimpleNamespace(name="TM35FIN", factoryCode=3067)
+        target = types.SimpleNamespace(name="GK25", factoryCode=3879)
+        self.arcpy.ListTransformations = lambda *_args: []
+
+        result = self.tool._save_cad_layer_fallback(
+            r"C:\cad\drawing.dwg\Polyline", r"C:\out.gdb", "drawing_line", False,
+            None, source, target, None, r"C:\out.gdb\drawing_line",
+        )
+
+        projects = [args for name, args, _kwargs in self.arcpy.management.calls if name == "Project"]
+        self.assertEqual(result, os.path.join(r"C:\out.gdb", "drawing_line_proj_2"))
+        self.assertEqual(projects[0][1], result)
+
+    def test_reprojected_import_does_not_overwrite_earlier_layer(self):
+        existing = {os.path.join(r"C:\out.gdb", "roads_proj")}
+        self.arcpy.Exists = lambda path: path in existing
+        self.tool._count_safe = lambda _path: 3
+        source = types.SimpleNamespace(name="TM35FIN", factoryCode=3067)
+        target = types.SimpleNamespace(name="GK25", factoryCode=3879)
+
+        result = self.tool.save_and_reproject(
+            r"C:\in.gdb\roads", r"C:\out.gdb", "roads", False, None, source, target, None,
+            add_to_map=False,
+        )
+
+        self.assertEqual(result, os.path.join(r"C:\out.gdb", "roads_proj_2"))
 
     # 1.5 ---------------------------------------------------------------
     def test_dfsu_without_projection_is_detected_from_coordinates(self):

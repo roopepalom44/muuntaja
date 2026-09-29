@@ -107,10 +107,9 @@ class ImportFolderScanTests(unittest.TestCase):
         parameters = self.tool.getParameterInfo()
         export_layers = parameters[12]
 
-        self.assertEqual(len(parameters), 15)
-        # Uudet parametrit lisataan aina loppuun, jotta aiemmat indeksit pysyvat.
-        self.assertEqual(parameters[14].name, "dfsu_auto_install")
-        self.assertFalse(parameters[14].value)
+        self.assertEqual(len(parameters), 14)
+        # Ajonaikainen pip-asennus on poistettu; kirjastot asennetaan condalla.
+        self.assertNotIn("dfsu_auto_install", [parameter.name for parameter in parameters])
         self.assertEqual(export_layers.datatype, "GPFeatureLayer")
         self.assertTrue(export_layers.multiValue)
         self.assertFalse(export_layers.enabled)
@@ -122,14 +121,6 @@ class ImportFolderScanTests(unittest.TestCase):
             "cad_attribute_tables_by_layer",
             [parameter.name for parameter in parameters],
         )
-
-    def test_shapefile_source_is_valid_export_input(self):
-        self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
-            dataType="Shapefile",
-            shapeFieldName="Shape",
-        )
-
-        self.assertEqual(self.tool._bulk_export_mode([r"C:\data\roads.shp"]), "export")
 
     def test_mode_switch_keeps_conditional_inputs_optional_for_arcgis_validator(self):
         class Parameter:
@@ -245,7 +236,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
             exported = []
             self.tool._prepare_export_feature_class = (
-                lambda source, _target_sr, _messages, copy_source=True: source
+                lambda source, _messages, copy_source=True: source
             )
             self.tool._export_source_label = lambda source: Path(source).stem
 
@@ -285,7 +276,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
             exported = []
             self.tool._prepare_export_feature_class = (
-                lambda source, _target_sr, _messages, copy_source=True: source
+                lambda source, _messages, copy_source=True: source
             )
             self.tool._export_source_label = lambda source: Path(source).stem
             self.tool._export_to_cad = (
@@ -412,10 +403,13 @@ class ImportFolderScanTests(unittest.TestCase):
             parameters[6].valueAsText = temp_dir
             parameters[7].valueAsText = "GeoJSON"
             parameters[13].valueAsText = self.module.MULTI_EXPORT_PACKAGING_COMBINED
-            target_values = []
+            prepared = []
+            self.fake_arcpy.management = types.SimpleNamespace(
+                Project=lambda *_args, **_kwargs: self.fail("export must not project")
+            )
 
-            def prepare(source, target_sr, _messages, copy_source=True):
-                target_values.append(target_sr)
+            def prepare(source, _messages, copy_source=True):
+                prepared.append(source)
                 return source
 
             self.tool._prepare_export_feature_class = prepare
@@ -429,7 +423,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
             self.tool._execute_export(parameters, messages, ["Roads"])
 
-            self.assertEqual(target_values, [None])
+            self.assertEqual(prepared, ["Roads"])
 
     def test_geopackage_schema_prefix_is_not_used_as_layer_name(self):
         self.assertEqual(
@@ -554,10 +548,33 @@ class ImportFolderScanTests(unittest.TestCase):
         )
 
         result = self.tool._prepare_export_feature_class(
-            r"C:\data\roads", None, types.SimpleNamespace(), copy_source=False
+            r"C:\data\roads", types.SimpleNamespace(), copy_source=False
         )
 
         self.assertEqual(result, r"C:\data\roads")
+
+    def test_export_uses_layer_itself_so_selection_and_definition_query_apply(self):
+        copied = []
+        logged = []
+        self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
+            dataType="FeatureLayer",
+            catalogPath=r"C:\data\project.gdb\roads",
+            FIDSet="1;2;3",
+            whereClause="class = 1",
+        )
+        self.fake_arcpy.Exists = lambda _path: False
+        self.fake_arcpy.env = types.SimpleNamespace(scratchGDB=r"C:\scratch.gdb")
+        self.fake_arcpy.management = types.SimpleNamespace(
+            CopyFeatures=lambda source, target: copied.append((source, target))
+        )
+        self.tool.log = lambda _messages, text, level="INFO": logged.append(text)
+
+        result = self.tool._prepare_export_feature_class("Roads", None)
+
+        self.assertEqual(copied[0][0], "Roads")
+        self.assertEqual(result, copied[0][1])
+        self.assertTrue(any("3 valittua" in text for text in logged))
+        self.assertTrue(any("class = 1" in text for text in logged))
 
 
 if __name__ == "__main__":

@@ -33,3 +33,14 @@ Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rast
 
 - Jos QGIS-projektilta puuttuu koordinaattijärjestelmä, tuonti asettaa sen ensimmäisen tuodun tason mukaan ennen tason lisäämistä. Tämä koskee vektori-, rasteri- ja DFSU-tasoja.
 - Tuonnin valmistumisviesti kertoo, kun projektin CRS asetettiin automaattisesti.
+
+## Muuntaja QGIS 0.3.0
+
+- **DWG ja DXF natiivisti QGISissä.** Piirustus tuodaan ryhmäksi, jossa ovat tekstit, pisteet, viivat ja alueet omina tasoinaan. CAD-värit säilyvät, CAD-tasot näkyvät sisällysluettelossa päälle/pois kytkettävinä sääntöinä ja tekstit nimiöinä CAD-korkeudella, -kulmalla ja -ankkurilla. Paperitilan kohteet ohitetaan.
+- DWG:n voi raahata suoraan QGIS-ikkunaan tai lisätä valikosta **Taso → Lisää taso → Lisää DWG/DXF-taso (Muuntaja)**. Jos koordinaatistoa ei voi päätellä, QGIS kysyy sen tavalliseen tapaan.
+- **DWG avautuu Windowsissa ilman asennuksia:** lisäosan mukana tulee LibreDWG 0.14 (GPL-3), joka lukee AutoCAD 2000–2018 -DWG:t. Testattu DWG-versioilla 2000, 2004, 2007, 2010, 2013 ja 2018. ODA File Converter -tuki poistettiin: sitä ei saa jakaa lisäosan mukana, ja erillinen asennus ja .exe-polun valinta oli kömpelö.
+- **DXF-vienti käyttää QGISin omaa DXF-vientiä:** symbologia, nimiöt ja tuotujen CAD-tasojen nimet säilyvät, ja eri koordinaatistoissa olevat tasot muunnetaan samaan koordinaatistoon (aiemmin yhdistetty vienti sekoitti ne). DWG-vienti löytyy myös valikosta **Projekti → Tuo/Vie**.
+- DWG-vienti on kokeellinen: DWG tehdään LibreDWG:llä, tulos tarkistetaan otsakkeesta ja luetaan takaisin, ja jos kohteita puuttuu, vienti pysähtyy virheeseen eikä tiedostoa jätetä. LibreDWG 0.14 menettää QGISin DXF:stä lähes kaikki kohteet, joten käytännössä CAD-vienti kannattaa tehdä DXF-muotoon.
+- Korjattu: DFSU-taso avattiin väärällä nimellä GeoPackageen, jossa oli jo muita tasoja; rasterituonti poisti käyttäjän omia tasoja samannimisestä ryhmästä; GeoPackage-tasonimet vertaillaan kirjainkoosta riippumatta; projektista poistettu taso kaatoi viennin; kansioskannaus otti mukaan muitakin kuin paikkatieto-JSONeja.
+- Muuntimen aikakatkaisu ja puuttuva muunnin näytetään selkeänä suomenkielisenä virheenä, eikä Windows avaa konsoli-ikkunaa muunnoksen ajaksi. Muuntimen muu kuin UTF-8-tuloste (esim. ääkköset polussa) ei enää kaada muunnosta.
+- Tunnettu rajoitus: Linuxissa ja macOS:ssä ilman järjestelmän LibreDWG:tä avautuu vain AutoCAD 2000 -DWG, ja silloin GDAL:n CAD-ajuri ei lue täyttöjä (HATCH) eikä lohkoviittauksia (INSERT). LibreDWG:n kirjoittama DWG voi kaataa ArcGIS Pron; ArcGIS-käyttöön vie DXF.

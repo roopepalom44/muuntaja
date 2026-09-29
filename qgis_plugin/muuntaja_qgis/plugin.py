@@ -5,27 +5,30 @@ from pathlib import Path
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
-    QAction, QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QAction, QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QTabWidget,
     QToolButton, QVBoxLayout, QWidget,
 )
-from qgis.core import QgsCoordinateReferenceSystem, QgsProject, QgsVectorLayer
+from qgis.core import Qgis, QgsCoordinateReferenceSystem, QgsProject, QgsVectorLayer
+from qgis.gui import QgsCustomDropHandler
 
-from .core import DRIVERS, OperationCanceled, export_data, find_oda_converter, import_data
+from . import cad
+from .core import EXPORT_FORMATS, OperationCanceled, export_data, import_data
 
 
 class MuuntajaDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, iface=None):
         super().__init__(parent)
+        self.iface = iface
         self._automatic_import_destination = ""
         self.setWindowTitle("Muuntaja — QGIS")
         self.resize(760, 680)
         layout = QVBoxLayout(self)
-        tabs = QTabWidget()
-        tabs.addTab(self._import_tab(), "Tuo aineistoja")
-        tabs.addTab(self._export_tab(), "Vie tasoja")
-        layout.addWidget(tabs)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._import_tab(), "Tuo aineistoja")
+        self.tabs.addTab(self._export_tab(), "Vie tasoja")
+        layout.addWidget(self.tabs)
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -129,14 +132,6 @@ class MuuntajaDialog(QDialog):
         self.clean_cad = QCheckBox("Ohita CADin Defpoints- ja 0-tasot")
         self.clean_cad.setEnabled(False)
         advanced_form.addRow("CAD", self.clean_cad)
-        self.import_oda_converter = QLineEdit(find_oda_converter())
-        self.import_oda_converter.setPlaceholderText("ODA File Converterin .exe uudemmille DWG-tiedostoille")
-        self.import_oda_converter.setEnabled(False)
-        self.import_oda_browse = QPushButton("Valitse…")
-        self.import_oda_browse.setEnabled(False)
-        self.import_oda_browse.clicked.connect(lambda: self._choose_oda_converter_for(self.import_oda_converter))
-        advanced_form.addRow("DWG-tuonnin muunnin", self._row_widget(
-            self._line_and_button(self.import_oda_converter, self.import_oda_browse)))
         self.dfsu_filter_enabled = QCheckBox("Rajaa DFSU-aineistoa sarakkeen arvolla")
         self.dfsu_filter_enabled.setEnabled(False)
         self.dfsu_filter_enabled.toggled.connect(self._update_dfsu_controls)
@@ -197,20 +192,13 @@ class MuuntajaDialog(QDialog):
         browse.clicked.connect(self._choose_export_folder)
         form.addRow("Vientikansio", self._row_widget(self._line_and_button(self.export_folder, browse)))
         self.format = QComboBox()
-        self.format.addItems(list(DRIVERS) + ["DWG"])
+        self.format.addItems(EXPORT_FORMATS)
         self.format.currentTextChanged.connect(self._update_export_controls)
         form.addRow("Tiedostomuoto", self.format)
         self.combined = QCheckBox("Vie valitut tasot samaan tiedostoon")
         self.combined.stateChanged.connect(self._update_export_controls)
         form.addRow("Useita tasoja", self.combined)
-        self.oda_converter = QLineEdit(find_oda_converter())
-        self.oda_converter.setPlaceholderText("ODA File Converterin .exe-tiedosto")
-        self.oda_browse = QPushButton("Valitse…")
-        self.oda_browse.clicked.connect(lambda: self._choose_oda_converter_for(self.oda_converter))
-        self.oda_row = self._row_widget(self._line_and_button(self.oda_converter, self.oda_browse))
-        self.oda_label = QLabel("DWG-muunnin")
-        form.addRow(self.oda_label, self.oda_row)
-        self.dwg_hint = QLabel("DWG-vienti vaatii ODA File Converterin. DXF-vienti ei vaadi lisäohjelmaa.")
+        self.dwg_hint = QLabel()
         self.dwg_hint.setWordWrap(True)
         form.addRow("", self.dwg_hint)
         layout.addLayout(form)
@@ -249,13 +237,10 @@ class MuuntajaDialog(QDialog):
         self.input_summary.setText(f"{count} {noun} valittuna" if count else "Ei syötteitä valittuna")
         paths = [Path(self.inputs.item(index).text()) for index in range(count)]
         may_contain_cad = any(path.is_dir() or path.suffix.lower() in {".dwg", ".dxf"} for path in paths)
-        may_contain_dwg = any(path.is_dir() or path.suffix.lower() == ".dwg" for path in paths)
         may_contain_dfsu = any(path.is_dir() or path.suffix.lower() == ".dfsu" for path in paths)
         self.clean_cad.setEnabled(may_contain_cad)
         if not may_contain_cad:
             self.clean_cad.setChecked(False)
-        self.import_oda_converter.setEnabled(may_contain_dwg)
-        self.import_oda_browse.setEnabled(may_contain_dwg)
         self.dfsu_filter_enabled.setEnabled(may_contain_dfsu)
         if not may_contain_dfsu:
             self.dfsu_filter_enabled.setChecked(False)
@@ -311,24 +296,24 @@ class MuuntajaDialog(QDialog):
         if path:
             self.export_folder.setText(path)
 
-    def _choose_oda_converter_for(self, field):
-        path, _ = QFileDialog.getOpenFileName(self, "Valitse ODA File Converter", "", "Ohjelmat (*.exe)")
-        if path:
-            field.setText(path)
-
     def _update_export_controls(self, *_):
         format_name = self.format.currentText()
         supports_combined = format_name in {"GPKG", "DXF", "DWG"}
         self.combined.setEnabled(supports_combined)
         if not supports_combined:
             self.combined.setChecked(False)
-        is_dwg = format_name == "DWG"
-        self.oda_converter.setEnabled(is_dwg)
-        self.oda_browse.setEnabled(is_dwg)
-        self.oda_row.setVisible(is_dwg)
-        label = None
-        self.oda_label.setVisible(is_dwg)
-        self.dwg_hint.setVisible(is_dwg)
+        self.dwg_hint.setVisible(format_name in {"DXF", "DWG"})
+        status = cad.converter_status()
+        if format_name == "DXF":
+            self.dwg_hint.setText("DXF tehdään QGISin omalla DXF-viennillä: tasojen symbologia, "
+                                  "nimiöt ja tuotujen CAD-tasojen nimet säilyvät.")
+        elif status:
+            self.dwg_hint.setText(f"Kokeellinen: DWG tehdään QGISin DXF-viennistä – {status}. "
+                                  "Tulos luetaan takaisin ja hylätään, jos kohteita puuttuu. "
+                                  "Luotettavin CAD-muoto on DXF.")
+        else:
+            self.dwg_hint.setText("DWG-vienti vaatii LibreDWG:n (dxf2dwg). "
+                                  "DXF-vienti ei vaadi lisäohjelmaa.")
 
     def refresh_layers(self):
         self.layers.clear()
@@ -356,7 +341,6 @@ class MuuntajaDialog(QDialog):
         self.progress.setMaximum(total)
         self.progress.setValue(index - 1)
         self.progress.setLabelText(label)
-        from qgis.PyQt.QtWidgets import QApplication
         QApplication.processEvents()
         if self.progress.wasCanceled():
             raise OperationCanceled("Käyttäjä keskeytti")
@@ -394,7 +378,6 @@ class MuuntajaDialog(QDialog):
                 self.dfsu_column.text().strip() if self.dfsu_filter_enabled.isChecked() else "",
                 self.dfsu_operator.currentText(),
                 self.dfsu_value.text(),
-                self.import_oda_converter.text().strip(),
             )
             project_crs = QgsProject.instance().crs()
             note = (f"Projektin koordinaattijärjestelmä asetettiin: {project_crs.authid()}."
@@ -408,12 +391,17 @@ class MuuntajaDialog(QDialog):
             self.progress.close()
 
     def _run_export(self):
-        layers = [
-            QgsProject.instance().mapLayer(self.layers.item(i).data(Qt.UserRole))
-            for i in range(self.layers.count())
-            if self.layers.item(i).checkState() == Qt.Checked
-        ]
+        checked = [self.layers.item(i) for i in range(self.layers.count())
+                   if self.layers.item(i).checkState() == Qt.Checked]
+        layers = [QgsProject.instance().mapLayer(item.data(Qt.UserRole)) for item in checked]
+        missing = [item.text() for item, layer in zip(checked, layers) if layer is None]
+        layers = [layer for layer in layers if layer is not None]
         folder = self.export_folder.text().strip()
+        if missing:
+            self.refresh_layers()
+            QMessageBox.warning(self, "Muuntaja", "Nämä tasot on poistettu projektista, päivitä valinta: "
+                                + ", ".join(missing))
+            return
         if not layers or not folder:
             QMessageBox.warning(self, "Muuntaja", "Valitse vietävät tasot ja vientikansio.")
             return
@@ -428,7 +416,7 @@ class MuuntajaDialog(QDialog):
                 self.format.currentText(),
                 self.combined.isChecked(),
                 self._progress,
-                self.oda_converter.text().strip(),
+                self._symbology_scale(),
             )
             self._show_result("Vienti", successes, failures)
         except OperationCanceled:
@@ -437,6 +425,28 @@ class MuuntajaDialog(QDialog):
             QMessageBox.critical(self, "Muuntaja", str(exc))
         finally:
             self.progress.close()
+
+    def _symbology_scale(self):
+        try:
+            scale = self.iface.mapCanvas().scale() if self.iface else 0
+        except Exception:
+            scale = 0
+        return scale if scale and scale > 0 else None
+
+    def show_export(self, format_name=None):
+        self.refresh_layers()
+        if format_name:
+            self.format.setCurrentText(format_name)
+        self.tabs.setCurrentIndex(1)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def show_import(self):
+        self.tabs.setCurrentIndex(0)
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _show_result(self, operation, successes, failures, note=""):
         details = "\n".join(f"{path}: {error}" for path, error in failures)
@@ -448,22 +458,133 @@ class MuuntajaDialog(QDialog):
         QMessageBox.information(self, "Muuntaja", message)
 
 
+class CadDropHandler(QgsCustomDropHandler):
+    """Open dropped DWG files through Muuntaja (QGIS/GDAL reads only AutoCAD 2000 DWG)."""
+
+    def __init__(self, plugin):
+        super().__init__()
+        self.plugin = plugin
+
+    def customUriProviderKey(self):
+        return "muuntaja_dwg"
+
+    def handleFileDrop(self, file):
+        if Path(file).suffix.lower() != ".dwg":
+            return False
+        self.plugin.import_cad_files([file])
+        return True
+
+
 class MuuntajaPlugin:
     def __init__(self, iface):
         self.iface = iface
         self.action = None
+        self.add_cad_action = None
+        self.export_cad_action = None
+        self.drop_handler = None
         self.dialog = None
 
     def initGui(self):
-        self.action = QAction(QIcon(str(Path(__file__).parent / "icon.png")), "Muuntaja", self.iface.mainWindow())
+        icon = QIcon(str(Path(__file__).parent / "icon.png"))
+        self.action = QAction(icon, "Muuntaja", self.iface.mainWindow())
         self.action.triggered.connect(self.open)
         self.iface.addPluginToMenu("Muuntaja", self.action)
         self.iface.addToolBarIcon(self.action)
 
+        # DWG/DXF samoihin paikkoihin kuin QGISin omat tuonti- ja vientitoiminnot.
+        self.add_cad_action = QAction(icon, "Lisää DWG/DXF-taso (Muuntaja)…", self.iface.mainWindow())
+        self.add_cad_action.triggered.connect(self.choose_cad_files)
+        if hasattr(self.iface, "insertAddLayerAction"):
+            self.iface.insertAddLayerAction(self.add_cad_action)
+        else:
+            self.iface.addPluginToMenu("Muuntaja", self.add_cad_action)
+        self.export_cad_action = QAction(icon, "Vie tasot DWG/DXF-muotoon (Muuntaja)…", self.iface.mainWindow())
+        self.export_cad_action.triggered.connect(lambda: self._dialog().show_export("DWG"))
+        menu = self.iface.projectImportExportMenu() if hasattr(self.iface, "projectImportExportMenu") else None
+        if menu is not None:
+            menu.addAction(self.export_cad_action)
+        else:
+            self.iface.addPluginToMenu("Muuntaja", self.export_cad_action)
+        if hasattr(self.iface, "registerCustomDropHandler"):
+            self.drop_handler = CadDropHandler(self)
+            self.iface.registerCustomDropHandler(self.drop_handler)
+
     def unload(self):
+        if self.drop_handler is not None:
+            self.iface.unregisterCustomDropHandler(self.drop_handler)
+            self.drop_handler = None
+        if self.add_cad_action is not None:
+            if hasattr(self.iface, "removeAddLayerAction"):
+                self.iface.removeAddLayerAction(self.add_cad_action)
+            self.iface.removePluginMenu("Muuntaja", self.add_cad_action)
+        if self.export_cad_action is not None:
+            menu = self.iface.projectImportExportMenu() if hasattr(self.iface, "projectImportExportMenu") else None
+            if menu is not None:
+                menu.removeAction(self.export_cad_action)
+            self.iface.removePluginMenu("Muuntaja", self.export_cad_action)
         self.iface.removePluginMenu("Muuntaja", self.action)
         self.iface.removeToolBarIcon(self.action)
+        if self.dialog is not None:
+            self.dialog.close()
+            self.dialog.deleteLater()
+            self.dialog = None
+
+    def _dialog(self):
+        # Yksi dialogi koko istunnolle: aiemmat valinnat säilyvät eikä
+        # jokainen avaus jätä uutta ikkunaa muistiin.
+        if self.dialog is None:
+            self.dialog = MuuntajaDialog(self.iface.mainWindow(), self.iface)
+        return self.dialog
 
     def open(self):
-        self.dialog = MuuntajaDialog(self.iface.mainWindow())
-        self.dialog.show()
+        dialog = self._dialog()
+        dialog.refresh_layers()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def choose_cad_files(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self.iface.mainWindow(), "Lisää DWG/DXF-taso", "", "CAD-piirustukset (*.dwg *.dxf *.DWG *.DXF)")
+        if files:
+            self.import_cad_files(files)
+
+    def _cad_destination(self, path):
+        project_file = QgsProject.instance().fileName()
+        if project_file:
+            return Path(project_file).parent / "muuntaja_tuonti.gpkg"
+        return Path(path).with_suffix(".gpkg")
+
+    def import_cad_files(self, files):
+        """Import DWG/DXF like QGIS opens a layer: grouped, styled, labelled."""
+        bar = self.iface.messageBar()
+        for file in files:
+            destination = self._cad_destination(file)
+            source_crs = None
+            while True:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    layers = cad.import_cad(file, destination, source_crs=source_crs)
+                except cad.CrsNotDetected:
+                    QApplication.restoreOverrideCursor()
+                    source_crs = self._ask_crs(file)
+                    if source_crs is None:
+                        break
+                    continue
+                except Exception as exc:
+                    QApplication.restoreOverrideCursor()
+                    bar.pushMessage("Muuntaja", f"{Path(file).name}: {exc}",
+                                    level=Qgis.MessageLevel.Critical, duration=0)
+                    break
+                QApplication.restoreOverrideCursor()
+                bar.pushMessage("Muuntaja", f"{Path(file).name}: {len(layers)} tasoa lisätty "
+                                f"({destination.name}).", level=Qgis.MessageLevel.Success, duration=6)
+                break
+
+    def _ask_crs(self, file):
+        from qgis.gui import QgsProjectionSelectionDialog
+        dialog = QgsProjectionSelectionDialog(self.iface.mainWindow())
+        dialog.setWindowTitle(f"Valitse koordinaatisto: {Path(file).name}")
+        project_crs = QgsProject.instance().crs()
+        dialog.setCrs(project_crs if project_crs.isValid() else QgsCoordinateReferenceSystem("EPSG:3067"))
+        return dialog.crs() if dialog.exec() else None

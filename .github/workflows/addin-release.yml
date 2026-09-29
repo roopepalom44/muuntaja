@@ -1,16 +1,46 @@
-name: Build and release ArcGIS Pro Add-InX
+name: Test, build and release
 
 on:
   push:
     branches:
       - main
+  pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install QGIS Python bindings
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            python3-qgis qgis-providers python3-gdal
+
+      - name: Lint
+        run: |
+          pipx run ruff check --select F,E9 --extension pyt:python \
+            Toolboxes/Muuntaja.pyt qgis_plugin tests
+
+      - name: Unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: /usr/bin/python3 -m unittest discover -s tests -v
+
   build-and-release:
+    needs: test
+    if: github.event_name == 'push'
     runs-on: windows-2025
+    permissions:
+      contents: write
     timeout-minutes: 60
     steps:
       - name: Check out pushed commit
@@ -107,10 +137,18 @@ jobs:
           python qgis_plugin/package.py
           if ($LASTEXITCODE -ne 0) { throw 'QGIS plugin packaging failed.' }
           $version = ((Get-Content qgis_plugin/muuntaja_qgis/metadata.txt | Where-Object { $_ -match '^version=' }) -replace '^version=', '').Trim()
-          foreach ($name in @("Muuntaja-QGIS-$version.zip", "Muuntaja-QGIS-$version-Windows.zip")) {
-            $path = Join-Path $env:GITHUB_WORKSPACE "qgis_plugin/dist/$name"
+          # Versioidut nimet kertovat sisällön, vakionimet antavat pysyvän
+          # releases/latest/download-linkin README:hen.
+          $copies = @{
+            "Muuntaja-QGIS-$version.zip" = @("Muuntaja-QGIS-$version.zip", 'Muuntaja-QGIS.zip')
+            "Muuntaja-QGIS-$version-Windows.zip" = @("Muuntaja-QGIS-$version-Windows.zip", 'Muuntaja-QGIS-Windows.zip')
+          }
+          foreach ($source in $copies.Keys) {
+            $path = Join-Path $env:GITHUB_WORKSPACE "qgis_plugin/dist/$source"
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing QGIS package: $path" }
-            Copy-Item -LiteralPath $path -Destination (Join-Path $env:RUNNER_TEMP $name) -Force
+            foreach ($name in $copies[$source]) {
+              Copy-Item -LiteralPath $path -Destination (Join-Path $env:RUNNER_TEMP $name) -Force
+            }
           }
           "qgis_version=$version" >> $env:GITHUB_ENV
 
@@ -125,8 +163,10 @@ jobs:
           $asset = Join-Path $env:RUNNER_TEMP 'Muuntaja.esriAddInX'
           $qgisZip = Join-Path $env:RUNNER_TEMP "Muuntaja-QGIS-$($env:qgis_version).zip"
           $windowsZip = Join-Path $env:RUNNER_TEMP "Muuntaja-QGIS-$($env:qgis_version)-Windows.zip"
+          $qgisLatest = Join-Path $env:RUNNER_TEMP 'Muuntaja-QGIS.zip'
+          $windowsLatest = Join-Path $env:RUNNER_TEMP 'Muuntaja-QGIS-Windows.zip'
           $ghArgs = @(
-            'release', 'create', $env:RELEASE_TAG, $asset, $qgisZip, $windowsZip,
+            'release', 'create', $env:RELEASE_TAG, $asset, $qgisZip, $windowsZip, $qgisLatest, $windowsLatest,
             '--repo', $env:GITHUB_REPOSITORY,
             '--target', $env:GITHUB_SHA,
             '--title', "Muuntaja $env:RELEASE_VERSION",

@@ -1,8 +1,8 @@
 [general]
 name=Muuntaja
 description=Paikkatietoaineistojen tuonti ja vienti QGISissä
-about=Muuntaja tuo vektori- ja rasteriaineistoja kansioista sekä vie projektin vektoritasoja yleisiin tiedostomuotoihin.
-version=0.2.7
+about=Muuntaja tuo vektori- ja rasteriaineistoja kansioista sekä vie projektin vektoritasoja yleisiin tiedostomuotoihin. DWG- ja DXF-piirustukset avautuvat QGISissä ryhmiteltyinä, CAD-värein ja -tekstein, ja tasot voi viedä DXF-muotoon QGISin symbologialla (DWG-vienti kokeellinen). DWG-lukua varten mukana on LibreDWG (GPL-3), joten Windowsissa ei tarvita erillistä muunninta.
+version=0.3.0
 qgisMinimumVersion=3.44
 author=Roope Palomaa
 repository=https://github.com/roopepalom44/muuntaja

@@ -469,6 +469,25 @@ class PluginTests(unittest.TestCase):
         self.assertIn("4 tasoa lisätty", messages[-1][1][1])
         QgsProject.instance().clear()
 
+    def test_dropped_dwg_without_crs_asks_for_it(self):
+        from muuntaja_qgis import classFactory
+        QgsProject.instance().clear()
+        iface, calls, _menu = self.make_iface()
+        plugin = classFactory(iface)
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "paikaton.dxf"
+            text = (DATA / "cad_sample.dxf").read_text(encoding="utf-8")
+            source.write_text(text.replace("385", "90").replace("6672", "90"), encoding="utf-8")
+            chosen = QgsCoordinateReferenceSystem("EPSG:3067")
+            with mock.patch.object(plugin, "_ask_crs", return_value=chosen) as ask:
+                plugin.import_cad_files([str(source)])
+            ask.assert_called_once()
+            layers = list(QgsProject.instance().mapLayers().values())
+            self.assertTrue(layers and all(layer.crs() == chosen for layer in layers))
+            with mock.patch.object(plugin, "_ask_crs", return_value=None):
+                plugin.import_cad_files([str(source)])
+        QgsProject.instance().clear()
+
     def test_export_dialog_lists_dxf_and_dwg(self):
         from muuntaja_qgis.plugin import MuuntajaDialog
         dialog = MuuntajaDialog()

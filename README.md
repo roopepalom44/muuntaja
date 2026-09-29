@@ -1,6 +1,6 @@
 # Muuntaja
 
-**QGIS-versio (esijulkaisu):** [asennus ja nykyinen toiminnallisuus](qgis_plugin/README.md). Ladattavat ZIP-paketit ovat [GitHub-julkaisussa](https://github.com/roopepalom44/muuntaja/releases/tag/qgis-v0.2.1).
+**QGIS-versio (esijulkaisu):** [asennus ja nykyinen toiminnallisuus](qgis_plugin/README.md). Uusimmat asennuspaketit: [Muuntaja-QGIS-Windows.zip](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja-QGIS-Windows.zip) ja [Muuntaja-QGIS.zip](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja-QGIS.zip).
 
 **Muuntaja** on ArcGIS Pro Add-In -laajennus, joka on suunniteltu helpottamaan erilaisten tiedostomuotojen (kuten CAD, GPX, KML jne.) tuomista ja viemistä ArcGIS Pro -ympäristössä. Se tarjoaa käyttäjäystävällisen käyttöliittymän aineistojen nopeaan kääntämiseen ja siirtämiseen.
 
@@ -8,7 +8,7 @@
 - **Tiedostojen muuntaminen:** Tuo CAD-, GPKG-, Shapefile-, GeoJSON-, GPX-, KML/KMZ- ja DFSU-aineistoja suoraan projektiin.
 - **Kansiotuonti:** Anna tuonnissa yhden kansion polku. Muuntaja käy kansion ja sen alikansiot läpi, tunnistaa kaikki tuetut tiedostomuodot ja lisää muunnetut tasot työtilaan.
 - **Rasterituonti ryhmiteltynä:** Tuonti tunnistaa myös rasterit (TIFF, JP2, IMG sekä PNG/JPG, joiden vieressä on world-tiedosto kuten `.pgw`). Rasterit lisätään työtilaan ryhmätasoihin lähimmän `taustakartta_`-alkuisen kansion mukaan, joten MML:n latauskansion voi antaa sellaisenaan (ks. alla).
-- **Tasovalinta viennissä:** Vientitilassa tasot valitaan ArcGIS Pron omalla monitasovalitsimella aktiivisesta kartasta tai selaamalla.
+- **Tasovalinta viennissä:** Vientitilassa tasot valitaan ArcGIS Pron omalla monitasovalitsimella aktiivisesta kartasta tai selaamalla. Vienti noudattaa tason valintaa ja määrityskyselyä (definition query) kuten ArcGISin omat työkalut: vain kartalla näkyvät tai valitut kohteet viedään, ja loki kertoo rajauksesta.
 - **Monitasoviennin paketointi:** Shapefile-, GeoJSON- ja KML/KMZ-viennit tehdään aina omiksi tiedostoiksi tasoittain. GPKG-, DWG- ja DXF-vienneissä voi valita yhden yhteisen tiedoston tai oman tiedoston jokaiselle tasolle.
 - **Selkeä CAD-vienti:** DWG/DXF-vientiin kirjoitetaan vain valittujen tasojen geometriat. Labeltekstejä tai erillisiä attribuuttitaulukoita ei muodosteta.
 - **Hallittu karttasisältö:** Vienti kirjoittaa vain tiedostot eikä lisää vientituloksia aktiiviselle kartalle. Tuonti lisää muunnetut aineistot normaalisti työtilaan.
@@ -22,11 +22,15 @@
 
 ### Automaattiset GitHub-julkaisut
 
-Jokainen `main`-haaraan tehty push käynnistää työnkulun
-`.github/workflows/addin-release.yml`. Se kääntää ja paketoi AddInX:n sekä luo
-GitHub-releasen, jonka liitteenä on `Muuntaja.esriAddInX`. Paketin versio
-muodostuu `Config.daml`-version ja GitHub-ajon numeron perusteella, joten
-jokaisella pushilla on yksilöllinen versio.
+Julkaisut tehdään ainoastaan GitHub Actionsilla. Työnkulku
+`.github/workflows/addin-release.yml` ajaa jokaisessa pull requestissa ja
+`main`-pushissa ensin yksikkötestit (myös QGIS-lisäosan testit QGISin
+Python-kirjastoilla) ja lint-tarkistuksen. Vasta kun ne menevät läpi,
+`main`-push kääntää ja paketoi AddInX:n ja QGIS-lisäosan sekä luo
+GitHub-releasen, jonka liitteinä ovat `Muuntaja.esriAddInX`, versioidut
+QGIS-ZIPit sekä vakionimiset `Muuntaja-QGIS.zip` ja `Muuntaja-QGIS-Windows.zip`.
+Paketin versio muodostuu `Config.daml`-version ja GitHub-ajon numeron
+perusteella, joten jokaisella pushilla on yksilöllinen versio.
 
 Työnkulku kääntää virallisilla ArcGIS Pro 3.5 SDK -viitteillä
 `Esri.ArcGISPro.Extensions30` NuGet-paketista `3.5.0.57366`; Pro 3.5 on myös
@@ -37,17 +41,17 @@ jotta se voi luoda releasen.
 Uusin AddInX on saatavilla suoraan osoitteesta
 <https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja.esriAddInX>.
 
-### Julkaisun tekeminen paikallisesti (kehittäjille)
+### Paikallinen käännös ja testit (kehittäjille)
 
-Nosta versio `Config.daml`-tiedostossa, commitoi ja pushaa, ja aja sitten:
+AddInX:n voi kääntää ja paketoida paikallisesti ilman julkaisua:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\release.ps1
+powershell -ExecutionPolicy Bypass -File .\build-addin.ps1 -Configuration Release
 ```
 
-Skripti rakentaa Release-version, paketoi sen ja luo GitHub-releasen `v<versio>`.
-Se käyttää .NET 8 SDK:ta, täyttä MSBuildia, virallista Pro 3.5 NuGet -pakettia
-sekä `gh auth login` -kirjautumista.
+Skripti käyttää .NET 8 SDK:ta, täyttä MSBuildia ja virallista Pro 3.5 NuGet
+-pakettia. Testit ajetaan komennolla `python -m unittest discover -s tests`;
+QGIS-testit ajetaan, kun Python löytää QGISin kirjastot (muuten ne ohitetaan).
 
 ## Käyttö
 1. Käynnistä ArcGIS Pro.
@@ -111,6 +115,15 @@ paikkaan ennen tuontia.
 - **Monitasoviennin GeoJSON-, Shapefile- ja KML/KMZ-haarat on yhdistetty**
   yhdeksi kierrokseksi formaattikohtaisella dispatchilla kolmen identtisen
   silmukan sijaan.
+- **Tyhjä tuonti on virhe.** Jos tiedostosta ei saada yhtään kohdetta (tyhjä
+  GeoJSON/GPKG/KML/GPX/CAD tai DFSU-suodatin ilman osumia) tai tason
+  tallennus epäonnistuu, tiedosto näkyy yhteenvedossa epäonnistuneena eikä
+  onnistuneena.
+- **Kansioskannaus ohittaa muut kuin paikkatieto-JSONit** (esim. asetus- ja
+  metatietotiedostot), ja kansiopuu käydään läpi vain kerran validointia ja
+  ajoa kohden.
+- **CAD-tuonnin tunnistettu koordinaatisto tallentuu tulokseen** myös silloin,
+  kun kohde-CRS puuttuu tai on sama kuin lähde.
 
 ## mikeio ja DFSU-tuki
 
@@ -121,12 +134,16 @@ asennustapa on kerran kloonattuun ympäristöön:
 conda install -c conda-forge mikeio
 ```
 
-Työkalu **ei enää asenna kirjastoa automaattisesti oletuksena.** Ajonaikainen
-`pip install` muuttaa ArcGIS Pron jaettua Python-ympäristöä, kestää minuutteja
-ja epäonnistuu lukitulla työasemalla kesken kaiken. Automaattiasennuksen voi
-ottaa käyttöön kertaluonteisesti valinnalla **DFSU: asenna puuttuva
-mikeio-kirjasto automaattisesti**, joka näkyy vain kun tuonnissa on
-DFSU-tiedostoja.
+Työkalu **ei asenna kirjastoa ajon aikana.** Ajonaikainen `pip install`
+muuttaisi ArcGIS Pron jaettua Python-ympäristöä huomaamatta, kestäisi minuutteja
+ja epäonnistuisi lukitulla työasemalla. Jos `mikeio` puuttuu, vain
+DFSU-tiedostot epäonnistuvat asennusohjeen kanssa; eräajon muut tiedostot
+tuodaan normaalisti.
+
+DFSU:n lähtökoordinaatisto luetaan tiedoston projektiosta (`LONG/LAT` =
+WGS84) tai päätellään Suomen koordinaateista. Jos sitä ei tunnisteta
+(esim. `NON-UTM`), valitse **Lähtökoordinaatisto**; kohde-CRS:ää ei koskaan
+käytetä arvauksena lähteen koordinaatistoksi.
 
 Jos `mikeio` puuttuu, DFSU-suodattimen sarakelista on tyhjä ja dialogi kertoo
 syyn. Aiemmin lista täytettiin binääriheaderista arvatuilla nimillä ja viime

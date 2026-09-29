@@ -33,3 +33,13 @@ Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rast
 
 - Jos QGIS-projektilta puuttuu koordinaattijärjestelmä, tuonti asettaa sen ensimmäisen tuodun tason mukaan ennen tason lisäämistä. Tämä koskee vektori-, rasteri- ja DFSU-tasoja.
 - Tuonnin valmistumisviesti kertoo, kun projektin CRS asetettiin automaattisesti.
+
+## Muuntaja QGIS 0.3.0
+
+- **DWG ja DXF natiivisti QGISissä.** Piirustus tuodaan ryhmäksi, jossa ovat tekstit, pisteet, viivat ja alueet omina tasoinaan. CAD-värit säilyvät, CAD-tasot näkyvät sisällysluettelossa päälle/pois kytkettävinä sääntöinä ja tekstit nimiöinä CAD-korkeudella, -kulmalla ja -ankkurilla. Paperitilan kohteet ohitetaan.
+- DWG:n voi raahata suoraan QGIS-ikkunaan tai lisätä valikosta **Taso → Lisää taso → Lisää DWG/DXF-taso (Muuntaja)**. Jos koordinaatistoa ei voi päätellä, QGIS kysyy sen tavalliseen tapaan.
+- DWG luetaan ODA File Converterilla tai LibreDWG:llä; AutoCAD 2000 -DWG avautuu myös ilman muunninta. ODA löytyy automaattisesti myös versionumerollisesta asennuskansiosta, ja valittu muunnin muistetaan.
+- **DXF-vienti käyttää QGISin omaa DXF-vientiä:** symbologia, nimiöt ja tuotujen CAD-tasojen nimet säilyvät, ja eri koordinaatistoissa olevat tasot muunnetaan samaan koordinaatistoon (aiemmin yhdistetty vienti sekoitti ne). DWG-vienti löytyy myös valikosta **Projekti → Tuo/Vie**.
+- DWG-vienti tarkistaa tuloksen otsakkeesta (aiemmin oikean ODA-muuntimen AutoCAD 2018 -tulos hylättiin virheellisesti). LibreDWG:n kokeellinen DWG-kirjoitus luetaan takaisin, ja jos kohteita puuttuu, vienti pysähtyy virheeseen.
+- Korjattu: DFSU-taso avattiin väärällä nimellä GeoPackageen, jossa oli jo muita tasoja; rasterituonti poisti käyttäjän omia tasoja samannimisestä ryhmästä; GeoPackage-tasonimet vertaillaan kirjainkoosta riippumatta; projektista poistettu taso kaatoi viennin; kansioskannaus otti mukaan muitakin kuin paikkatieto-JSONeja.
+- Muuntimen aikakatkaisu ja puuttuva muunnin näytetään selkeänä suomenkielisenä virheenä, eikä Windows avaa konsoli-ikkunaa muunnoksen ajaksi.

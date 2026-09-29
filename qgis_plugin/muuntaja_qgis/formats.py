@@ -277,7 +277,10 @@ def find_libredwg_tool(name):
 
 def run_converter(command, description):
     """Run an external converter without a console window and with a timeout."""
-    options = {"capture_output": True, "text": True, "timeout": CONVERTER_TIMEOUT_SECONDS, "check": False}
+    # Muuntimien tuloste ei aina ole UTF-8:aa (esim. ääkköset polussa):
+    # korvaa tunnistamattomat merkit, jottei lukusäie kaadu.
+    options = {"capture_output": True, "text": True, "errors": "replace",
+               "timeout": CONVERTER_TIMEOUT_SECONDS, "check": False}
     if sys.platform == "win32":
         options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     else:

@@ -6,12 +6,8 @@ import re
 import time
 import datetime
 import traceback
-import subprocess
-import sys
 import importlib
-import xml.etree.ElementTree as ET
 import json
-import zipfile
 import struct
 
 class Toolbox(object):
@@ -103,6 +99,34 @@ def classify_finnish_xy(x, y):
     return None
 
 
+def looks_like_geojson(path, sample_bytes=65536):
+    """True, jos JSON-tiedoston alku näyttää GeoJSONilta tai Esri JSONilta."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(sample_bytes).decode("utf-8", errors="ignore")
+    except OSError:
+        return False
+    compact = re.sub(r"\s+", "", head)
+    markers = (
+        '"type":"FeatureCollection"', '"type":"Feature"', '"features":[',
+        '"geometryType":"esriGeometry', '"coordinates":[',
+    )
+    return any(marker in compact for marker in markers)
+
+
+def vote_finnish_epsg(points, minimum_share=0.6):
+    """Enemmistöäänestys Suomen koordinaatistoista; None jos epävarma."""
+    votes = {}
+    for x, y in points or []:
+        epsg = classify_finnish_xy(x, y)
+        if epsg:
+            votes[epsg] = votes.get(epsg, 0) + 1
+    if not votes:
+        return None
+    best, count = max(votes.items(), key=lambda item: item[1])
+    return best if count / float(sum(votes.values())) >= minimum_share else None
+
+
 class UniversalImportTool(object):
     def __init__(self):
         self.label = "Muuntaja"
@@ -184,7 +208,7 @@ class UniversalImportTool(object):
 
         # 4. Input SR - value-list jossa "Automaattinen" oletuksena ja Suomen CRS:t valmiina (tuonti)
         param4 = arcpy.Parameter(
-            displayName="[CAD/rasteri] Lähtökoordinaatisto",
+            displayName="[CAD/rasteri/DFSU] Lähtökoordinaatisto",
             name="input_sr",
             datatype="GPString",
             parameterType="Optional",
@@ -215,7 +239,7 @@ class UniversalImportTool(object):
 
         # 5. Target SR (vain DWG-tuonnissa näkyvissä)
         param5 = arcpy.Parameter(
-            displayName="[Valinnainen] Kohde-CRS (vain CAD-tuonti, tyhjä = alkuperäinen CRS)",
+            displayName="[Valinnainen] Kohde-CRS (CAD- ja DFSU-tuonti, tyhjä = alkuperäinen CRS)",
             name="target_sr",
             datatype="GPCoordinateSystem",
             parameterType="Optional",
@@ -316,19 +340,7 @@ class UniversalImportTool(object):
         param13.value = MULTI_EXPORT_PACKAGING_COMBINED
         param13.enabled = False
 
-        # 14. DFSU-tuonnin mikeio-asennus. Oletus pois: ajon aikainen
-        # pip install muuttaa ArcGIS Pron jaettua Python-ymparistoa, kestaa
-        # minuutteja ja epaonnistuu lukitulla tyoasemalla kesken kaiken.
-        param14 = arcpy.Parameter(
-            displayName="DFSU: asenna puuttuva mikeio-kirjasto automaattisesti",
-            name="dfsu_auto_install",
-            datatype="GPBoolean",
-            parameterType="Optional",
-            direction="Input")
-        param14.value = False
-        param14.enabled = False
-
-        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14]
+        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13]
 
     def updateParameters(self, parameters):
         """Mode-perustainen parametrienhallinta: tuonti vs. vienti sekä DFSU-suodatin."""
@@ -347,7 +359,6 @@ class UniversalImportTool(object):
         p_dfsu_filter_val = parameters[11] # DFSU: value
         p_export_layers = parameters[12]  # Vienti: ArcGISin monitasovalitsin
         p_multi_packaging = parameters[13]  # Vienti: GPKG/DWG/DXF-paketointi
-        p_dfsu_auto_install = parameters[14] if len(parameters) > 14 else None
         
         # Lue käyttäjän valittu moodi
         mode = (p_mode.valueAsText or "Tuonti").strip()
@@ -400,18 +411,13 @@ class UniversalImportTool(object):
             p_mapper.enabled = has_dwg
             # Lähtökoordinaatistolla voi myös määrätä rasterien CRS:n, jos
             # tiedostossa ei ole sitä eikä sitä voi päätellä world-tiedostosta.
-            p_input_sr.enabled = has_dwg or has_raster
-            p_target_sr.enabled = has_dwg
+            p_input_sr.enabled = has_dwg or has_raster or has_dfsu
+            p_target_sr.enabled = has_dwg or has_dfsu
             
             p_export_folder.enabled = False
             p_export_fmt.enabled = False
             p_multi_packaging.enabled = False
             
-            if p_dfsu_auto_install is not None:
-                p_dfsu_auto_install.enabled = has_dfsu
-                if not has_dfsu:
-                    p_dfsu_auto_install.value = False
-
             # DFSU-suodatin näkyy vain DFSU-tuonnissa
             if has_dfsu:
                 p_dfsu_filter_en.enabled = True
@@ -481,9 +487,6 @@ class UniversalImportTool(object):
                     p_multi_packaging.value = MULTI_EXPORT_PACKAGING_COMBINED
             
             # DFSU-parametrit piilotetaan viennissä
-            if p_dfsu_auto_install is not None:
-                p_dfsu_auto_install.enabled = False
-                p_dfsu_auto_install.value = False
             p_dfsu_filter_en.enabled = False
             p_dfsu_filter_col.enabled = False
             p_dfsu_filter_op.enabled = False
@@ -558,183 +561,21 @@ class UniversalImportTool(object):
         except Exception:
             return []
 
-    def _read_dfsu_columns_heuristic(self, dfsu_path):
-        """Vanha binääriheuristiikka; säilytetty vain vianmääritystä varten.
+    def _ensure_python_module(self, import_name):
+        """Tuo valinnainen Python-kirjasto tai anna asennusohje.
 
-        Ei käytetä käyttöliittymässä, koska tulos ei ole luotettava.
+        Kirjastoja ei asenneta ajon aikana: pip-asennus ArcGIS Pron jaettuun
+        Python-ympäristöön muuttaisi sitä huomaamatta ja epäonnistuisi
+        lukituilla työasemilla.
         """
         try:
-            columns = []
-
-            with open(dfsu_path, 'rb') as f:
-                data = f.read(8192)  # Lue riittävä osa headeria
-                
-                if len(data) < 100:
-                    return []
-                
-                # DFSU-binääri: etsi tekstiosuuksia jotka ovat todennäköisesti sarakkeiden nimiä
-                # Erotel ASCII-teksti puusta-ja epäpuhdasta datasta
-                text_sections = []
-                current_text = b''
-                
-                for i, byte_val in enumerate(data):
-                    # ASCII-tulostettavat merkit (32-126)
-                    if 32 <= byte_val <= 126 or byte_val in (9, 10, 13):  # Myös whitespace
-                        current_text += bytes([byte_val])
-                    else:
-                        # Sanaväli: jos keräsimme tekstiä, tallenna se
-                        if len(current_text) > 2:
-                            try:
-                                text_str = current_text.decode('ascii', errors='ignore').strip()
-                                if text_str and 3 <= len(text_str) <= 50:
-                                    text_sections.append(text_str)
-                            except:
-                                pass
-                        current_text = b''
-                
-                # Viimeinen teksti
-                if len(current_text) > 2:
-                    try:
-                        text_sections.append(current_text.decode('ascii', errors='ignore').strip())
-                    except:
-                        pass
-                
-                # Suodata pois yleiset systemisanat, säilytä todennäköiset sarakkeiden nimet
-                exclude = {'system', 'data', 'file', 'header', 'version', 'type', 'item', 'info', 
-                          'unit', 'time', 'dfs', 'element', 'node', 'face', 'code', 'name',
-                          'none', 'float', 'int', 'double', 'long', 'byte', 'short'}
-                
-                columns = [s for s in text_sections 
-                          if s and s.lower() not in exclude 
-                          and not s.isdigit()
-                          and not s.replace('.', '').isdigit()  # Ei numeroita desimaalin kanssa
-                          and not all(c in '0123456789._-' for c in s)]  # Ei paljoko numeroita
-                
-                # Säilytä uniikit, max 20
-                columns = list(dict.fromkeys(columns))[:20]
-            
-            return columns
-
-        except Exception:
-            # Keksityt sarakenimet ovat huonompi vastaus kuin tyhja lista:
-            # niista valittu suodatin ei osu koskaan mihinkaan.
-            return []
-
-    def _ensure_python_module(self, import_name, package_name=None, messages=None, auto_install=False):
-        """Tuo Python-moduuli; haluttaessa yritä asentaa se aktiiviseen Python-ympäristöön."""
-        package_name = package_name or import_name
-        # ArcGIS Prossa sys.executable voi osoittaa ArcGISPro.exe:hen; etsitään varsinainen python.exe.
-        python_cmd = sys.executable or ""
-        exe_name = os.path.basename(python_cmd).lower()
-        if not exe_name.startswith("python"):
-            candidates = []
-            if getattr(sys, "exec_prefix", None):
-                candidates.append(os.path.join(sys.exec_prefix, "python.exe"))
-            if getattr(sys, "prefix", None):
-                candidates.append(os.path.join(sys.prefix, "python.exe"))
-
-            for candidate in candidates:
-                if candidate and os.path.exists(candidate):
-                    python_cmd = candidate
-                    break
-
-        if not python_cmd or not os.path.exists(python_cmd):
-            python_cmd = "python"
-
-        def _append_path_if_exists(path_value):
-            if path_value and os.path.exists(path_value) and path_value not in sys.path:
-                sys.path.append(path_value)
-
-        def _prime_site_paths():
-            # Nykyisen prosessin tavallisimmat site-packages-polut
-            _append_path_if_exists(os.path.join(sys.prefix, "Lib", "site-packages"))
-            _append_path_if_exists(os.path.join(sys.exec_prefix, "Lib", "site-packages"))
-            try:
-                import site
-                _append_path_if_exists(site.getusersitepackages())
-            except Exception:
-                pass
-
-            # Lisäksi haetaan käyttäjä-site juuri siltä Pythonilta, jolla pip ajetaan.
-            try:
-                usersite_result = subprocess.run(
-                    [python_cmd, "-c", "import site; print(site.getusersitepackages())"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                if usersite_result.returncode == 0:
-                    lines = [x.strip() for x in (usersite_result.stdout or "").splitlines() if x.strip()]
-                    if lines:
-                        _append_path_if_exists(lines[-1])
-            except Exception:
-                pass
-
-        # Yritä tuoda ensin normaalisti, sitten path-primeyksen jälkeen.
-        try:
             return importlib.import_module(import_name)
-        except Exception as first_error:
-            _prime_site_paths()
-            importlib.invalidate_caches()
-            try:
-                return importlib.import_module(import_name)
-            except Exception:
-                if not auto_install:
-                    raise first_error
-
-            if messages:
-                self.log(messages, f"Puuttuva Python-kirjasto '{package_name}' havaittu. Yritetään asentaa automaattisesti...", "WARNING")
-                self.log(messages, "  > Asennus voi kestää tyypillisesti noin 30 sekunnista muutamaan minuuttiin riippuen verkosta ja ympäristön oikeuksista.")
-                self.log(messages, f"  > Asennuskomento: {python_cmd} -m pip install {package_name}")
-
-            try:
-                result = subprocess.run(
-                    [python_cmd, "-m", "pip", "install", "--disable-pip-version-check", package_name],
-                    capture_output=True,
-                    text=True,
-                    timeout=300
-                )
-                if result.returncode != 0:
-                    raise RuntimeError(f"pip install epäonnistui: {result.stderr}")
-            except subprocess.TimeoutExpired:
-                raise RuntimeError(
-                    f"Asennus aikakatkaistiin 5 minuutin jälkeen komennolla '{python_cmd} -m pip install {package_name}'. "
-                    f"Yritä asentaa käsin samalla Python-tulkilla."
-                )
-            except Exception as install_error:
-                raise RuntimeError(
-                    f"Kirjaston '{package_name}' asennus epäonnistui: {install_error}. "
-                    f"Yritä asentaa käsin komennolla: python -m pip install {package_name}"
-                )
-
-            if messages:
-                pip_text = f"{(result.stdout or '').strip()}\n{(result.stderr or '').strip()}".lower()
-                if "requirement already satisfied" in pip_text or "already satisfied" in pip_text:
-                    self.log(messages, f"Kirjasto '{package_name}' oli jo asennettuna (pip: requirement already satisfied).")
-                else:
-                    self.log(messages, f"Kirjasto '{package_name}' asennettiin onnistuneesti.")
-
-            _prime_site_paths()
-            importlib.invalidate_caches()
-            try:
-                return importlib.import_module(import_name)
-            except Exception:
-                # Varmista erillisessä python-prosessissa, onko paketti oikeasti asennettu.
-                verify = subprocess.run(
-                    [python_cmd, "-c", f"import {import_name}; print('OK')"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                if verify.returncode == 0:
-                    raise RuntimeError(
-                        f"Kirjasto '{package_name}' on asennettuna, mutta nykyinen ArcGIS Pro -prosessi ei saanut sitä käyttöön. "
-                        f"Sulje ArcGIS Pro ja käynnistä se uudelleen, sitten aja työkalu uudestaan."
-                    )
-                raise RuntimeError(
-                    f"Kirjaston '{package_name}' asennus valmistui, mutta tuonti epäonnistui silti. "
-                    f"Python-tulkin varmistusvirhe: {(verify.stderr or verify.stdout or '').strip()}"
-                )
+        except ImportError as error:
+            raise RuntimeError(
+                f"Python-kirjasto '{import_name}' puuttuu ArcGIS Pron Python-ympäristöstä. "
+                "Kloonaa ympäristö (Project → Package Manager → Environment Manager) ja asenna "
+                f"siihen: conda install -c conda-forge {import_name}"
+            ) from error
 
     def _queue_deferred_cleanup(self, path):
         """Lisää poistettava polku jonoon (siivotaan turvallisesti eräajon lopussa)."""
@@ -801,9 +642,8 @@ class UniversalImportTool(object):
             if has_dfsu_selection and not (parameters[9].filter.list or []):
                 parameters[9].setErrorMessage(
                     "DFSU-itemien lukeminen ei onnistunut. Suodatus vaatii "
-                    "mikeio-kirjaston ArcGIS Pron Python-ympäristöön "
-                    "(conda install -c conda-forge mikeio), tai ota käyttöön "
-                    "valinta 'DFSU: asenna puuttuva mikeio-kirjasto automaattisesti'."
+                    "mikeio-kirjaston ArcGIS Pron kloonattuun Python-ympäristöön "
+                    "(conda install -c conda-forge mikeio)."
                 )
 
         if not paths:
@@ -847,15 +687,16 @@ class UniversalImportTool(object):
         # TUONTI-VALIDOINTI
         else:
             for pv in paths:
-                if self._is_supported_import_catalog_path(pv):
-                    continue
                 if os.path.isdir(pv):
-                    folder_files = self._list_supported_import_files(pv)
-                    if not folder_files:
+                    # Käytä jo laajennettua (välimuistissa olevaa) listaa, jotta
+                    # isoa kansiopuuta ei käydä läpi uudelleen joka näppäilyllä.
+                    if not self._count_files_under(pv, import_paths):
                         p_input.setErrorMessage(
                             f"Tuonti: kansiosta '{pv}' ei löytynyt tuettuja tiedostoja ({', '.join(IMPORT_FILE_EXTENSIONS)})."
                         )
                         return
+                    continue
+                if self._is_supported_import_catalog_path(pv):
                     continue
                 ext = os.path.splitext(pv)[1].lower()
                 if ext and ext not in IMPORT_FILE_EXTENSIONS:
@@ -1037,6 +878,10 @@ class UniversalImportTool(object):
                         and not self._raster_has_georeference(full_path)
                     ):
                         continue
+                    # Kansiossa on usein asetus- ja metatieto-JSONeita; niistä
+                    # otetaan mukaan vain paikkatietoa sisältävät.
+                    if extension == ".json" and not looks_like_geojson(full_path):
+                        continue
                     try:
                         if os.path.isfile(full_path):
                             out.append(full_path)
@@ -1100,6 +945,14 @@ class UniversalImportTool(object):
             self._import_expansion_cache_value = list(expanded)
         return expanded
 
+    def _count_files_under(self, folder, expanded_paths):
+        """Laske jo laajennetuista poluista kansion alla olevat tiedostot."""
+        prefix = self._normalized_path_key(folder).rstrip("\\/") + os.sep
+        return sum(
+            1 for path in expanded_paths or []
+            if self._normalized_path_key(path).startswith(prefix)
+        )
+
     def _path_contains_extension(self, value_text, extensions):
         s = str(value_text or "").lower().replace("/", "\\")
         for ext in extensions:
@@ -1113,7 +966,8 @@ class UniversalImportTool(object):
         if not p:
             return False
         if os.path.isdir(p):
-            return bool(self._list_supported_import_files(p))
+            # Kansion sisältö tarkistetaan laajennuksen yhteydessä.
+            return True
         ext = os.path.splitext(p)[1].lower()
         if ext in IMPORT_FILE_EXTENSIONS:
             return True
@@ -1163,24 +1017,6 @@ class UniversalImportTool(object):
             return "mixed"
         return "mixed"
 
-    def _classify_export_path(self, path):
-        """Tarkista, onko polku geometrinen feature class/layer vientiä varten."""
-        try:
-            desc = arcpy.Describe(path)
-            data_type = (getattr(desc, "dataType", "") or "").upper()
-            if data_type not in ("FEATURECLASS", "FEATURELAYER", "SHAPEFILE"):
-                return "other"
-            return "export" if getattr(desc, "shapeFieldName", None) else "other"
-        except Exception:
-            return "other"
-
-    def _bulk_export_mode(self, paths):
-        """Palauta 'empty', 'export' tai 'other' vientiin annetuista poluista."""
-        if not paths:
-            return "empty"
-        kinds = [self._classify_export_path(path) for path in paths]
-        return "export" if all(kind == "export" for kind in kinds) else "other"
-
     def _multi_export_packaging_from_param(self, param, input_count, fmt=None):
         """Palauta usean tason GPKG/DWG/DXF-viennin paketointitapa.
 
@@ -1215,25 +1051,6 @@ class UniversalImportTool(object):
         suffix = "_multi"
         base = (base + suffix)[:50]
         return base or "export_multi"
-
-    def _is_import_mode(self, value_text):
-        """True = tiedostotuonti, False = vienti (taso / feature class)."""
-        if not value_text:
-            return True
-        ext = os.path.splitext(value_text.strip())[1].lower()
-        if ext in IMPORT_FILE_EXTENSIONS:
-            return True
-        try:
-            d = arcpy.Describe(value_text)
-            dt = (d.dataType or "").upper()
-            if dt in ("FEATURECLASS", "FEATURELAYER", "SHAPEFILE"):
-                return False
-            # Ei tuontitiedosto — vientihaara (updateMessages torjuu jos ei geometriaa)
-            if dt in ("TABLE", "RASTERDATASET", "RASTERLAYER", "RASTERBAND", "MOSAICDATASET"):
-                return False
-        except Exception:
-            pass
-        return True
 
     def _log_batch_summary(self, messages, operation, total, succeeded, failures):
         """Raportoi eräajon tulos ja kaada ajo vasta, jos mikään ei onnistunut.
@@ -1297,36 +1114,12 @@ class UniversalImportTool(object):
         is_folder = (desc.dataType == "Folder" or desc.workspaceType == "FileSystem")
         self.log(messages, f"Tuonti — kohde: {output_loc}")
         
-        # Tarkista onko DFSU-tiedostoja ja asenna mikeio kerran alussa
-        has_dfsu = any(f.lower().endswith('.dfsu') for f in input_paths)
-        dfsu_auto_install = bool(parameters[14].value) if len(parameters) > 14 else False
-        if has_dfsu:
-            try:
-                self._ensure_python_module(
-                    "mikeio", package_name="mikeio", messages=messages,
-                    auto_install=dfsu_auto_install,
-                )
-            except Exception as e:
-                if dfsu_auto_install:
-                    self.log(messages, f"DFSU-asennus epäonnistui: {str(e)}", "ERROR")
-                else:
-                    self.log(
-                        messages,
-                        "DFSU-tuonti vaatii mikeio-kirjaston ArcGIS Pron Python-ympäristöön. "
-                        "Asenna se kerran komennolla 'conda install -c conda-forge mikeio' "
-                        "kloonattuun ympäristöön, tai valitse työkalussa "
-                        "'DFSU: asenna puuttuva mikeio-kirjasto automaattisesti'.",
-                        "ERROR",
-                    )
-                raise
-        
         for raw_path in raw_input_paths:
             if os.path.isdir(raw_path):
-                folder_files = self._list_supported_import_files(raw_path)
                 self.log(
                     messages,
                     f"Tuonti — kansio '{raw_path}' skannattu alikansioineen: "
-                    f"{len(folder_files)} tuettua tiedostoa.",
+                    f"{self._count_files_under(raw_path, input_paths)} tuettua tiedostoa.",
                 )
         if not input_paths:
             self.log(messages, "Tuonti: valituista kansioista/tiedostoista ei löytynyt käsiteltäviä tuontitiedostoja.", "ERROR")
@@ -1364,7 +1157,8 @@ class UniversalImportTool(object):
                                         filter_column=dfsu_filter_column,
                                         filter_operator=dfsu_filter_operator,
                                         filter_value=dfsu_filter_value,
-                                        target_sr=target_sr)
+                                        target_sr=target_sr,
+                                        input_sr=input_sr)
                     elif ext in [".dwg", ".dxf"]:
                         self.process_cad(input_path, output_loc, is_folder, use_mapper, input_sr, target_sr, messages)
                     else:
@@ -1411,9 +1205,8 @@ class UniversalImportTool(object):
             input_paths = self._export_paths_from_param(None, input_paths)
         folder = (parameters[6].valueAsText or "").strip()  # Index shifted from 5 to 6
         fmt = (parameters[7].valueAsText or "GPKG").strip()  # Index shifted from 6 to 7
-        # Parametri 5 kuuluu vain CAD-tuontiin. Piilotettu aiempi arvo ei saa
-        # projisoida vientiaineistoja huomaamatta.
-        target_sr = None
+        # Parametri 5 kuuluu vain tuontiin. Piilotettu aiempi arvo ei saa
+        # projisoida vientiaineistoja huomaamatta, joten vienti ei lue sitä.
         multi_packaging = self._multi_export_packaging_from_param(
             parameters[13] if len(parameters) > 13 else None,
             len(input_paths),
@@ -1472,7 +1265,7 @@ class UniversalImportTool(object):
                         sub_src = self._export_source_label(in_src)
                         try:
                             self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
-                            fc_work = self._prepare_export_feature_class(in_src, target_sr, messages)
+                            fc_work = self._prepare_export_feature_class(in_src, messages)
                             out_one = self._unique_export_path(
                                 self._build_export_path_in_folder(folder, fmt, sub_src)
                             )
@@ -1495,7 +1288,7 @@ class UniversalImportTool(object):
                             self.log(messages, traceback.format_exc(), "WARNING")
                 else:
                     for in_src in input_paths:
-                        fc_pairs.append((self._prepare_export_feature_class(in_src, target_sr, messages), in_src))
+                        fc_pairs.append((self._prepare_export_feature_class(in_src, messages), in_src))
                     written_paths = [
                         self._export_to_cad(
                             fc_pairs,
@@ -1507,7 +1300,7 @@ class UniversalImportTool(object):
             elif len(input_paths) == 1:
                 in_src = input_paths[0]
                 fc_work = self._prepare_export_feature_class(
-                    in_src, target_sr, messages, copy_source=False
+                    in_src, messages, copy_source=False
                 )
                 src_one = self._export_source_label(in_src)
                 if fmt == "GeoJSON":
@@ -1543,7 +1336,7 @@ class UniversalImportTool(object):
                     try:
                         self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
                         fc_work = self._prepare_export_feature_class(
-                            in_src, target_sr, messages, copy_source=False
+                            in_src, messages, copy_source=False
                         )
                         if fmt == "GPKG":
                             gpkg_target = out_path
@@ -1592,12 +1385,28 @@ class UniversalImportTool(object):
         finally:
             self._run_deferred_cleanup(messages)
 
-    def _resolve_export_catalog_path(self, in_src):
-        """Palauttaa polun feature classiin (ei layer-nimeä ilman polkua)."""
-        d = arcpy.Describe(in_src)
-        if d.dataType == "FeatureLayer" and getattr(d, "catalogPath", None):
-            return d.catalogPath
-        return in_src
+    def _log_layer_subset(self, in_src, desc, messages):
+        """Kerro, jos vientitaso rajautuu valintaan tai määrityskyselyyn.
+
+        Vienti käyttää tasoa sellaisenaan, joten ArcGIS vie vain valitut
+        kohteet ja määrityskyselyn (definition query) läpäisevät kohteet –
+        samat, jotka kartalla näkyvät.
+        """
+        if getattr(desc, "dataType", "") != "FeatureLayer":
+            return
+        try:
+            fid_set = str(getattr(desc, "FIDSet", "") or "").strip()
+        except Exception:
+            fid_set = ""
+        selected = len([part for part in fid_set.split(";") if part.strip()]) if fid_set else 0
+        if selected:
+            self.log(messages, f"  > Tasolla '{in_src}' on valinta: viedään vain {selected} valittua kohdetta.")
+        try:
+            where = str(getattr(desc, "whereClause", "") or "").strip()
+        except Exception:
+            where = ""
+        if where:
+            self.log(messages, f"  > Tason '{in_src}' määrityskysely rajaa vientiä: {where}")
 
     def _export_output_file_paths(self, written_paths):
         """Muunna mahdolliset GPKG:n sisäiset tasopolut tiedostopoluiksi."""
@@ -1694,72 +1503,33 @@ class UniversalImportTool(object):
         except Exception:
             return None
 
-    def _prepare_export_feature_class(self, in_src, target_sr, messages, copy_source=True):
-        """Valmistele vientitaso tarvittaessa scratchGDB:ssä ja projisoi se.
+    def _prepare_export_feature_class(self, in_src, messages, copy_source=True):
+        """Valmistele vientitaso; tarvittaessa scratchGDB-kopio.
 
-        Lukuun perustuvissa viennissä lähdetasoa käytetään suoraan, jos
-        koordinaatistoa ei tarvitse vaihtaa. CAD-vienti käyttää edelleen aina
-        scratch-kopiota, koska CAD-valmistelu voi lisätä tai muuttaa kenttiä.
+        Lukuun perustuvissa viennissä lähdetasoa käytetään suoraan. CAD-vienti
+        käyttää scratch-kopiota, koska CAD-valmistelu voi lisätä tai muuttaa
+        kenttiä. Taso käytetään sellaisenaan (ei catalogPathia), jotta valinta
+        ja määrityskysely rajaavat viennin kuten ArcGISin omissa työkaluissa.
+        Vienti ei koskaan projisoi: tuonnin kohde-CRS ei kuulu vientiin.
         """
-        catalog = self._resolve_export_catalog_path(in_src)
-        desc = arcpy.Describe(catalog)
-        src_sr = getattr(desc, "spatialReference", None)
-        tgt_sr = self._spatial_ref_from_param(target_sr) if target_sr is not None else None
-        need_proj = False
-        comparison_failed = False
-
-        if tgt_sr and src_sr and getattr(src_sr, "name", "") != "Unknown":
-            try:
-                c_src = self._sr_factory_code(src_sr)
-                c_tgt = self._sr_factory_code(tgt_sr)
-                need_proj = False
-                if c_src is not None and c_tgt is not None:
-                    need_proj = c_src != c_tgt
-                else:
-                    try:
-                        need_proj = src_sr.exportToString() != tgt_sr.exportToString()
-                    except Exception:
-                        need_proj = str(src_sr) != str(tgt_sr)
-            except Exception as e:
-                comparison_failed = True
-                need_proj = True
-                self.log(messages, f"  > CRS-vertailu epäonnistui, käytetään varmistuskopiota: {e}", "WARNING")
-
-        if not copy_source and not need_proj and not comparison_failed:
-            return catalog
+        desc = arcpy.Describe(in_src)
+        self._log_layer_subset(in_src, desc, messages)
+        if not copy_source:
+            return in_src
 
         scratch = arcpy.env.scratchGDB
         sequence = int(getattr(self, "_export_temp_sequence", 0) or 0) + 1
         self._export_temp_sequence = sequence
         stamp = datetime.datetime.now().strftime("%H%M%S_%f")
-        base_name = f"muuntaja_vienti_{stamp}_{sequence}"
-        out_fc = os.path.join(scratch, base_name)
+        out_fc = os.path.join(scratch, f"muuntaja_vienti_{stamp}_{sequence}")
         while arcpy.Exists(out_fc):
             sequence += 1
             self._export_temp_sequence = sequence
             out_fc = os.path.join(scratch, f"muuntaja_vienti_{stamp}_{sequence}")
 
         self.log(messages, "  > Luodaan vientiä varten väliaikainen scratch-kopio...")
-        arcpy.management.CopyFeatures(catalog, out_fc)
+        arcpy.management.CopyFeatures(in_src, out_fc)
         self._queue_deferred_cleanup(out_fc)
-
-        if need_proj:
-            proj_fc = out_fc + "_proj"
-            if arcpy.Exists(proj_fc):
-                arcpy.management.Delete(proj_fc)
-            try:
-                tname = tgt_sr.name
-            except Exception:
-                tname = "kohde-CRS"
-            self.log(messages, f"  > Projisoidaan vientiin: {tname}...")
-            try:
-                arcpy.management.Project(out_fc, proj_fc, tgt_sr)
-                self._queue_deferred_cleanup(proj_fc)
-                arcpy.management.Delete(out_fc)
-                out_fc = proj_fc
-            except Exception as e:
-                self.log(messages, f"  > Projisointi epäonnistui, käytetään alkuperäistä kopiota: {e}", "WARNING")
-
         return out_fc
 
 
@@ -2271,6 +2041,22 @@ class UniversalImportTool(object):
             arcpy.management.Project(input_data, output_data, target_sr, transform)
         else:
             arcpy.management.Project(input_data, output_data, target_sr, transform, input_sr)
+
+    def _has_known_spatial_reference(self, path):
+        try:
+            sr = getattr(arcpy.Describe(path), "spatialReference", None)
+        except Exception:
+            return False
+        name = str(getattr(sr, "name", "") or "").strip().lower()
+        return bool(sr) and name not in ("", "unknown")
+
+    def _define_missing_crs(self, path, input_sr, messages):
+        """Leimaa lähtö-CRS tulokseen, jos sillä ei ole omaa koordinaatistoa."""
+        if input_sr is None or self._has_known_spatial_reference(path):
+            return False
+        arcpy.management.DefineProjection(path, input_sr)
+        self.log(messages, f"  > Koordinaatisto leimattu: {getattr(input_sr, 'name', input_sr)}")
+        return True
 
     def _resolve_output_path(self, output_loc, output_name, is_folder):
         """Palauttaa (output_name, check_path) ArcGIS-yhteensopivalla nimellä."""
@@ -2974,6 +2760,7 @@ class UniversalImportTool(object):
                             input_data, output_loc, output_name, field_mapping=field_mappings
                         )
                         self._log_elapsed(messages, "Tallennus (kenttäsuodatus)", t0)
+                        self._define_missing_crs(check_path, input_sr, messages)
                         return check_path
                     except Exception as e:
                         self.log(
@@ -3033,6 +2820,9 @@ class UniversalImportTool(object):
                 t0 = time.perf_counter()
                 arcpy.management.CopyFeatures(work_input, check_path)
                 self._log_elapsed(messages, "Kopiointi", t0)
+                # Ilman projisointia tunnistettu lähtö-CRS pitää silti leimata
+                # tulokseen; muuten CAD-taso jää tuntemattomaan koordinaatistoon.
+                self._define_missing_crs(check_path, input_sr, messages)
 
             if scratch_intermediate and arcpy.Exists(scratch_intermediate):
                 try:
@@ -3150,7 +2940,7 @@ class UniversalImportTool(object):
 
         try:
             if not fcs:
-                self.log(messages, "Varoitus: Ei tasoja.", "WARNING"); return
+                raise RuntimeError("CAD-tiedostosta ei löytynyt tasoja.")
 
             fcs = sorted(fcs, key=lambda fc: self._cad_layer_sort_key(fc, dataset_path))
 
@@ -3256,8 +3046,9 @@ class UniversalImportTool(object):
                     if saved_path:
                         saved_paths.append(saved_path)
 
-            if saved_paths:
-                self._add_layers_to_map(saved_paths, messages)
+            if not saved_paths:
+                raise RuntimeError("CAD-tiedostossa ei ollut tuotavia kohteita.")
+            self._add_layers_to_map(saved_paths, messages)
 
             total_elapsed = time.perf_counter() - process_start
             self.log(messages, f"CAD-tuonti valmis {total_elapsed:.0f} s ({len(saved_paths)} tasoa).")
@@ -3377,8 +3168,10 @@ class UniversalImportTool(object):
             return check_path
 
         except Exception as e:
-            self.log(messages, f"Tallennusvirhe: {str(e)}", "ERROR")
-            return None
+            # Virhe välitetään kutsujalle, jotta eräajon yhteenveto ei laske
+            # epäonnistunutta tallennusta onnistuneeksi.
+            self.log(messages, f"Tallennusvirhe ({output_name}): {str(e)}", "WARNING")
+            raise
 
     def _bulk_convert_and_add(self, source_items, output_loc, is_folder, messages, input_sr=None, target_sr=None):
         """Eräkirjoitus usealle tasolle: yksi karttalisäys lopuksi, GP-ympäristö viritetään suorituskykyyn."""
@@ -3397,19 +3190,24 @@ class UniversalImportTool(object):
             except Exception:
                 pass
 
+        failed = []
         try:
             for src_path, out_name in source_items:
-                saved = self.save_and_reproject(
-                    src_path,
-                    output_loc,
-                    out_name,
-                    is_folder,
-                    None,
-                    input_sr,
-                    target_sr,
-                    messages,
-                    add_to_map=False,
-                )
+                try:
+                    saved = self.save_and_reproject(
+                        src_path,
+                        output_loc,
+                        out_name,
+                        is_folder,
+                        None,
+                        input_sr,
+                        target_sr,
+                        messages,
+                        add_to_map=False,
+                    )
+                except Exception as e:
+                    failed.append((out_name, str(e)))
+                    continue
                 if saved:
                     saved_paths.append(saved)
         finally:
@@ -3421,6 +3219,13 @@ class UniversalImportTool(object):
 
         if saved_paths:
             self._add_layers_to_map(saved_paths, messages)
+        if failed and not saved_paths:
+            raise RuntimeError(
+                "Yhtään tasoa ei voitu tallentaa: "
+                + "; ".join(f"{name}: {reason}" for name, reason in failed)
+            )
+        for name, reason in failed:
+            self.log(messages, f"  > Taso '{name}' jäi tuomatta: {reason}", "WARNING")
         return saved_paths
 
     # --- MUUT PARSERIT (Lyhennetty, kopioi tarvittaessa vanhat jos muutit niitä) ---
@@ -3490,12 +3295,11 @@ class UniversalImportTool(object):
             self.log(messages, f"  > GPXtoFeatures epäonnistui: {e}", "ERROR")
             raise
         if self._count_safe(tmp_fc) == 0:
-            self.log(messages, f"  > GPX-tuonti: tiedostosta '{input_path}' ei löytynyt geometriaa.", "WARNING")
             try:
                 arcpy.management.Delete(tmp_fc)
             except Exception:
                 pass
-            return
+            raise RuntimeError("GPX-tiedostosta ei löytynyt geometriaa.")
         self.convert_and_add(tmp_fc, output_loc, f"{base_name}_point", is_folder, messages)
         try:
             arcpy.management.Delete(tmp_fc)
@@ -3582,8 +3386,7 @@ class UniversalImportTool(object):
                         gdb = os.path.join(work_dir, entry)
                         break
             if not gdb or not arcpy.Exists(gdb):
-                self.log(messages, "  > KML-tuonti: KMLToLayer ei tuottanut geodatabasea.", "WARNING")
-                return
+                raise RuntimeError("KMLToLayer ei tuottanut geodatabasea.")
             arcpy.env.workspace = gdb
             fc_paths = []
             for ds in (arcpy.ListDatasets() or []):
@@ -3605,8 +3408,7 @@ class UniversalImportTool(object):
                 grouped.setdefault(suffix, []).append(fc_path)
 
             if not made_any:
-                self.log(messages, f"  > KML-tuonti: tiedostosta '{input_path}' ei saatu yhtään geometriaa.", "WARNING")
-                return
+                raise RuntimeError("KML/KMZ-tiedostosta ei saatu yhtään geometriaa.")
 
             batch_items = []
             scratch = arcpy.env.scratchGDB
@@ -3717,15 +3519,17 @@ class UniversalImportTool(object):
             made_any = True
             batch_items.append((tmp_fc, f"{base_name}_{suffix}"))
         if batch_items:
-            self._bulk_convert_and_add(batch_items, output_loc, is_folder, messages)
-            for tmp_fc, _out_name in batch_items:
-                try:
-                    if arcpy.Exists(tmp_fc):
-                        arcpy.management.Delete(tmp_fc)
-                except Exception:
-                    pass
+            try:
+                self._bulk_convert_and_add(batch_items, output_loc, is_folder, messages)
+            finally:
+                for tmp_fc, _out_name in batch_items:
+                    try:
+                        if arcpy.Exists(tmp_fc):
+                            arcpy.management.Delete(tmp_fc)
+                    except Exception:
+                        pass
         if not made_any:
-            self.log(messages, f"  > GeoJSON-tuonti: tiedostosta '{input_path}' ei saatu yhtään geometriaa.", "WARNING")
+            raise RuntimeError("GeoJSON/JSON-tiedostosta ei saatu yhtään geometriaa.")
     def _geopackage_import_output_name(self, input_path, feature_class_name):
         """Poista ArcGISin ``main.``-skeema GPKG-tason tuontinimestä.
 
@@ -3781,7 +3585,7 @@ class UniversalImportTool(object):
                 self.log(messages, f"  > GPKG-eräajo: {len(batch_items)} tasoa.")
                 self._bulk_convert_and_add(batch_items, output_loc, is_folder, messages)
             else:
-                self.log(messages, "  > GPKG-tuonti: ei löytynyt ei-tyhjiä tasoja.", "WARNING")
+                raise RuntimeError("GeoPackagesta ei löytynyt ei-tyhjiä tasoja.")
         finally:
             arcpy.env.workspace = prev_ws  # palauta globaali workspace, ettei vuoda seuraavaan tiedostoon
 
@@ -3900,39 +3704,54 @@ class UniversalImportTool(object):
         mean_y = sum(py for _, py in points) / float(len(points))
         return self._wkb_point(mean_x, mean_y)
 
-    def _make_dfsu_arcpy_geometry(self, idx, node_coords, element_table, shape_type, spatial_ref, element_coordinates=None):
-        """Muodosta yhden elementin ArcGIS-geometria tunnistetun tyypin mukaan."""
-        if shape_type in ("POLYGON", "POLYLINE"):
-            if element_table is None or node_coords is None:
-                raise ValueError(f"Elementti {idx}: {shape_type}-geometriaa ei voitu muodostaa ilman element_table/node_coordinates.")
-            nodes = element_table[idx]
-            point_array = arcpy.Array()
-            for node_id in nodes:
-                nc = node_coords[int(node_id)]
-                point_array.add(arcpy.Point(float(nc[0]), float(nc[1])))
-            if shape_type == "POLYLINE":
-                return arcpy.Polyline(point_array, spatial_ref)
-            return arcpy.Polygon(point_array, spatial_ref)
+    def _dfsu_source_spatial_reference(self, geometry, node_coords, element_coordinates,
+                                       input_sr, messages):
+        """Selvitä DFSU:n lähtö-CRS: valittu > tiedoston projektio > koordinaatit.
 
-        if element_table is not None and node_coords is not None:
-            nodes = element_table[idx]
-            if nodes is not None and len(nodes) == 1:
-                nc = node_coords[int(nodes[0])]
-                return arcpy.PointGeometry(arcpy.Point(float(nc[0]), float(nc[1])), spatial_ref)
-            if nodes is not None and len(nodes) > 1:
-                xs = [float(node_coords[int(n)][0]) for n in nodes]
-                ys = [float(node_coords[int(n)][1]) for n in nodes]
-                return arcpy.PointGeometry(
-                    arcpy.Point(sum(xs) / len(xs), sum(ys) / len(ys)), spatial_ref
-                )
-        if element_coordinates is not None:
-            coords = element_coordinates[idx]
-            return arcpy.PointGeometry(arcpy.Point(float(coords[0]), float(coords[1])), spatial_ref)
-        raise ValueError(f"Elementti {idx}: pistegeometriaa ei voitu muodostaa.")
+        MIKE käyttää projektiona esim. ``LONG/LAT`` tai ``NON-UTM``; jälkimmäinen
+        ei kerro koordinaatistoa. Tuntematonta CRS:ää ei korvata hiljaa kartan
+        tai kohteen koordinaatistolla, vaan pyydetään valitsemaan lähtö-CRS.
+        """
+        if input_sr is not None:
+            self.log(messages, f"  > DFSU:n lähtö-CRS valittu: {getattr(input_sr, 'name', input_sr)}")
+            return input_sr
+
+        projection = str(getattr(geometry, "projection_string", "") or "").strip()
+        if projection.upper() in ("LONG/LAT", "LONGLAT", "GEOGRAPHIC"):
+            return arcpy.SpatialReference(4326)
+        if projection and projection.upper() != "NON-UTM":
+            try:
+                sr = arcpy.SpatialReference()
+                sr.loadFromString(projection)
+                if (getattr(sr, "name", "") or "Unknown") != "Unknown":
+                    return sr
+            except Exception:
+                pass
+
+        points = []
+        if node_coords is not None:
+            count = len(node_coords)
+            step = max(1, count // 200)
+            points = [(float(node_coords[i][0]), float(node_coords[i][1])) for i in range(0, count, step)]
+        elif element_coordinates is not None:
+            count = len(element_coordinates)
+            step = max(1, count // 200)
+            points = [
+                (float(element_coordinates[i][0]), float(element_coordinates[i][1]))
+                for i in range(0, count, step)
+            ]
+        epsg = vote_finnish_epsg(points)
+        if epsg:
+            self.log(messages, f"  > DFSU:n koordinaatisto tunnistettiin koordinaateista: EPSG:{epsg}")
+            return arcpy.SpatialReference(epsg)
+        raise RuntimeError(
+            f"DFSU:n koordinaatistoa ei tunnistettu (projektio: {projection or 'puuttuu'}). "
+            "Valitse Lähtökoordinaatisto."
+        )
 
     def process_dfsu(self, input_path, output_loc, is_folder, messages,
                      filter_enabled=False, filter_column="", filter_operator="=",
-                     filter_value="", target_sr=None):
+                     filter_value="", target_sr=None, input_sr=None):
         """DFSU-tiedoston tuonti suodattimella.
         
         DFSU (DHI File System) on binäärimuoto hydrologisille malleille.
@@ -3951,14 +3770,9 @@ class UniversalImportTool(object):
         import_completed = False
         restore_gp_env = {}
         try:
-            try:
-                import math
-                mikeio = self._ensure_python_module("mikeio", package_name="mikeio", messages=messages, auto_install=False)
-            except Exception as e:
-                raise RuntimeError(
-                    "DFSU-tuonti vaatii mikeio-kirjaston ArcGIS Pron Python-ympäristöön. "
-                    f"Kirjastoa ei löytynyt: {e}"
-                )
+            import math
+            # Puuttuva mikeio kaataa vain DFSU-tiedostot; muu eräajo jatkuu.
+            mikeio = self._ensure_python_module("mikeio")
 
             base_name = os.path.splitext(os.path.basename(input_path))[0]
             safe_name = self.sanitize_name(base_name)
@@ -3998,15 +3812,12 @@ class UniversalImportTool(object):
             if shape_type in ("POLYGON", "POLYLINE") and node_coords is None:
                 raise RuntimeError("DFSU-polygon/viiva-tuonti vaatii node_coordinates-tiedot.")
 
-            source_sr = None
-            projection_string = getattr(geometry, "projection_string", None)
-            if projection_string:
-                try:
-                    source_sr = arcpy.SpatialReference()
-                    source_sr.loadFromString(str(projection_string))
-                except Exception:
-                    source_sr = None
-            create_sr = source_sr or target_sr
+            source_sr = self._dfsu_source_spatial_reference(
+                geometry, node_coords, element_coordinates, input_sr, messages
+            )
+            # Aineisto leimataan aina omaan koordinaatistoonsa; kohde-CRS on
+            # vain projisoinnin kohde eikä koskaan arvaus lähteen CRS:ksi.
+            create_sr = source_sr
 
             # Iso InsertCursor hyötyy samoista GP-asetuksista kuin CAD-polku:
             # harvempi commit ja ilman spatiaali-indeksin ylläpitoa kirjoituksen
@@ -4122,11 +3933,9 @@ class UniversalImportTool(object):
 
             filter_values = values_by_item.get(resolved_filter_column) if filter_enabled and resolved_filter_column else None
             if filter_enabled and filter_column and filter_values is None:
-                self.log(
-                    messages,
-                    f"  > VAROITUS: suodatussaraketta '{filter_column}' ei löytynyt DFSU-itemeistä "
-                    f"({', '.join(item_names)}). Suodatin ei osu yhteenkään riviin — tarkista sarakkeen nimi.",
-                    "WARNING",
+                raise RuntimeError(
+                    f"DFSU-suodatinsaraketta '{filter_column}' ei löytynyt "
+                    f"(itemit: {', '.join(item_names)})."
                 )
             elif filter_enabled and filter_column:
                 if resolved_filter_column != filter_column:
@@ -4354,14 +4163,10 @@ class UniversalImportTool(object):
                 )
 
             self.log(messages, f"DFSU-tuonti: muodostettiin {inserted} {geom_action}.")
-            if filter_enabled and filter_column and inserted == 0:
-                self.log(messages, "DFSU-suodatin ei tuottanut yhtään osumaa; tasoa ei luoda.", "WARNING")
-                if direct_target_path:
-                    try:
-                        arcpy.management.Delete(direct_target_path)
-                    except Exception:
-                        pass
-                return
+            if inserted == 0:
+                if filter_enabled and filter_column:
+                    raise RuntimeError("DFSU-suodatin ei tuottanut yhtään osumaa; tasoa ei luotu.")
+                raise RuntimeError("DFSU-tiedostosta ei saatu muodostettua yhtään geometriaa.")
 
             if direct_target_path:
                 # Taso on jo kohteessa: leimataan vain koordinaatisto ja

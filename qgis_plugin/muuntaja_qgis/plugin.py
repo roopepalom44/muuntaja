@@ -382,6 +382,7 @@ class MuuntajaDialog(QDialog):
         self.progress.setWindowModality(Qt.WindowModal)
         self.progress.setMinimumDuration(0)
         self.progress.show()
+        project_crs_missing = not QgsProject.instance().crs().isValid()
         try:
             successes, failures = import_data(
                 paths,
@@ -395,7 +396,10 @@ class MuuntajaDialog(QDialog):
                 self.dfsu_value.text(),
                 self.import_oda_converter.text().strip(),
             )
-            self._show_result("Tuonti", successes, failures)
+            project_crs = QgsProject.instance().crs()
+            note = (f"Projektin koordinaattijärjestelmä asetettiin: {project_crs.authid()}."
+                    if project_crs_missing and project_crs.isValid() else "")
+            self._show_result("Tuonti", successes, failures, note)
         except OperationCanceled:
             QMessageBox.information(self, "Muuntaja", "Tuonti keskeytettiin.")
         except Exception as exc:
@@ -434,9 +438,11 @@ class MuuntajaDialog(QDialog):
         finally:
             self.progress.close()
 
-    def _show_result(self, operation, successes, failures):
+    def _show_result(self, operation, successes, failures, note=""):
         details = "\n".join(f"{path}: {error}" for path, error in failures)
         message = f"{operation}: {len(successes)} onnistui, {len(failures)} epäonnistui."
+        if note:
+            message += "\n" + note
         if details:
             message += "\n\n" + details
         QMessageBox.information(self, "Muuntaja", message)

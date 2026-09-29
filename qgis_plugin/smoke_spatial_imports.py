@@ -110,4 +110,17 @@ with tempfile.TemporaryDirectory(prefix="muuntaja_spatial_", ignore_cleanup_erro
     dataset = None
     verify_import(missing_mercator, root / "output_missing_mercator", raster=True)
 
+    for input_path, destination, expected_crs in (
+            (source_gpkg, root / "output_project_without_crs", "EPSG:3067"),
+            (missing_mercator, root / "output_raster_project_without_crs", "EPSG:3857")):
+        project.addMapLayer(QgsVectorLayer("Point?crs=EPSG:3857", "existing basemap", "memory"))
+        project.setCrs(QgsCoordinateReferenceSystem())
+        assert not project.crs().isValid()
+        imported, failures = import_data([str(input_path)], str(destination))
+        assert len(imported) == 1 and not failures, failures
+        assert project.crs().authid() == expected_crs, project.crs().authid()
+        project.removeAllMapLayers()
+        gc.collect()
+        print(f"PASS project without CRS: {expected_crs}", flush=True)
+
 print("All local formats, TIFFs without CRS, and both workspace modes passed", flush=True)

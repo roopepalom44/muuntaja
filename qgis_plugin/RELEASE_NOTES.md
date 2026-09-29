@@ -28,3 +28,8 @@ Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rast
 
 - Virheellinen CRS-merkintä tunnistetaan myös muista koordinaatistoista kuin EPSG:3857 ja EPSG:4326, kun aineiston koordinaatit osoittavat Suomeen mutta merkitty järjestelmä vie ne muualle.
 - Suomen alueen EPSG:3857-koordinaatit tunnistetaan myös aineistoista, joilla CRS-merkintä puuttuu.
+
+## Muuntaja QGIS 0.2.7
+
+- Jos QGIS-projektilta puuttuu koordinaattijärjestelmä, tuonti asettaa sen ensimmäisen tuodun tason mukaan ennen tason lisäämistä. Tämä koskee vektori-, rasteri- ja DFSU-tasoja.
+- Tuonnin valmistumisviesti kertoo, kun projektin CRS asetettiin automaattisesti.

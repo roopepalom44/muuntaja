@@ -101,6 +101,19 @@ def assign_source_crs(layer, path, source_crs=None):
     raise RuntimeError("Lähtökoordinaatistoa ei tunnistettu. Aseta lähtö-CRS lisäasetuksissa.")
 
 
+def _ensure_project_crs(project, layer):
+    """Turn on coordinate transformations in projects saved without a CRS."""
+    if not layer.crs().isValid():
+        raise RuntimeError(f"Tason koordinaatistoa ei tunnistettu: {layer.name()}")
+    if not project.crs().isValid():
+        project.setCrs(layer.crs())
+
+
+def _add_project_layer(project, layer, add_to_legend=True):
+    _ensure_project_crs(project, layer)
+    project.addMapLayer(layer, add_to_legend)
+
+
 def unique_path(path):
     path = Path(path)
     if not path.exists():
@@ -427,7 +440,7 @@ def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_co
             result = probe
         if not result.isValid():
             raise RuntimeError("DFSU-tulosta ei voitu avata")
-    QgsProject.instance().addMapLayer(result)
+    _add_project_layer(QgsProject.instance(), result)
 
 
 def _add_raster_group(project, group_name, paths, destination, source_crs):
@@ -457,8 +470,10 @@ def _add_raster_group(project, group_name, paths, destination, source_crs):
         rasters.append(raster)
     if len(rasters) == 1:
         if not prior_vrt_layers:
-            project.addMapLayer(rasters[0], False)
+            _add_project_layer(project, rasters[0], False)
             group.addLayer(rasters[0])
+        else:
+            _ensure_project_crs(project, rasters[0])
         return
     root = destination.parent if destination.suffix.lower() in {".gpkg", ".gdb"} else destination
     output = root / f"muuntaja_{safe_name(destination.stem)}_{safe_name(group_name)}.vrt"
@@ -477,7 +492,7 @@ def _add_raster_group(project, group_name, paths, destination, source_crs):
     if not layer.isValid():
         raise RuntimeError(f"Rasterimosaiikkia ei voitu avata: {output}")
     layer.setCustomProperty("muuntaja/source_paths", combined)
-    project.addMapLayer(layer, False)
+    _add_project_layer(project, layer, False)
     group.addLayer(layer)
 
 
@@ -559,7 +574,7 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
                     output = QgsVectorLayer(str(output_path), name, "ogr")
                 if not output.isValid():
                     raise RuntimeError("Kirjoitettua tasoa ei voitu avata")
-                project.addMapLayer(output)
+                _add_project_layer(project, output)
                 written += 1
             if not written:
                 raise RuntimeError("Tiedostossa ei ollut tuotavia kohteita")

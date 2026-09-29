@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QSettings, Qt
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
     QAction, QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -15,19 +15,6 @@ from qgis.gui import QgsCustomDropHandler
 
 from . import cad
 from .core import EXPORT_FORMATS, OperationCanceled, export_data, import_data
-from .formats import find_oda_converter
-
-SETTINGS_ODA = "Muuntaja/odaConverter"
-
-
-def saved_oda_converter():
-    """Previously chosen ODA File Converter, or an automatically found one."""
-    return find_oda_converter(QSettings().value(SETTINGS_ODA, "", type=str))
-
-
-def remember_oda_converter(path):
-    if path:
-        QSettings().setValue(SETTINGS_ODA, path)
 
 
 class MuuntajaDialog(QDialog):
@@ -145,14 +132,6 @@ class MuuntajaDialog(QDialog):
         self.clean_cad = QCheckBox("Ohita CADin Defpoints- ja 0-tasot")
         self.clean_cad.setEnabled(False)
         advanced_form.addRow("CAD", self.clean_cad)
-        self.import_oda_converter = QLineEdit(saved_oda_converter())
-        self.import_oda_converter.setPlaceholderText("ODA File Converterin .exe uudemmille DWG-tiedostoille")
-        self.import_oda_converter.setEnabled(False)
-        self.import_oda_browse = QPushButton("Valitse…")
-        self.import_oda_browse.setEnabled(False)
-        self.import_oda_browse.clicked.connect(lambda: self._choose_oda_converter_for(self.import_oda_converter))
-        advanced_form.addRow("DWG-tuonnin muunnin", self._row_widget(
-            self._line_and_button(self.import_oda_converter, self.import_oda_browse)))
         self.dfsu_filter_enabled = QCheckBox("Rajaa DFSU-aineistoa sarakkeen arvolla")
         self.dfsu_filter_enabled.setEnabled(False)
         self.dfsu_filter_enabled.toggled.connect(self._update_dfsu_controls)
@@ -219,13 +198,6 @@ class MuuntajaDialog(QDialog):
         self.combined = QCheckBox("Vie valitut tasot samaan tiedostoon")
         self.combined.stateChanged.connect(self._update_export_controls)
         form.addRow("Useita tasoja", self.combined)
-        self.oda_converter = QLineEdit(saved_oda_converter())
-        self.oda_converter.setPlaceholderText("ODA File Converterin .exe-tiedosto")
-        self.oda_browse = QPushButton("Valitse…")
-        self.oda_browse.clicked.connect(lambda: self._choose_oda_converter_for(self.oda_converter))
-        self.oda_row = self._row_widget(self._line_and_button(self.oda_converter, self.oda_browse))
-        self.oda_label = QLabel("DWG-muunnin")
-        form.addRow(self.oda_label, self.oda_row)
         self.dwg_hint = QLabel()
         self.dwg_hint.setWordWrap(True)
         form.addRow("", self.dwg_hint)
@@ -265,13 +237,10 @@ class MuuntajaDialog(QDialog):
         self.input_summary.setText(f"{count} {noun} valittuna" if count else "Ei syötteitä valittuna")
         paths = [Path(self.inputs.item(index).text()) for index in range(count)]
         may_contain_cad = any(path.is_dir() or path.suffix.lower() in {".dwg", ".dxf"} for path in paths)
-        may_contain_dwg = any(path.is_dir() or path.suffix.lower() == ".dwg" for path in paths)
         may_contain_dfsu = any(path.is_dir() or path.suffix.lower() == ".dfsu" for path in paths)
         self.clean_cad.setEnabled(may_contain_cad)
         if not may_contain_cad:
             self.clean_cad.setChecked(False)
-        self.import_oda_converter.setEnabled(may_contain_dwg)
-        self.import_oda_browse.setEnabled(may_contain_dwg)
         self.dfsu_filter_enabled.setEnabled(may_contain_dfsu)
         if not may_contain_dfsu:
             self.dfsu_filter_enabled.setChecked(False)
@@ -327,34 +296,23 @@ class MuuntajaDialog(QDialog):
         if path:
             self.export_folder.setText(path)
 
-    def _choose_oda_converter_for(self, field):
-        path, _ = QFileDialog.getOpenFileName(self, "Valitse ODA File Converter", "",
-                                              "Ohjelmat (*.exe ODAFileConverter*);;Kaikki tiedostot (*)")
-        if path:
-            field.setText(path)
-            remember_oda_converter(path)
-            self._update_export_controls()
-
     def _update_export_controls(self, *_):
         format_name = self.format.currentText()
         supports_combined = format_name in {"GPKG", "DXF", "DWG"}
         self.combined.setEnabled(supports_combined)
         if not supports_combined:
             self.combined.setChecked(False)
-        is_dwg = format_name == "DWG"
-        self.oda_converter.setEnabled(is_dwg)
-        self.oda_browse.setEnabled(is_dwg)
-        self.oda_row.setVisible(is_dwg)
-        self.oda_label.setVisible(is_dwg)
         self.dwg_hint.setVisible(format_name in {"DXF", "DWG"})
-        status = cad.converter_status(self.oda_converter.text().strip())
+        status = cad.converter_status()
         if format_name == "DXF":
             self.dwg_hint.setText("DXF tehdään QGISin omalla DXF-viennillä: tasojen symbologia, "
                                   "nimiöt ja tuotujen CAD-tasojen nimet säilyvät.")
         elif status:
-            self.dwg_hint.setText(f"DWG tehdään QGISin DXF-viennistä muuntimella – {status}.")
+            self.dwg_hint.setText(f"Kokeellinen: DWG tehdään QGISin DXF-viennistä – {status}. "
+                                  "Tulos luetaan takaisin ja hylätään, jos kohteita puuttuu. "
+                                  "Luotettavin CAD-muoto on DXF.")
         else:
-            self.dwg_hint.setText("DWG-vienti vaatii ilmaisen ODA File Converterin (tai LibreDWG:n). "
+            self.dwg_hint.setText("DWG-vienti vaatii LibreDWG:n (dxf2dwg). "
                                   "DXF-vienti ei vaadi lisäohjelmaa.")
 
     def refresh_layers(self):
@@ -420,9 +378,7 @@ class MuuntajaDialog(QDialog):
                 self.dfsu_column.text().strip() if self.dfsu_filter_enabled.isChecked() else "",
                 self.dfsu_operator.currentText(),
                 self.dfsu_value.text(),
-                self.import_oda_converter.text().strip(),
             )
-            remember_oda_converter(self.import_oda_converter.text().strip())
             project_crs = QgsProject.instance().crs()
             note = (f"Projektin koordinaattijärjestelmä asetettiin: {project_crs.authid()}."
                     if project_crs_missing and project_crs.isValid() else "")
@@ -460,10 +416,8 @@ class MuuntajaDialog(QDialog):
                 self.format.currentText(),
                 self.combined.isChecked(),
                 self._progress,
-                self.oda_converter.text().strip(),
                 self._symbology_scale(),
             )
-            remember_oda_converter(self.oda_converter.text().strip())
             self._show_result("Vienti", successes, failures)
         except OperationCanceled:
             QMessageBox.information(self, "Muuntaja", "Vienti keskeytettiin.")
@@ -505,7 +459,7 @@ class MuuntajaDialog(QDialog):
 
 
 class CadDropHandler(QgsCustomDropHandler):
-    """Open dropped DWG files through Muuntaja (QGIS reads only AutoCAD 2000 DWG)."""
+    """Open dropped DWG files through Muuntaja (QGIS/GDAL reads only AutoCAD 2000 DWG)."""
 
     def __init__(self, plugin):
         super().__init__()
@@ -610,8 +564,7 @@ class MuuntajaPlugin:
             while True:
                 QApplication.setOverrideCursor(Qt.WaitCursor)
                 try:
-                    layers = cad.import_cad(file, destination, source_crs=source_crs,
-                                            oda_converter=saved_oda_converter())
+                    layers = cad.import_cad(file, destination, source_crs=source_crs)
                 except cad.CrsNotDetected:
                     QApplication.restoreOverrideCursor()
                     source_crs = self._ask_crs(file)

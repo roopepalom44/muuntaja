@@ -11,7 +11,7 @@ from qgis.core import (
 from . import cad
 from .formats import (  # noqa: F401  (julkinen rajapinta lisäosalle ja testeille)
     CAD_EXTENSIONS, RASTER_EXTENSIONS, VECTOR_EXTENSIONS, classify_finnish_xy, dfsu_matches,
-    dfsu_wkb, find_oda_converter, has_georeference, raster_group, safe_name, scan_inputs,
+    dfsu_wkb, find_libredwg_tool, has_georeference, raster_group, safe_name, scan_inputs,
     unique_name, unique_path,
 )
 from .qgisutil import (  # noqa: F401
@@ -240,8 +240,7 @@ def _import_vector(path, destination, workspace, file_gdb, source_crs, target_cr
 
 
 def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=False,
-                progress=None, dfsu_filter_column="", dfsu_filter_operator="=", dfsu_filter_value="",
-                oda_converter=""):
+                progress=None, dfsu_filter_column="", dfsu_filter_operator="=", dfsu_filter_value=""):
     """Import vectors to a GeoPackage/FileGDB or folder; add located rasters by reference."""
     project = QgsProject.instance()
     items = scan_inputs(paths)
@@ -270,7 +269,7 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
                              dfsu_filter_column, dfsu_filter_operator, dfsu_filter_value, project)
             elif suffix in CAD_EXTENSIONS:
                 layers = cad.import_cad(path, destination, source_crs, target_crs, clean_cad,
-                                        oda_converter, project)
+                                        project=project)
                 taken_names.update(layer.name() for layer in layers)
             else:
                 _import_vector(path, destination, workspace, file_gdb, source_crs, target_crs,
@@ -297,7 +296,7 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
     return successes, failures
 
 
-def export_data(layers, folder, format_name, combined=False, progress=None, oda_converter="",
+def export_data(layers, folder, format_name, combined=False, progress=None,
                 symbology_scale=None):
     if format_name not in EXPORT_FORMATS:
         raise ValueError(f"Tuntematon vientimuoto: {format_name}")
@@ -305,7 +304,7 @@ def export_data(layers, folder, format_name, combined=False, progress=None, oda_
     if not layers:
         raise ValueError("Valitse vähintään yksi vektoritaso.")
     if format_name in CAD_FORMATS:
-        return cad.export_cad(layers, folder, format_name, combined, progress, oda_converter,
+        return cad.export_cad(layers, folder, format_name, combined, progress,
                               symbology_scale)
     driver, extension = DRIVERS[format_name]
     folder = Path(folder)

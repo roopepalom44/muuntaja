@@ -255,21 +255,15 @@ def _windows_program_dirs():
     return [os.environ.get(name, "") for name in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")]
 
 
-def find_oda_converter(configured=""):
-    """Locate ODA File Converter, including versioned install folders."""
-    candidates = [configured, shutil.which("ODAFileConverter"), shutil.which("ODAFileConverter.exe")]
-    for base in filter(None, _windows_program_dirs()):
-        candidates += sorted(glob.glob(os.path.join(base, "ODA", "ODAFileConverter*", "ODAFileConverter*.exe")),
-                             reverse=True)
-    candidates += sorted(glob.glob("/opt/ODAFileConverter*/ODAFileConverter*"), reverse=True)
-    candidates += ["/usr/bin/ODAFileConverter",
-                   "/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter"]
-    return next((str(path) for path in candidates if path and Path(path).is_file()), "")
+# Windowsissa LibreDWG (GPL) jaetaan lisäosan mukana, joten DWG toimii ilman
+# asennuksia. Muilla alustoilla käytetään järjestelmän LibreDWG:tä.
+BUNDLED_LIBREDWG = Path(__file__).resolve().parent / "libredwg"
 
 
 def find_libredwg_tool(name):
     """Locate a LibreDWG command line tool (``dwg2dxf`` or ``dxf2dwg``)."""
-    candidates = [shutil.which(name), shutil.which(name + ".exe")]
+    candidates = [BUNDLED_LIBREDWG / f"{name}.exe"] if sys.platform == "win32" else []
+    candidates += [shutil.which(name), shutil.which(name + ".exe")]
     for base in filter(None, _windows_program_dirs()):
         candidates += glob.glob(os.path.join(base, "libredwg*", name + ".exe"))
     return next((str(path) for path in candidates if path and Path(path).is_file()), "")

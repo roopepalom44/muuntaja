@@ -1,14 +1,13 @@
 """DWG/DXF import and export that behave like native QGIS layers.
 
 Tuonti lukee CAD-kohteet GDAL:n DXF-ajurilla (DWG muunnetaan ensin DXF:ksi
-ODA File Converterilla tai LibreDWG:llä) ja kirjoittaa ne neljäksi tasoksi:
+LibreDWG:llä, joka tulee Windowsissa lisäosan mukana) ja kirjoittaa ne neljäksi tasoksi:
 tekstit, pisteet, viivat ja alueet. Tasot saavat CAD-värit, CAD-tasot
 näkyvät sisällysluettelossa päälle/pois kytkettävinä sääntöinä ja tekstit
 nimiöinä. Vienti käyttää QGISin omaa DXF-vientiä, joten tasojen symbologia,
-nimiöt ja CAD-tasonimet säilyvät; DWG tehdään DXF:stä muuntimella.
+nimiöt ja CAD-tasonimet säilyvät; DWG tehdään DXF:stä LibreDWG:llä (kokeellinen).
 """
 
-import shutil
 import tempfile
 from collections import Counter
 from contextlib import contextmanager
@@ -76,69 +75,38 @@ def _fields():
 
 # --- DWG <-> DXF conversion ---------------------------------------------------
 
-def converter_status(oda_converter=""):
-    """Describe which DWG converter would be used (for the user interface)."""
-    oda = formats.find_oda_converter(oda_converter)
-    if oda:
-        return f"ODA File Converter: {oda}"
-    if formats.find_libredwg_tool("dwg2dxf"):
-        return "LibreDWG (dwg2dxf/dxf2dwg)"
-    return ""
+def converter_status():
+    """Describe the DWG converter that would be used (for the user interface)."""
+    tool = formats.find_libredwg_tool("dwg2dxf")
+    if not tool:
+        return ""
+    bundled = Path(tool).parent == formats.BUNDLED_LIBREDWG
+    return "LibreDWG (lisäosan mukana)" if bundled else f"LibreDWG: {Path(tool).parent}"
 
 
 def missing_converter_message(action, version=""):
     detail = f" ({formats.dwg_version_label(version)})" if version else ""
-    return (f"DWG{detail} {action} vaatii DWG-muuntimen. Asenna ilmainen ODA File Converter "
-            "(tai LibreDWG) ja valitse tarvittaessa sen .exe lisäasetuksista.")
+    return (f"DWG{detail} {action} vaatii LibreDWG:n. Windowsissa se tulee lisäosan mukana; "
+            "muilla alustoilla asenna LibreDWG (komennot dwg2dxf ja dxf2dwg) tai tallenna piirustus DXF-muotoon.")
 
 
-def dwg_to_dxf(path, work_folder, oda_converter=""):
-    """Convert one DWG to DXF with ODA File Converter or LibreDWG."""
+def dwg_to_dxf(path, work_folder):
+    """Convert one DWG to DXF with LibreDWG."""
     path = Path(path)
-    work_folder = Path(work_folder)
-    oda = formats.find_oda_converter(oda_converter)
-    if oda:
-        source_folder = work_folder / "dwg"
-        output_folder = work_folder / "dxf"
-        source_folder.mkdir(exist_ok=True)
-        output_folder.mkdir(exist_ok=True)
-        shutil.copy2(path, source_folder / f"{path.stem}.dwg")
-        formats.run_converter([oda, source_folder, output_folder, "ACAD2018", "DXF", "0", "1", "*.dwg"],
-                              "ODA File Converter (DWG → DXF)")
-        converted = output_folder / f"{path.stem}.dxf"
-    else:
-        tool = formats.find_libredwg_tool("dwg2dxf")
-        if not tool:
-            raise RuntimeError(missing_converter_message("tuonti", formats.dwg_version(path)))
-        converted = work_folder / f"{path.stem}.dxf"
-        formats.run_converter([tool, "-y", "-o", converted, path], "LibreDWG dwg2dxf")
+    tool = formats.find_libredwg_tool("dwg2dxf")
+    if not tool:
+        raise RuntimeError(missing_converter_message("tuonti", formats.dwg_version(path)))
+    converted = Path(work_folder) / f"{path.stem}.dxf"
+    formats.run_converter([tool, "-y", "-o", converted, path], "LibreDWG dwg2dxf")
     if not converted.is_file() or converted.stat().st_size == 0:
         raise RuntimeError(f"DWG-muunnin ei tuottanut DXF-tiedostoa: {path.name}")
     return converted
 
 
-def dxf_to_dwg(dxf_paths, output_folder, oda_converter=""):
+def dxf_to_dwg(dxf_paths, output_folder):
     """Convert DXF files to DWG files in ``output_folder``; returns {dxf: dwg}."""
     output_folder = Path(output_folder)
-    oda = formats.find_oda_converter(oda_converter)
     produced = {}
-    if oda:
-        with tempfile.TemporaryDirectory(prefix="muuntaja_dxf2dwg_") as temp:
-            source_folder = Path(temp) / "dxf"
-            target_folder = Path(temp) / "dwg"
-            source_folder.mkdir()
-            target_folder.mkdir()
-            for dxf in dxf_paths:
-                shutil.copy2(dxf, source_folder / Path(dxf).name)
-            formats.run_converter([oda, source_folder, target_folder, "ACAD2018", "DWG", "0", "1", "*.dxf"],
-                                  "ODA File Converter (DXF → DWG)")
-            for dxf in dxf_paths:
-                result = target_folder / f"{Path(dxf).stem}.dwg"
-                _check_dwg(result, dxf)
-                target = formats.unique_path(output_folder / result.name)
-                shutil.move(str(result), str(target))
-                produced[str(dxf)] = str(target)
-        return produced
     tool = formats.find_libredwg_tool("dxf2dwg")
     if not tool:
         raise RuntimeError(missing_converter_message("vienti"))
@@ -175,8 +143,8 @@ def _verify_libredwg_output(dwg, dxf):
             actual = 0
     if actual < expected:
         raise RuntimeError(
-            f"LibreDWG kirjoitti DWG:hen vain {actual}/{expected} kohdetta. Asenna ODA File "
-            "Converter luotettavaa DWG-vientiä varten tai vie DXF-muotoon.")
+            f"LibreDWG kirjoitti DWG:hen vain {actual}/{expected} kohdetta. LibreDWG:n "
+            "DWG-kirjoitus on vielä kokeellinen: vie DXF-muotoon.")
 
 
 def _check_dwg(path, source):
@@ -453,26 +421,26 @@ def style_layer(layer, bucket, records):
 
 # --- import -------------------------------------------------------------------
 
-def _open_source(path, work_folder, oda_converter):
+def _open_source(path, work_folder):
     path = Path(path)
     if path.suffix.lower() == ".dxf":
         return path
     version = formats.dwg_version(path)
-    if formats.find_oda_converter(oda_converter) or formats.find_libredwg_tool("dwg2dxf"):
-        return dwg_to_dxf(path, work_folder, oda_converter)
+    if formats.find_libredwg_tool("dwg2dxf"):
+        return dwg_to_dxf(path, work_folder)
     if version in formats.OGR_CAD_READABLE_DWG:
         return path
     raise RuntimeError(missing_converter_message("tuonti", version))
 
 
-def import_cad(path, destination, source_crs=None, target_crs=None, clean_cad=False, oda_converter="",
+def import_cad(path, destination, source_crs=None, target_crs=None, clean_cad=False,
                project=None, add_to_project=True):
     """Import one DWG/DXF; returns the created QGIS layers."""
     project = project or QgsProject.instance()
     path = Path(path)
     destination = Path(destination)
     with tempfile.TemporaryDirectory(prefix="muuntaja_cad_") as work_folder:
-        source = _open_source(path, work_folder, oda_converter)
+        source = _open_source(path, work_folder)
         buckets, samples = read_cad(source, clean_cad)
     if not any(buckets.values()):
         raise RuntimeError("CAD-tiedostossa ei ollut tuotavia mallitilan kohteita.")
@@ -570,12 +538,11 @@ def write_dxf(layers, path, crs=None, symbology_scale=None, project=None, mtext=
     return Path(path)
 
 
-def export_cad(layers, folder, format_name, combined=False, progress=None, oda_converter="",
+def export_cad(layers, folder, format_name, combined=False, progress=None,
                symbology_scale=None, project=None):
     """Export vector layers to DXF or DWG. Returns (written paths per layer, failures)."""
     project = project or QgsProject.instance()
-    if format_name == "DWG" and not (formats.find_oda_converter(oda_converter)
-                                     or formats.find_libredwg_tool("dxf2dwg")):
+    if format_name == "DWG" and not formats.find_libredwg_tool("dxf2dwg"):
         raise RuntimeError(missing_converter_message("vienti"))
     invalid = [layer.name() for layer in layers if not layer.isValid()]
     if invalid:
@@ -583,9 +550,9 @@ def export_cad(layers, folder, format_name, combined=False, progress=None, oda_c
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     crs = _destination_crs(layers, project)
-    # LibreDWG:n dxf2dwg ei tue kaikkia MTEXT-koodeja; yksiriviset TEXT-kohteet
-    # kulkevat kaikkien muuntimien läpi.
-    mtext = format_name == "DXF" or bool(formats.find_oda_converter(oda_converter))
+    # LibreDWG:n dxf2dwg hylkää QGISin MTEXT-kohteet ("Invalid DXF code 50");
+    # DWG:tä varten tekstit kirjoitetaan yksirivisinä TEXT-kohteina.
+    mtext = format_name == "DXF"
     groups = [(list(layers), "muuntaja_vienti")] if combined else \
         [([layer], formats.safe_name(layer.name())) for layer in layers]
     successes, failures = [], []
@@ -600,7 +567,7 @@ def export_cad(layers, folder, format_name, combined=False, progress=None, oda_c
                 else:
                     dxf = write_dxf(group, formats.unique_path(Path(temp) / f"{name}.dxf"), crs,
                                     symbology_scale, project, mtext)
-                    target = dxf_to_dwg([dxf], folder, oda_converter)[str(dxf)]
+                    target = dxf_to_dwg([dxf], folder)[str(dxf)]
                 successes.extend(str(target) for _layer in group)
             except Exception as exc:
                 if combined:

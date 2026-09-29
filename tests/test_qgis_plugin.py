@@ -99,14 +99,28 @@ class FormatHelperTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "ei valmistunut"):
                 formats.run_converter(["x"], "Testimuunnin")
 
-    def test_oda_is_found_in_versioned_program_folder(self):
-        with tempfile.TemporaryDirectory() as temp:
-            exe = Path(temp) / "ODA" / "ODAFileConverter 26.4.0" / "ODAFileConverter.exe"
-            exe.parent.mkdir(parents=True)
-            exe.write_bytes(b"")
-            with mock.patch.dict(os.environ, {"ProgramFiles": temp}), \
-                    mock.patch.object(formats.shutil, "which", return_value=None):
-                self.assertEqual(formats.find_oda_converter(), str(exe))
+    def test_bundled_libredwg_is_used_on_windows(self):
+        with mock.patch.object(formats.sys, "platform", "win32"), \
+                mock.patch.object(formats.shutil, "which", return_value=None):
+            for name in ("dwg2dxf", "dxf2dwg"):
+                self.assertEqual(formats.find_libredwg_tool(name),
+                                 str(formats.BUNDLED_LIBREDWG / f"{name}.exe"))
+
+    def test_bundled_libredwg_has_its_libraries_and_licenses(self):
+        names = {path.name for path in formats.BUNDLED_LIBREDWG.iterdir()}
+        self.assertTrue({"dwg2dxf.exe", "dxf2dwg.exe", "libredwg-0.dll", "libiconv-2.dll",
+                         "COPYING.txt", "COPYING.LIB.txt", "README.txt"} <= names)
+
+    def test_windows_binaries_are_not_used_on_other_platforms(self):
+        with mock.patch.object(formats.sys, "platform", "linux"), \
+                mock.patch.object(formats.shutil, "which", return_value=None), \
+                mock.patch.dict(os.environ, {"ProgramFiles": "", "ProgramW6432": "", "ProgramFiles(x86)": ""}):
+            self.assertEqual(formats.find_libredwg_tool("dwg2dxf"), "")
+
+    def test_converter_output_that_is_not_utf8_does_not_crash(self):
+        script = "import sys; sys.stderr.buffer.write(b'ty\\xf6kalut'); sys.exit(3)"
+        with self.assertRaisesRegex(RuntimeError, "exit 3"):
+            formats.run_converter([sys.executable, "-c", script], "Testimuunnin")
 
 
 @unittest.skipUnless(HAVE_QGIS, "QGIS Python -kirjastot puuttuvat")
@@ -120,8 +134,6 @@ class QgisTestCase(unittest.TestCase):
         self.folder = Path(self.temp.name)
         # Ei oikeita muuntimia testeissä, ellei testi itse anna niitä.
         self.no_tools = [
-            mock.patch.object(formats_module(), "find_oda_converter", side_effect=lambda configured="": configured
-                              if configured and Path(configured).is_file() else ""),
             mock.patch.object(formats_module(), "find_libredwg_tool", return_value=""),
         ]
         for patcher in self.no_tools:
@@ -220,27 +232,51 @@ class CadImportTests(QgisTestCase):
     def test_newer_dwg_without_converter_names_the_version(self):
         dwg = self.folder / "uusi.dwg"
         dwg.write_bytes(b"AC1032" + b"\0" * 600)
-        with self.assertRaisesRegex(RuntimeError, "AutoCAD 2018.*ODA File Converter"):
+        with self.assertRaisesRegex(RuntimeError, "AutoCAD 2018.*LibreDWG"):
             self.cad.import_cad(dwg, self.folder / "tuonti.gpkg")
 
-    def test_newer_dwg_is_converted_with_oda(self):
+    def test_newer_dwg_is_converted_with_libredwg(self):
         dwg = self.folder / "uusi.dwg"
         dwg.write_bytes(b"AC1032" + b"\0" * 600)
-        converter = write_script(self.folder, "ODAFileConverter", f"""
+        reader = write_script(self.folder, "dwg2dxf", f"""
             import shutil, sys
-            from pathlib import Path
-            source, target, version, kind = sys.argv[1:5]
-            assert (version, kind, sys.argv[-1]) == ("ACAD2018", "DXF", "*.dwg"), sys.argv
-            for dwg in Path(source).glob("*.dwg"):
-                shutil.copy({str(DATA / 'cad_sample.dxf')!r}, Path(target) / (dwg.stem + ".dxf"))
+            assert sys.argv[1:3] == ["-y", "-o"], sys.argv
+            shutil.copy({str(DATA / 'cad_sample.dxf')!r}, sys.argv[3])
         """)
-        layers = self.cad.import_cad(dwg, self.folder / "tuonti.gpkg", oda_converter=str(converter))
+        with mock.patch.object(formats_module(), "find_libredwg_tool",
+                               side_effect={"dwg2dxf": str(reader)}.get):
+            layers = self.cad.import_cad(dwg, self.folder / "tuonti.gpkg")
         self.assertEqual(layers[0].name(), "uusi_tekstit")
 
     def test_import_data_routes_cad_files(self):
         successes, failures = self.core.import_data([str(DATA / "cad_sample.dxf")],
                                                     str(self.folder / "tuonti.gpkg"))
         self.assertEqual((len(successes), failures), (1, []))
+
+
+@unittest.skipUnless(formats.find_libredwg_tool("dwg2dxf"), "LibreDWG puuttuu (Windowsissa se tulee lisäosan mukana)")
+class RealLibreDwgTests(QgisTestCase):
+    """Oikea LibreDWG: Windowsissa lisäosan mukana tuleva, muualla järjestelmän oma."""
+
+    def setUp(self):
+        super().setUp()
+        for patcher in self.no_tools:
+            patcher.stop()
+        self.no_tools = []
+
+    def test_autocad_2018_dwg_is_imported(self):
+        layers = self.cad.import_cad(DATA / "cad_sample_r2018.dwg", self.folder / "tuonti.gpkg", clean_cad=True)
+        names = [layer.name() for layer in layers]
+        self.assertEqual(names[:2], ["cad_sample_r2018_tekstit", "cad_sample_r2018_pisteet"])
+        texts = {feature["text"] for layer in layers for feature in layer.getFeatures() if feature["text"]}
+        self.assertEqual(texts, {"Kauppakatu", "Talo A"})
+        cad_layers = {feature["cad_layer"] for layer in layers for feature in layer.getFeatures()}
+        self.assertTrue({"Tiet", "Rakennukset", "Tekstit", "Puut"} <= cad_layers)
+        self.assertTrue(all(layer.crs().authid() == "EPSG:3067" for layer in layers))
+
+    def test_autocad_2000_dwg_keeps_hatches_through_libredwg(self):
+        layers = self.cad.import_cad(DATA / "cad_sample_r2000.dwg", self.folder / "tuonti.gpkg")
+        self.assertIn("cad_sample_r2000_alueet", [layer.name() for layer in layers])
 
 
 class CadExportTests(QgisTestCase):
@@ -276,32 +312,39 @@ class CadExportTests(QgisTestCase):
         self.assertTrue({"Tiet", "Rakennukset", "Tekstit", "Puut"} <= cad_layers)
         self.assertTrue({"Kauppakatu", "Talo A"} <= texts)
 
-    def test_dwg_export_uses_oda_and_checks_header(self):
-        layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
-        converter = write_script(self.folder, "ODAFileConverter", """
+    def libredwg_stand_ins(self, dwg_bytes=None):
+        """dxf2dwg writes the DXF behind a DWG header; dwg2dxf strips it again."""
+        writer = write_script(self.folder, "dxf2dwg", f"""
             import sys
             from pathlib import Path
-            source, target, version, kind = sys.argv[1:5]
-            assert (version, kind, sys.argv[-1]) == ("ACAD2018", "DWG", "*.dxf"), sys.argv
-            for dxf in Path(source).glob("*.dxf"):
-                (Path(target) / (dxf.stem + ".dwg")).write_bytes(b"AC1032" + b"\\0" * 1000)
+            target, source = sys.argv[sys.argv.index("-o") + 1], sys.argv[-1]
+            body = {dwg_bytes!r}
+            Path(target).write_bytes(body if body is not None else b"AC1015" + Path(source).read_bytes())
         """)
-        written, failures = self.core.export_data([layer], self.folder / "dwg", "DWG",
-                                                  oda_converter=str(converter))
+        reader = write_script(self.folder, "dwg2dxf", """
+            import sys
+            from pathlib import Path
+            target, source = sys.argv[sys.argv.index("-o") + 1], sys.argv[-1]
+            Path(target).write_bytes(Path(source).read_bytes()[6:])
+        """)
+        return {"dxf2dwg": str(writer), "dwg2dxf": str(reader)}
+
+    def test_dwg_export_uses_libredwg_and_checks_the_result(self):
+        layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
+        with mock.patch.object(formats_module(), "find_libredwg_tool", side_effect=self.libredwg_stand_ins().get):
+            written, failures = self.core.export_data([layer], self.folder / "dwg", "DWG")
         self.assertEqual(failures, [])
         self.assertEqual(Path(written[0]).name, "pisteet.dwg")
-        self.assertEqual(formats.dwg_version(written[0]), "AC1032")
+        self.assertEqual(formats.dwg_version(written[0]), "AC1015")
+        # LibreDWG hylkää QGISin MTEXT-kohteet, joten DWG:n pohjana on TEXT-DXF.
+        self.assertNotIn(b"\nMTEXT", Path(written[0]).read_bytes().replace(b"\r", b""))
 
     def test_broken_converter_output_is_rejected(self):
         layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
-        converter = write_script(self.folder, "ODAFileConverter", """
-            import sys
-            from pathlib import Path
-            for dxf in Path(sys.argv[1]).glob("*.dxf"):
-                (Path(sys.argv[2]) / (dxf.stem + ".dwg")).write_bytes(b"not a dwg")
-        """)
-        with self.assertRaisesRegex(RuntimeError, "kelvollista DWG"):
-            self.core.export_data([layer], self.folder / "dwg", "DWG", oda_converter=str(converter))
+        tools = self.libredwg_stand_ins(dwg_bytes=b"not a dwg")
+        with mock.patch.object(formats_module(), "find_libredwg_tool", side_effect=tools.get):
+            with self.assertRaisesRegex(RuntimeError, "kelvollista DWG"):
+                self.core.export_data([layer], self.folder / "dwg", "DWG")
 
     def test_libredwg_output_that_loses_entities_is_rejected(self):
         layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
@@ -324,7 +367,7 @@ class CadExportTests(QgisTestCase):
 
     def test_dwg_export_without_converter_explains_what_to_install(self):
         layer = self.point_layer("EPSG:3067", [(385000, 6672000)])
-        with self.assertRaisesRegex(RuntimeError, "ODA File Converter"):
+        with self.assertRaisesRegex(RuntimeError, "LibreDWG"):
             self.core.export_data([layer], self.folder, "DWG")
 
     def test_removed_layers_are_ignored(self):

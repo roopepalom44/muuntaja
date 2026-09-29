@@ -3,6 +3,9 @@
     python tests/data/make_cad_sample.py tests/data/cad_sample.dxf R2000
 
 cad_sample_r2000.dwg was converted from it with LibreDWG: dxf2dwg -o cad_sample_r2000.dwg cad_sample.dxf
+(ArcGIS Pro crashes on this file). cad_sample_r2018.dwg (AutoCAD 2018, AC1032) was written by
+ArcGIS Pro 3.7: CADToGeodatabase(cad_sample.dxf, EPSG:3067) followed by ExportCAD(..., "DWG_R2018")
+of the point, line and polygon feature classes.
 """
 import ezdxf, sys
 out = sys.argv[1]; version = sys.argv[2] if len(sys.argv) > 2 else "R2000"

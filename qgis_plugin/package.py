@@ -9,7 +9,8 @@ VERSION = next(line.split("=", 1)[1].strip() for line in (PLUGIN / "metadata.txt
                if line.startswith("version="))
 OUTPUT = ROOT / "dist" / f"Muuntaja-QGIS-{VERSION}.zip"
 OUTPUT.parent.mkdir(exist_ok=True)
-ALLOWED = {".py", ".txt", ".png", ".json", ".gpkg"}
+# .exe/.dll: lisäosan mukana jaettava LibreDWG (muuntaja_qgis/libredwg).
+ALLOWED = {".py", ".txt", ".png", ".json", ".gpkg", ".exe", ".dll"}
 with ZipFile(OUTPUT, "w", ZIP_DEFLATED, compresslevel=9) as archive:
     for path in sorted(PLUGIN.rglob("*")):
         if path.is_file() and path.suffix.lower() in ALLOWED:
@@ -17,6 +18,7 @@ with ZipFile(OUTPUT, "w", ZIP_DEFLATED, compresslevel=9) as archive:
 with ZipFile(OUTPUT) as archive:
     assert f"{PLUGIN.name}/metadata.txt" in archive.namelist()
     assert f"{PLUGIN.name}/__init__.py" in archive.namelist()
+    assert f"{PLUGIN.name}/libredwg/dwg2dxf.exe" in archive.namelist()
 print(OUTPUT)
 
 WINDOWS_OUTPUT = ROOT / "dist" / f"Muuntaja-QGIS-{VERSION}-Windows.zip"

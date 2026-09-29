@@ -124,6 +124,11 @@ paikkaan ennen tuontia.
   ajoa kohden.
 - **CAD-tuonnin tunnistettu koordinaatisto tallentuu tulokseen** myös silloin,
   kun kohde-CRS puuttuu tai on sama kuin lähde.
+- **CAD-tuonti kohde-CRS:llä projisoi jokaisen tason suoraan.** Tunnistettu
+  lähtökoordinaatisto annetaan jo CAD-muunnokselle, joten ArcGIS ei enää hylkää
+  projisointia (ERROR 000289/000599) eikä tuonti kierrä hitaan varaketjun kautta.
+  Aiemmin varaketju kirjoitti tulokset nimellä `<taso>_proj`, ja DWG:n toinen
+  saman geometriatyypin taso ylikirjoitti ensimmäisen.
 
 ## mikeio ja DFSU-tuki
 

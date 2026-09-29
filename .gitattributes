@@ -2,3 +2,5 @@
 *.docx binary
 *.dwg binary
 *.dxf -text
+*.exe binary
+*.dll binary

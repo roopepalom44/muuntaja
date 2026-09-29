@@ -1,6 +1,7 @@
 """Native QGIS import/export operations. No ArcPy dependency."""
 
 import gc
+import math
 import os
 import re
 import shutil
@@ -37,6 +38,8 @@ def safe_name(name):
 def classify_finnish_xy(x, y):
     if 19 <= x <= 32.5 and 59 <= y <= 71.5:
         return 4326
+    if 2000000 <= x <= 3700000 and 8000000 <= y <= 11800000:
+        return 3857
     if not 6400000 <= y <= 7900000:
         return None
     if 20000 <= x <= 800000:
@@ -65,19 +68,32 @@ def inferred_crs(layer, path=None):
     return None
 
 
+def _center_in_finland(layer, crs):
+    try:
+        point = QgsCoordinateTransform(
+            crs, QgsCoordinateReferenceSystem("EPSG:4326"), QgsProject.instance()
+        ).transform(layer.extent().center())
+        return (math.isfinite(point.x()) and math.isfinite(point.y())
+                and 18 <= point.x() <= 33 and 59 <= point.y() <= 72)
+    except Exception:
+        return False
+
+
 def assign_source_crs(layer, path, source_crs=None):
-    """Assign a known CRS or stop when coordinates and common defaults conflict."""
+    """Assign a known CRS or stop when its location conflicts with Finnish coordinates."""
     if source_crs and source_crs.isValid():
         layer.setCrs(source_crs)
         return
     guessed = inferred_crs(layer, path)
     current = layer.crs()
     if current.isValid():
-        if (guessed and current.authid() in {"EPSG:3857", "EPSG:4326"}
-                and current.authid() != guessed.authid()):
+        if (guessed and guessed.isValid() and current != guessed
+                and _center_in_finland(layer, guessed)
+                and not _center_in_finland(layer, current)):
             raise RuntimeError(
                 f"Tason koordinaatisto on {current.authid()}, mutta koordinaatit näyttävät "
-                f"järjestelmältä {guessed.authid()}. Aseta oikea lähtö-CRS lisäasetuksissa.")
+                f"järjestelmältä {guessed.authid()}. Aseta oikea lähtö-CRS "
+                "lisäasetusten Lähtö-CRS (pakota) -kentässä.")
         return
     if guessed:
         layer.setCrs(guessed)

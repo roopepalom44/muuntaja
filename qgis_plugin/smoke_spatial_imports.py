@@ -102,4 +102,12 @@ with tempfile.TemporaryDirectory(prefix="muuntaja_spatial_", ignore_cleanup_erro
     dataset = None
     verify_import(missing_crs, root / "output_missing_crs", raster=True)
 
-print("All local formats, a TIFF without CRS, and both workspace modes passed", flush=True)
+    missing_mercator = root / "raster_missing_mercator" / "helsinki_mercator.tif"
+    missing_mercator.parent.mkdir()
+    dataset = gdal.GetDriverByName("GTiff").Create(str(missing_mercator), 2, 2, 1)
+    dataset.SetGeoTransform([2750000, 1, 0, 8400000, 0, -1])
+    dataset.GetRasterBand(1).Fill(100)
+    dataset = None
+    verify_import(missing_mercator, root / "output_missing_mercator", raster=True)
+
+print("All local formats, TIFFs without CRS, and both workspace modes passed", flush=True)

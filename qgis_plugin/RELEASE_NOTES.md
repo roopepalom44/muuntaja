@@ -23,3 +23,8 @@ Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rast
 
 - Uudemman DWG:n tuonti käyttää ODA File Converteria varapolkuna, kun QGISin CAD-ajuri ei avaa tiedostoa. Virhe ilmoittaa DWG-version ja tarvittavan toimenpiteen.
 - Lähtö-CRS voidaan pakottaa myös aineistolle, jolla on virheellinen CRS-merkintä. Puuttuva tai Suomen koordinaattiarvojen kanssa ristiriitainen CRS pysäyttää tuonnin selkeään virheeseen.
+
+## Muuntaja QGIS 0.2.6
+
+- Virheellinen CRS-merkintä tunnistetaan myös muista koordinaatistoista kuin EPSG:3857 ja EPSG:4326, kun aineiston koordinaatit osoittavat Suomeen mutta merkitty järjestelmä vie ne muualle.
+- Suomen alueen EPSG:3857-koordinaatit tunnistetaan myös aineistoista, joilla CRS-merkintä puuttuu.

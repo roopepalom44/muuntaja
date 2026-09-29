@@ -13,14 +13,38 @@ import sys
 import types
 import numpy as np
 from qgis.core import QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsPointXY, QgsProject, QgsVectorLayer
-from muuntaja_qgis.core import classify_finnish_xy, export_data, import_data
+from muuntaja_qgis.core import assign_source_crs, classify_finnish_xy, export_data, import_data
 from muuntaja_qgis.plugin import MuuntajaDialog
 from muuntaja_qgis import classFactory
 layer = QgsVectorLayer('Point?crs=EPSG:3067', 'test_points', 'memory')
 assert classify_finnish_xy(385000, 6670000) == 3067
+assert classify_finnish_xy(2750000, 8400000) == 3857
 feature = QgsFeature(layer.fields())
 feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(385000, 6670000)))
 assert layer.dataProvider().addFeatures([feature])[0]
+
+def marked_point(authid, x, y):
+    result = QgsVectorLayer(f'Point?crs={authid}', 'marked_point', 'memory')
+    point = QgsFeature(result.fields())
+    point.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(x, y)))
+    assert result.dataProvider().addFeatures([point])[0]
+    result.updateExtents()
+    return result
+
+for declared, x, y, expected in (
+        ('EPSG:3067', 24.94, 60.17, 'EPSG:4326'),
+        ('EPSG:3035', 385000, 6670000, 'EPSG:3067'),
+        ('EPSG:3067', 2750000, 8400000, 'EPSG:3857')):
+    try:
+        assign_source_crs(marked_point(declared, x, y), 'wrong_crs.gpkg')
+    except RuntimeError as exc:
+        assert declared in str(exc) and expected in str(exc), str(exc)
+    else:
+        raise AssertionError(f'{declared} must not place Finnish coordinates abroad')
+valid_utm = marked_point('EPSG:25835', 385000, 6670000)
+assign_source_crs(valid_utm, 'valid_utm.gpkg')
+assert valid_utm.crs().authid() == 'EPSG:25835'
+print('conflicting and valid CRS checks passed', flush=True)
 QgsProject.instance().addMapLayer(layer)
 with TemporaryDirectory(ignore_cleanup_errors=True) as folder:
     written, failed = export_data([layer], folder, 'GPKG')

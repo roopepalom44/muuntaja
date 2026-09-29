@@ -68,6 +68,10 @@ def classify_finnish_xy(x, y):
     if 19.0 <= x <= 32.5 and 59.0 <= y <= 71.5:
         return 4326
 
+    # Web Mercator (EPSG:3857) Suomen alueella; sama sääntö kuin QGIS-versiossa.
+    if 2_000_000 <= x <= 3_700_000 and 8_000_000 <= y <= 11_800_000:
+        return 3857
+
     # Suomen pohjoiskoordinaatti (Y) on aina tässä haarukassa metrijärjestelmissä.
     # Jos Y ei osu tähän, ei voida varmuudella tunnistaa Suomen CRS:ää.
     if not (6_400_000 <= y <= 7_900_000):

@@ -1,253 +1,38 @@
 """Native QGIS import/export operations. No ArcPy dependency."""
 
-import gc
-import math
 import os
-import re
-import shutil
-import struct
-import subprocess
-import tempfile
-import uuid
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from qgis.core import (
-    QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsFeature, QgsField,
-    QgsFields, QgsGeometry, QgsProject, QgsRasterLayer, QgsVectorFileWriter,
-    QgsVectorLayer, QgsWkbTypes,
+    QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsFeature, QgsField, QgsFields,
+    QgsGeometry, QgsProject, QgsRasterLayer, QgsVectorFileWriter, QgsVectorLayer, QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QVariant
 
-VECTOR_EXTENSIONS = {".gpkg", ".geojson", ".json", ".kml", ".kmz", ".gpx", ".dwg", ".dxf", ".shp"}
-RASTER_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg", ".jp2", ".img"}
-WORLD_FILES = {".pgw", ".pngw", ".jgw", ".jpgw", ".jpegw", ".wld"}
+from . import cad
+from .formats import (  # noqa: F401  (julkinen rajapinta lisäosalle ja testeille)
+    CAD_EXTENSIONS, RASTER_EXTENSIONS, VECTOR_EXTENSIONS, classify_finnish_xy, dfsu_matches,
+    dfsu_wkb, find_oda_converter, has_georeference, raster_group, safe_name, scan_inputs,
+    unique_name, unique_path,
+)
+from .qgisutil import (  # noqa: F401
+    add_project_layer, assign_source_crs, ensure_project_crs, field_type, inferred_crs, write_vector,
+)
+
 DRIVERS = {"GPKG": ("GPKG", ".gpkg"), "GeoJSON": ("GeoJSON", ".geojson"),
            "Shapefile": ("ESRI Shapefile", ".shp"), "KML": ("LIBKML", ".kml"),
-           "KMZ": ("LIBKML", ".kmz"), "DXF": ("DXF", ".dxf")}
+           "KMZ": ("LIBKML", ".kmz")}
+CAD_FORMATS = ("DXF", "DWG")
+EXPORT_FORMATS = list(DRIVERS) + list(CAD_FORMATS)
+MANAGED_PROPERTY = "muuntaja/managed"
+SOURCE_PATHS_PROPERTY = "muuntaja/source_paths"
 
 
 class OperationCanceled(Exception):
     pass
 
 
-def safe_name(name):
-    name = re.sub(r"[^\w-]+", "_", str(name), flags=re.UNICODE).strip("_-")
-    return name[:80] or "layer"
-
-
-def classify_finnish_xy(x, y):
-    if 19 <= x <= 32.5 and 59 <= y <= 71.5:
-        return 4326
-    if 2000000 <= x <= 3700000 and 8000000 <= y <= 11800000:
-        return 3857
-    if not 6400000 <= y <= 7900000:
-        return None
-    if 20000 <= x <= 800000:
-        return 3067
-    for low, high, code in ((1000000, 1900000, 2391), (2000000, 2900000, 2392),
-                            (3000000, 3900000, 2393), (4000000, 4900000, 2394)):
-        if low <= x <= high:
-            return code
-    if 19000000 <= x <= 32000000:
-        zone = int(x // 1000000)
-        if 19 <= zone <= 31:
-            return 3873 + zone - 19
-    return None
-
-
-def inferred_crs(layer, path=None):
-    try:
-        extent = layer.extent()
-        code = classify_finnish_xy(extent.center().x(), extent.center().y())
-        if code:
-            return QgsCoordinateReferenceSystem(f"EPSG:{code}")
-    except Exception:
-        pass
-    if path and "etrs89" in str(path).casefold():
-        return QgsCoordinateReferenceSystem("EPSG:3067")
-    return None
-
-
-def _center_in_finland(layer, crs):
-    try:
-        point = QgsCoordinateTransform(
-            crs, QgsCoordinateReferenceSystem("EPSG:4326"), QgsProject.instance()
-        ).transform(layer.extent().center())
-        return (math.isfinite(point.x()) and math.isfinite(point.y())
-                and 18 <= point.x() <= 33 and 59 <= point.y() <= 72)
-    except Exception:
-        return False
-
-
-def assign_source_crs(layer, path, source_crs=None):
-    """Assign a known CRS or stop when its location conflicts with Finnish coordinates."""
-    if source_crs and source_crs.isValid():
-        layer.setCrs(source_crs)
-        return
-    guessed = inferred_crs(layer, path)
-    current = layer.crs()
-    if current.isValid():
-        if (guessed and guessed.isValid() and current != guessed
-                and _center_in_finland(layer, guessed)
-                and not _center_in_finland(layer, current)):
-            raise RuntimeError(
-                f"Tason koordinaatisto on {current.authid()}, mutta koordinaatit näyttävät "
-                f"järjestelmältä {guessed.authid()}. Aseta oikea lähtö-CRS "
-                "lisäasetusten Lähtö-CRS (pakota) -kentässä.")
-        return
-    if guessed:
-        layer.setCrs(guessed)
-        return
-    raise RuntimeError("Lähtökoordinaatistoa ei tunnistettu. Aseta lähtö-CRS lisäasetuksissa.")
-
-
-def _ensure_project_crs(project, layer):
-    """Turn on coordinate transformations in projects saved without a CRS."""
-    if not layer.crs().isValid():
-        raise RuntimeError(f"Tason koordinaatistoa ei tunnistettu: {layer.name()}")
-    if not project.crs().isValid():
-        project.setCrs(layer.crs())
-
-
-def _add_project_layer(project, layer, add_to_legend=True):
-    _ensure_project_crs(project, layer)
-    project.addMapLayer(layer, add_to_legend)
-
-
-def unique_path(path):
-    path = Path(path)
-    if not path.exists():
-        return path
-    for number in range(2, 10000):
-        candidate = path.with_name(f"{path.stem}_{number}{path.suffix}")
-        if not candidate.exists():
-            return candidate
-    raise RuntimeError(f"Vapaata tiedostonimeä ei löytynyt: {path}")
-
-
-def has_georeference(path):
-    path = Path(path)
-    if path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
-        return True
-    return any(path.with_suffix(ext).exists() for ext in WORLD_FILES) or Path(str(path) + ".aux.xml").exists()
-
-
-def scan_inputs(paths):
-    """Expand folders recursively, ignore Shapefile sidecars and unlocated images."""
-    found, seen = [], set()
-    for entry in paths:
-        root = Path(entry)
-        candidates = root.rglob("*") if root.is_dir() else [root]
-        for path in candidates:
-            if not path.is_file() or path.suffix.lower() not in VECTOR_EXTENSIONS | RASTER_EXTENSIONS | {".dfsu"}:
-                continue
-            if not has_georeference(path):
-                continue
-            key = os.path.normcase(str(path.resolve()))
-            if key not in seen:
-                seen.add(key)
-                found.append(path)
-    return found
-
-
-def raster_group(path):
-    for part in reversed(path.parts[:-1]):
-        if part.lower().startswith("taustakartta_"):
-            return part
-    return path.parent.name
-
-
-def _write_vector(layer, path, driver, layer_name=None, target_crs=None, append=False):
-    options = QgsVectorFileWriter.SaveVectorOptions()
-    options.driverName = driver
-    options.fileEncoding = "UTF-8"
-    if driver == "OpenFileGDB":
-        options.layerOptions = ["TARGET_ARCGIS_VERSION=ARCGIS_PRO_3_2_OR_LATER"]
-    if layer_name:
-        options.layerName = layer_name
-    if append:
-        options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
-    if target_crs and target_crs.isValid() and layer.crs() != target_crs:
-        from qgis.core import QgsCoordinateTransform
-        options.ct = QgsCoordinateTransform(layer.crs(), target_crs, QgsProject.instance())
-    result = QgsVectorFileWriter.writeAsVectorFormatV3(
-        layer, str(path), QgsProject.instance().transformContext(), options)
-    if result[0] != QgsVectorFileWriter.NoError:
-        raise RuntimeError(result[3] or f"Kirjoitusvirhe: {result[0]}")
-    return path
-
-
-def _write_combined_dxf(layers, path):
-    from osgeo import ogr
-    driver = ogr.GetDriverByName("DXF")
-    datasource = driver.CreateDataSource(str(path))
-    if datasource is None:
-        raise RuntimeError("DXF-tiedostoa ei voitu luoda")
-    target = datasource.CreateLayer("entities", geom_type=ogr.wkbUnknown)
-    if target is None:
-        raise RuntimeError("DXF-tasoa ei voitu luoda")
-    layer_field = target.GetLayerDefn().GetFieldIndex("Layer")
-    for layer in layers:
-        for source in layer.getFeatures():
-            if source.geometry().isEmpty():
-                continue
-            feature = ogr.Feature(target.GetLayerDefn())
-            feature.SetGeometry(ogr.CreateGeometryFromWkb(bytes(source.geometry().asWkb())))
-            if layer_field >= 0:
-                feature.SetField(layer_field, safe_name(layer.name())[:31])
-            if target.CreateFeature(feature) != 0:
-                raise RuntimeError(f"DXF-geometrian kirjoitus epäonnistui: {layer.name()}")
-    target = None
-    datasource = None
-    return path
-
-
-def find_oda_converter():
-    candidates = [shutil.which("ODAFileConverter"),
-                  Path("C:/Program Files/ODA/ODAFileConverter/ODAFileConverter.exe"),
-                  Path("C:/Program Files/ODA/ODAFileConverter/ODAFileConverter_QT5.exe")]
-    return next((str(path) for path in candidates if path and Path(path).is_file()), "")
-
-
-def _export_dwg(layers, folder, combined, converter):
-    converter = Path(converter or find_oda_converter())
-    if not converter.is_file():
-        raise RuntimeError("DWG-vienti vaatii ODA File Converter -ohjelman. Valitse sen .exe-tiedosto.")
-    folder = Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="muuntaja_dwg_") as temp:
-        input_folder = Path(temp) / "dxf"
-        output_folder = Path(temp) / "dwg"
-        input_folder.mkdir()
-        output_folder.mkdir()
-        if combined:
-            dxfs = [_write_combined_dxf(layers, input_folder / "muuntaja_vienti.dxf")]
-        else:
-            dxfs = []
-            for layer in layers:
-                path = unique_path(input_folder / f"{safe_name(layer.name())}.dxf")
-                dxfs.append(_write_vector(layer, path, "DXF"))
-        command = [str(converter), str(input_folder), str(output_folder),
-                   "ACAD2018", "DWG", "0", "1", "*.DXF"]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
-        if result.returncode != 0:
-            raise RuntimeError(f"ODA File Converter epäonnistui (exit {result.returncode}): {result.stderr[-500:]}")
-        written = []
-        for dxf in dxfs:
-            produced = output_folder / f"{dxf.stem}.dwg"
-            if not produced.is_file() or produced.stat().st_size < 512:
-                raise RuntimeError(f"ODA ei tuottanut DWG-tiedostoa: {dxf.name}")
-            probe = QgsVectorLayer(str(produced), produced.stem, "ogr")
-            if not probe.isValid():
-                raise RuntimeError(f"ODA:n DWG-tiedosto ei avaudu QGISissä: {produced.name}")
-            target = unique_path(folder / produced.name)
-            shutil.move(str(produced), str(target))
-            written.append(str(target))
-        return ([written[0] for _ in layers] if combined else written), []
-
-
 def _open_vector_layers(path):
-    """QGIS/OGR handles CAD, GPX, KMZ and multi-layer GeoPackages."""
+    """QGIS/OGR handles GPX, KMZ and multi-layer GeoPackages."""
     probe = QgsVectorLayer(str(path), path.stem, "ogr")
     if not probe.isValid():
         raise RuntimeError(f"Vektorimuotoa ei voitu avata: {path}")
@@ -260,69 +45,14 @@ def _open_vector_layers(path):
         if len(parts) < 2:
             continue
         name = parts[1]
-        uri = f"{path}|layername={name}"
-        layer = QgsVectorLayer(uri, name, "ogr")
+        layer = QgsVectorLayer(f"{path}|layername={name}", name, "ogr")
         if layer.isValid():
             layers.append(layer)
-    if layers:
-        from qgis.PyQt import sip
-        sip.delete(probe)
-        return layers
-    return [probe]
+    return layers or [probe]
 
 
-def _convert_dwg_to_dxf(path, converter, temporary_folder):
-    """Use ODA when this QGIS build cannot read a newer DWG directly."""
-    converter = Path(converter)
-    if not converter.is_file():
-        raise RuntimeError("ODA File Converterin .exe-tiedostoa ei löytynyt")
-    source_folder = Path(temporary_folder) / "dwg"
-    output_folder = Path(temporary_folder) / "dxf"
-    source_folder.mkdir()
-    output_folder.mkdir()
-    shutil.copy2(path, source_folder / path.name)
-    command = [str(converter), str(source_folder), str(output_folder),
-               "ACAD2018", "DXF", "0", "1", "*.DWG"]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=600)
-    if result.returncode != 0:
-        raise RuntimeError(f"ODA:n DWG–DXF-muunnos epäonnistui: {result.stderr[-500:] or result.stdout[-500:]}")
-    converted = output_folder / f"{path.stem}.dxf"
-    if not converted.is_file() or converted.stat().st_size == 0:
-        raise RuntimeError(f"ODA ei tuottanut DXF-tiedostoa: {path.name}")
-    return converted
-
-
-def _dwg_version(path):
-    with Path(path).open("rb") as source:
-        return source.read(6).decode("ascii", errors="replace")
-
-
-def _dfsu_matches(value, operator, expected):
-    if operator in {"contains", "starts with", "ends with"}:
-        text = str(value).casefold()
-        target = str(expected).casefold()
-        return {"contains": target in text, "starts with": text.startswith(target),
-                "ends with": text.endswith(target)}[operator]
-    try:
-        left, right = float(value), float(str(expected).replace(",", "."))
-    except (ValueError, TypeError):
-        left, right = str(value), str(expected)
-    return {"=": left == right, "≠": left != right, ">": left > right,
-            ">=": left >= right, "<": left < right, "<=": left <= right}[operator]
-
-
-def _dfsu_wkb(points):
-    if len(points) == 1:
-        return struct.pack("<BIdd", 1, 1, *points[0])
-    if len(points) == 2:
-        return struct.pack("<BII", 1, 2, 2) + b"".join(struct.pack("<dd", *point) for point in points)
-    ring = list(points)
-    if ring[0] != ring[-1]:
-        ring.append(ring[0])
-    return struct.pack("<BIII", 1, 3, 1, len(ring)) + b"".join(struct.pack("<dd", *point) for point in ring)
-
-
-def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_column, filter_operator, filter_value):
+def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_column, filter_operator,
+                 filter_value, project):
     try:
         import mikeio
     except ImportError as exc:
@@ -336,25 +66,24 @@ def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_co
         raise RuntimeError("DFSU-elementtien geometriaa ei löytynyt")
     total = len(element_table) if element_table is not None else len(element_coordinates)
     item_names = [item.name for item in dataset.items]
-    if filter_column and filter_column.casefold() not in {name.casefold() for name in item_names}:
-        raise ValueError(f"DFSU-suodatinsaraketta ei löytynyt: {filter_column}")
+    matched_filter = None
+    if filter_column:
+        matched_filter = next((item for item in item_names if item.casefold() == filter_column.casefold()), None)
+        if matched_filter is None:
+            raise ValueError(f"DFSU-suodatinsaraketta ei löytynyt: {filter_column}")
     values = {}
-    for name in item_names:
-        array = dataset[name].to_numpy()
+    for item in item_names:
+        array = dataset[item].to_numpy()
         if getattr(array, "ndim", 0) >= 2:
             array = array[0]
-        values[name] = array.reshape(-1) if hasattr(array, "reshape") else array
+        values[item] = array.reshape(-1) if hasattr(array, "reshape") else array
     fields = QgsFields()
-    fields.append(QgsField("element_id", QVariant.Int))
+    fields.append(QgsField("element_id", field_type("int")))
     field_names = []
-    for name in item_names:
-        field_name = safe_name(name)[:30]
-        base, number = field_name, 2
-        while field_name in field_names:
-            field_name = f"{base[:26]}_{number}"
-            number += 1
+    for item in item_names:
+        field_name = unique_name(safe_name(item)[:30], field_names, 30)
         field_names.append(field_name)
-        fields.append(QgsField(field_name, QVariant.Double))
+        fields.append(QgsField(field_name, field_type("double")))
     sr = source_crs
     if sr is None:
         projection = str(getattr(geometry, "projection_string", "") or "")
@@ -364,29 +93,22 @@ def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_co
     if sr is None or not sr.isValid():
         raise RuntimeError("DFSU:n koordinaatistoa ei tunnistettu; anna lähtö-CRS")
     output_crs = target_crs if target_crs and target_crs.isValid() else sr
-    transform = QgsCoordinateTransform(sr, output_crs, QgsProject.instance()) if output_crs != sr else None
-    name = safe_name(path.stem)
+    transform = QgsCoordinateTransform(sr, output_crs, project) if output_crs != sr else None
+    layer_name = safe_name(path.stem)
     if workspace:
         output_path = destination
-        existing = set()
-        if destination.exists():
-            probe = QgsVectorLayer(str(destination), "probe", "ogr")
-            existing = {part.split("!!::!!")[1] for part in probe.dataProvider().subLayers() if "!!::!!" in part}
-        base, number = name, 2
-        while name in existing:
-            name = f"{base[:65]}_{number}"
-            number += 1
+        layer_name = unique_name(layer_name, cad.existing_layer_names(destination), 80)
     else:
-        output_path = unique_path(destination / f"{name}.gpkg")
+        output_path = unique_path(destination / f"{layer_name}.gpkg")
     options = QgsVectorFileWriter.SaveVectorOptions()
     options.driverName = "OpenFileGDB" if output_path.suffix.lower() == ".gdb" else "GPKG"
     if options.driverName == "OpenFileGDB":
         options.layerOptions = ["TARGET_ARCGIS_VERSION=ARCGIS_PRO_3_2_OR_LATER"]
-    options.layerName = name
+    options.layerName = layer_name
     if output_path.exists():
         options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
     writer = QgsVectorFileWriter.create(str(output_path), fields, QgsWkbTypes.Unknown,
-                                        output_crs, QgsProject.instance().transformContext(), options)
+                                        output_crs, project.transformContext(), options)
     if writer.hasError() != QgsVectorFileWriter.NoError:
         error = writer.errorMessage()
         del writer
@@ -394,10 +116,8 @@ def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_co
     written = 0
     try:
         for index in range(total):
-            if filter_column:
-                matched = next(name for name in item_names if name.casefold() == filter_column.casefold())
-                if not _dfsu_matches(values[matched][index], filter_operator, filter_value):
-                    continue
+            if matched_filter and not dfsu_matches(values[matched_filter][index], filter_operator, filter_value):
+                continue
             if element_table is not None and node_coordinates is not None:
                 points = [(float(node_coordinates[int(node)][0]), float(node_coordinates[int(node)][1]))
                           for node in element_table[index]]
@@ -407,18 +127,20 @@ def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_co
             if not points:
                 continue
             geom = QgsGeometry()
-            geom.fromWkb(_dfsu_wkb(points))
+            geom.fromWkb(dfsu_wkb(points))
             if transform:
                 geom.transform(transform)
             feature = QgsFeature(fields)
-            attrs = [index + 1]
-            for name in item_names:
+            attributes = [index + 1]
+            # Oma silmukkamuuttuja: aiemmin ``name`` ylikirjoitti tason nimen,
+            # jolloin valmis taso avattiin väärällä nimellä.
+            for item in item_names:
                 try:
-                    number = float(values[name][index])
-                    attrs.append(number if number == number else None)
+                    number = float(values[item][index])
+                    attributes.append(number if number == number else None)
                 except (ValueError, TypeError):
-                    attrs.append(None)
-            feature.setAttributes(attrs)
+                    attributes.append(None)
+            feature.setAttributes(attributes)
             feature.setGeometry(geom)
             if not writer.addFeature(feature):
                 raise RuntimeError(writer.errorMessage())
@@ -427,39 +149,32 @@ def _import_dfsu(path, destination, workspace, source_crs, target_crs, filter_co
         del writer
     if not written:
         raise RuntimeError("DFSU-suodatus ei tuottanut kohteita")
-    result = QgsVectorLayer(f"{output_path}|layername={name}", name, "ogr")
+    result = QgsVectorLayer(f"{output_path}|layername={layer_name}", layer_name, "ogr")
     if not result.isValid():
-        probe = QgsVectorLayer(str(output_path), name, "ogr")
-        sublayers = probe.dataProvider().subLayers() if probe.isValid() else []
-        for sublayer in sublayers:
-            parts = sublayer.split("!!::!!")
-            if len(parts) > 1 and parts[1] == name:
-                result = QgsVectorLayer(f"{output_path}|layerid={parts[0]}", name, "ogr")
-                break
-        if not result.isValid() and len(sublayers) == 1:
-            result = probe
-        if not result.isValid():
-            raise RuntimeError("DFSU-tulosta ei voitu avata")
-    _add_project_layer(QgsProject.instance(), result)
+        raise RuntimeError("DFSU-tulosta ei voitu avata")
+    add_project_layer(project, result)
+
+
+def _managed_layers(group):
+    """Layers in a group that Muuntaja itself added (never the user's own)."""
+    managed = []
+    for node in group.findLayers():
+        layer = node.layer()
+        if layer is not None and (layer.customProperty(MANAGED_PROPERTY, False)
+                                  or layer.customProperty(SOURCE_PATHS_PROPERTY, [])):
+            managed.append(layer)
+    return managed
 
 
 def _add_raster_group(project, group_name, paths, destination, source_crs):
     """Represent a raster group by one VRT when multiple tiles are present."""
     from osgeo import gdal
-    group = project.layerTreeRoot().findGroup(group_name) or project.layerTreeRoot().addGroup(group_name)
+    root = project.layerTreeRoot()
+    group = root.findGroup(group_name) or root.addGroup(group_name)
+    managed = _managed_layers(group)
     existing = []
-    prior_vrt_layers = []
-    for node in group.findLayers():
-        layer = node.layer()
-        if layer is None:
-            continue
-        saved = layer.customProperty("muuntaja/source_paths", [])
-        if saved:
-            existing.extend(str(path) for path in saved)
-            prior_vrt_layers.append(layer)
-        else:
-            existing.append(layer.source())
-            prior_vrt_layers.append(layer)
+    for layer in managed:
+        existing.extend(str(path) for path in (layer.customProperty(SOURCE_PATHS_PROPERTY, []) or [layer.source()]))
     combined = list(dict.fromkeys(existing + [str(path) for path in paths]))
     rasters = []
     for path in combined:
@@ -469,14 +184,16 @@ def _add_raster_group(project, group_name, paths, destination, source_crs):
         assign_source_crs(raster, path, source_crs)
         rasters.append(raster)
     if len(rasters) == 1:
-        if not prior_vrt_layers:
-            _add_project_layer(project, rasters[0], False)
+        if not managed:
+            rasters[0].setCustomProperty(MANAGED_PROPERTY, True)
+            add_project_layer(project, rasters[0], False)
             group.addLayer(rasters[0])
         else:
-            _ensure_project_crs(project, rasters[0])
+            ensure_project_crs(project, rasters[0])
         return
-    root = destination.parent if destination.suffix.lower() in {".gpkg", ".gdb"} else destination
-    output = root / f"muuntaja_{safe_name(destination.stem)}_{safe_name(group_name)}.vrt"
+    folder = destination.parent if destination.suffix.lower() in {".gpkg", ".gdb"} else destination
+    folder.mkdir(parents=True, exist_ok=True)
+    output = folder / f"muuntaja_{safe_name(destination.stem)}_{safe_name(group_name)}.vrt"
     temp_output = output.with_name(output.stem + "_uusi.vrt")
     options = None
     if rasters[0].crs().isValid():
@@ -485,169 +202,138 @@ def _add_raster_group(project, group_name, paths, destination, source_crs):
     if vrt is None:
         raise RuntimeError(f"Rasterimosaiikin luonti epäonnistui: {group_name}")
     vrt = None
-    for layer in prior_vrt_layers:
+    for layer in managed:
         project.removeMapLayer(layer.id())
     os.replace(temp_output, output)
     layer = QgsRasterLayer(str(output), group_name)
     if not layer.isValid():
         raise RuntimeError(f"Rasterimosaiikkia ei voitu avata: {output}")
-    layer.setCustomProperty("muuntaja/source_paths", combined)
-    _add_project_layer(project, layer, False)
+    layer.setCustomProperty(SOURCE_PATHS_PROPERTY, combined)
+    layer.setCustomProperty(MANAGED_PROPERTY, True)
+    add_project_layer(project, layer, False)
     group.addLayer(layer)
+
+
+def _import_vector(path, destination, workspace, file_gdb, source_crs, target_crs, project, taken_names):
+    written = 0
+    for layer in _open_vector_layers(path):
+        if layer.featureCount() == 0:
+            continue
+        assign_source_crs(layer, path, source_crs)
+        name = safe_name(f"{path.stem}_{layer.name()}")
+        if workspace:
+            name = unique_name(name, taken_names, 80)
+            write_vector(layer, destination, "OpenFileGDB" if file_gdb else "GPKG",
+                         name, target_crs, destination.exists())
+            taken_names.add(name)
+            output = QgsVectorLayer(f"{destination}|layername={name}", name, "ogr")
+        else:
+            output_path = unique_path(destination / f"{name}.gpkg")
+            write_vector(layer, output_path, "GPKG", name, target_crs)
+            output = QgsVectorLayer(str(output_path), name, "ogr")
+        if not output.isValid():
+            raise RuntimeError("Kirjoitettua tasoa ei voitu avata")
+        add_project_layer(project, output)
+        written += 1
+    if not written:
+        raise RuntimeError("Tiedostossa ei ollut tuotavia kohteita")
 
 
 def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=False,
                 progress=None, dfsu_filter_column="", dfsu_filter_operator="=", dfsu_filter_value="",
                 oda_converter=""):
-    """Import vectors to a GeoPackage or folder; add located rasters by reference."""
+    """Import vectors to a GeoPackage/FileGDB or folder; add located rasters by reference."""
     project = QgsProject.instance()
     items = scan_inputs(paths)
     if not items:
         raise ValueError("Tuettavia tiedostoja ei löytynyt.")
     destination = Path(destination)
-    gpkg = destination.suffix.lower() == ".gpkg"
     file_gdb = destination.suffix.lower() == ".gdb"
-    workspace = gpkg or file_gdb
+    workspace = file_gdb or destination.suffix.lower() == ".gpkg"
     if workspace:
         destination.parent.mkdir(parents=True, exist_ok=True)
     else:
         destination.mkdir(parents=True, exist_ok=True)
+    taken_names = cad.existing_layer_names(destination) if workspace else set()
     successes, failures = [], []
     raster_groups = {}
     for index, path in enumerate(items, 1):
-        converted_dwg = None
-        virtual_dxf = None
-        layers = []
         if progress:
             progress(index, len(items), str(path))
+        suffix = path.suffix.lower()
         try:
-            if path.suffix.lower() in RASTER_EXTENSIONS:
-                group_name = raster_group(path)
-                raster_groups.setdefault(group_name, []).append(path)
+            if suffix in RASTER_EXTENSIONS:
+                raster_groups.setdefault(raster_group(path), []).append(path)
                 continue
-            if path.suffix.lower() == ".dfsu":
+            if suffix == ".dfsu":
                 _import_dfsu(path, destination, workspace, source_crs, target_crs,
-                             dfsu_filter_column, dfsu_filter_operator, dfsu_filter_value)
-                successes.append(str(path))
-                continue
-            try:
-                layers = _open_vector_layers(path)
-            except RuntimeError as exc:
-                if path.suffix.lower() != ".dwg":
-                    raise
-                converter = oda_converter or find_oda_converter()
-                if not converter:
-                    raise RuntimeError(
-                        f"DWG {_dwg_version(path)} ei avaudu QGISin CAD-ajurilla. "
-                        "Valitse ODA File Converterin .exe tuonnin lisäasetuksista "
-                        "tai tallenna DWG DXF-muotoon.") from exc
-                converted_dwg = tempfile.TemporaryDirectory(prefix="muuntaja_dwg_import_")
-                dxf = _convert_dwg_to_dxf(path, converter, converted_dwg.name)
-                from osgeo import gdal
-                virtual_dxf = f"/vsimem/muuntaja_{uuid.uuid4().hex}.dxf"
-                gdal.FileFromMemBuffer(virtual_dxf, dxf.read_bytes())
-                layers = _open_vector_layers(PurePosixPath(virtual_dxf))
-            written = 0
-            for layer in layers:
-                if clean_cad and path.suffix.lower() in {".dwg", ".dxf"} and layer.name().casefold() in {"defpoints", "0"}:
-                    continue
-                if clean_cad and path.suffix.lower() in {".dwg", ".dxf"} and "Layer" in layer.fields().names():
-                    if not layer.setSubsetString('"Layer" NOT IN (\'Defpoints\', \'0\')'):
-                        raise RuntimeError("CAD-tason siivous ei onnistu tälle tiedostolle")
-                if layer.featureCount() == 0:
-                    continue
-                assign_source_crs(layer, path, source_crs)
-                name = safe_name(f"{path.stem}_{layer.name()}")
-                if workspace:
-                    existing = set(QgsVectorLayer(str(destination), "probe", "ogr").dataProvider().subLayers()) if destination.exists() else set()
-                    existing_names = {part.split("!!::!!")[1] for part in existing if "!!::!!" in part}
-                    base, number = name, 2
-                    while name in existing_names:
-                        name = f"{base[:65]}_{number}"
-                        number += 1
-                    _write_vector(layer, destination, "OpenFileGDB" if file_gdb else "GPKG",
-                                  name, target_crs, destination.exists())
-                    output = QgsVectorLayer(f"{destination}|layername={name}", name, "ogr")
-                else:
-                    output_path = unique_path(destination / f"{name}.gpkg")
-                    _write_vector(layer, output_path, "GPKG", name, target_crs)
-                    output = QgsVectorLayer(str(output_path), name, "ogr")
-                if not output.isValid():
-                    raise RuntimeError("Kirjoitettua tasoa ei voitu avata")
-                _add_project_layer(project, output)
-                written += 1
-            if not written:
-                raise RuntimeError("Tiedostossa ei ollut tuotavia kohteita")
+                             dfsu_filter_column, dfsu_filter_operator, dfsu_filter_value, project)
+            elif suffix in CAD_EXTENSIONS:
+                layers = cad.import_cad(path, destination, source_crs, target_crs, clean_cad,
+                                        oda_converter, project)
+                taken_names.update(layer.name() for layer in layers)
+            else:
+                _import_vector(path, destination, workspace, file_gdb, source_crs, target_crs,
+                               project, taken_names)
             successes.append(str(path))
         except OperationCanceled:
             raise
         except Exception as exc:
             failures.append((str(path), str(exc)))
-        finally:
-            if converted_dwg is not None:
-                from qgis.PyQt import sip
-                layer = None
-                for converted_layer in layers:
-                    sip.delete(converted_layer)
-                layers.clear()
-                gc.collect()
-                if virtual_dxf:
-                    from osgeo import gdal
-                    gdal.Unlink(virtual_dxf)
-                converted_dwg.cleanup()
-    for group_name, paths in raster_groups.items():
+    group_names = list(raster_groups)
+    for number, group_name in enumerate(group_names, 1):
+        group_paths = raster_groups[group_name]
+        if progress:
+            progress(len(items), len(items), f"Rasteriryhmä {number}/{len(group_names)}: {group_name}")
         try:
-            _add_raster_group(project, group_name, paths, destination, source_crs)
-            successes.extend(str(path) for path in paths)
+            _add_raster_group(project, group_name, group_paths, destination, source_crs)
+            successes.extend(str(path) for path in group_paths)
+        except OperationCanceled:
+            raise
         except Exception as exc:
-            failures.extend((str(path), str(exc)) for path in paths)
+            failures.extend((str(path), str(exc)) for path in group_paths)
     if not successes:
         raise RuntimeError("Yksikään tiedosto ei onnistunut: " + "; ".join(f"{p}: {e}" for p, e in failures))
     return successes, failures
 
 
-def export_data(layers, folder, format_name, combined=False, progress=None, oda_converter=""):
-    if format_name == "DWG":
-        if not layers:
-            raise ValueError("Valitse vähintään yksi vektoritaso.")
-        return _export_dwg(layers, folder, combined, oda_converter)
-    if format_name not in DRIVERS:
+def export_data(layers, folder, format_name, combined=False, progress=None, oda_converter="",
+                symbology_scale=None):
+    if format_name not in EXPORT_FORMATS:
         raise ValueError(f"Tuntematon vientimuoto: {format_name}")
+    layers = [layer for layer in layers or [] if layer is not None]
     if not layers:
         raise ValueError("Valitse vähintään yksi vektoritaso.")
+    if format_name in CAD_FORMATS:
+        return cad.export_cad(layers, folder, format_name, combined, progress, oda_converter,
+                              symbology_scale)
     driver, extension = DRIVERS[format_name]
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    combined = combined and format_name in {"GPKG", "DXF"}
+    combined = combined and format_name == "GPKG"
     common_path = unique_path(folder / f"muuntaja_vienti{extension}") if combined else None
-    if combined and format_name == "DXF":
-        _write_combined_dxf(layers, common_path)
-        return [str(common_path) for _ in layers], []
     successes, failures = [], []
     used_names = set()
     for index, layer in enumerate(layers, 1):
+        name = layer.name()
         if progress:
-            progress(index, len(layers), layer.name())
+            progress(index, len(layers), name)
         try:
             if not layer.isValid():
                 raise RuntimeError("Taso ei ole kelvollinen")
-            path = common_path or unique_path(folder / f"{safe_name(layer.name())}{extension}")
-            layer_name = safe_name(layer.name())
-            base_name, number = layer_name, 2
-            while layer_name in used_names:
-                layer_name = f"{base_name[:65]}_{number}"
-                number += 1
+            path = common_path or unique_path(folder / f"{safe_name(name)}{extension}")
+            layer_name = unique_name(safe_name(name), used_names, 80)
             used_names.add(layer_name)
             if format_name == "GeoJSON" and not layer.crs().isValid():
                 raise RuntimeError("GeoJSON-vienti vaatii tunnetun lähtökoordinaatiston")
-            _write_vector(layer, path, driver, layer_name if format_name == "GPKG" else None,
-                          target_crs=QgsCoordinateReferenceSystem("EPSG:4326") if format_name == "GeoJSON" else None,
-                          append=bool(common_path and path.exists()))
+            write_vector(layer, path, driver, layer_name if format_name == "GPKG" else None,
+                         target_crs=QgsCoordinateReferenceSystem("EPSG:4326") if format_name == "GeoJSON" else None,
+                         append=bool(common_path and path.exists()))
             successes.append(str(path))
         except OperationCanceled:
             raise
         except Exception as exc:
-            failures.append((layer.name(), str(exc)))
+            failures.append((name, str(exc)))
     if not successes:
         raise RuntimeError("Yksikään vienti ei onnistunut: " + "; ".join(f"{n}: {e}" for n, e in failures))
     return successes, failures

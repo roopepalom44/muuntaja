@@ -193,5 +193,28 @@ class ArcGisFixTests(unittest.TestCase):
         self.assertIsNone(self.module.vote_finnish_epsg([(1.0, 1.0)]))
 
 
+class SharedCrsRuleTests(unittest.TestCase):
+    """ArcGIS- ja QGIS-toteutus tunnistavat Suomen koordinaatistot samoin."""
+
+    CASES = (
+        ((24.94, 60.17), 4326), ((2776000, 8437000), 3857), ((385000, 6672000), 3067),
+        ((1500000, 6700000), 2391), ((2500000, 6700000), 2392), ((3385000, 6672000), 2393),
+        ((4400000, 7000000), 2394), ((19500000, 6700000), 3873), ((25497000, 6672000), 3879),
+        ((31500000, 7000000), 3885), ((500, 500), None), ((385000, 100000), None),
+    )
+
+    def test_both_implementations_agree(self):
+        toolbox = load_toolbox(types.ModuleType("arcpy"))
+        spec = importlib.util.spec_from_file_location(
+            "muuntaja_formats_shared",
+            Path(__file__).resolve().parents[1] / "qgis_plugin" / "muuntaja_qgis" / "formats.py")
+        formats = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(formats)
+        for (x, y), expected in self.CASES:
+            with self.subTest(x=x, y=y):
+                self.assertEqual(toolbox.classify_finnish_xy(x, y), expected)
+                self.assertEqual(formats.classify_finnish_xy(x, y), expected)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -577,6 +577,9 @@ def export_cad(layers, folder, format_name, combined=False, progress=None, oda_c
     if format_name == "DWG" and not (formats.find_oda_converter(oda_converter)
                                      or formats.find_libredwg_tool("dxf2dwg")):
         raise RuntimeError(missing_converter_message("vienti"))
+    invalid = [layer.name() for layer in layers if not layer.isValid()]
+    if invalid:
+        raise RuntimeError("Tasot eivät ole kelvollisia (tietolähde puuttuu): " + ", ".join(invalid))
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     crs = _destination_crs(layers, project)

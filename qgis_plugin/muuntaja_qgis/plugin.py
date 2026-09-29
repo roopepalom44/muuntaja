@@ -120,8 +120,8 @@ class MuuntajaDialog(QDialog):
         advanced_form = QFormLayout(self.advanced_options)
         advanced_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.source_crs = QLineEdit()
-        self.source_crs.setPlaceholderText("Automaattinen tai esimerkiksi EPSG:3067")
-        advanced_form.addRow("Lähtö-CRS, jos puuttuu", self.source_crs)
+        self.source_crs.setPlaceholderText("Tyhjä = automaattinen; esimerkiksi EPSG:3067")
+        advanced_form.addRow("Lähtö-CRS (pakota)", self.source_crs)
         self.target_crs = QLineEdit()
         self.target_crs.setPlaceholderText("Tyhjä = säilytä lähteen koordinaatisto")
         advanced_form.addRow("Kohde-CRS", self.target_crs)
@@ -129,6 +129,14 @@ class MuuntajaDialog(QDialog):
         self.clean_cad = QCheckBox("Ohita CADin Defpoints- ja 0-tasot")
         self.clean_cad.setEnabled(False)
         advanced_form.addRow("CAD", self.clean_cad)
+        self.import_oda_converter = QLineEdit(find_oda_converter())
+        self.import_oda_converter.setPlaceholderText("ODA File Converterin .exe uudemmille DWG-tiedostoille")
+        self.import_oda_converter.setEnabled(False)
+        self.import_oda_browse = QPushButton("Valitse…")
+        self.import_oda_browse.setEnabled(False)
+        self.import_oda_browse.clicked.connect(lambda: self._choose_oda_converter_for(self.import_oda_converter))
+        advanced_form.addRow("DWG-tuonnin muunnin", self._row_widget(
+            self._line_and_button(self.import_oda_converter, self.import_oda_browse)))
         self.dfsu_filter_enabled = QCheckBox("Rajaa DFSU-aineistoa sarakkeen arvolla")
         self.dfsu_filter_enabled.setEnabled(False)
         self.dfsu_filter_enabled.toggled.connect(self._update_dfsu_controls)
@@ -198,7 +206,7 @@ class MuuntajaDialog(QDialog):
         self.oda_converter = QLineEdit(find_oda_converter())
         self.oda_converter.setPlaceholderText("ODA File Converterin .exe-tiedosto")
         self.oda_browse = QPushButton("Valitse…")
-        self.oda_browse.clicked.connect(self._choose_oda_converter)
+        self.oda_browse.clicked.connect(lambda: self._choose_oda_converter_for(self.oda_converter))
         self.oda_row = self._row_widget(self._line_and_button(self.oda_converter, self.oda_browse))
         self.oda_label = QLabel("DWG-muunnin")
         form.addRow(self.oda_label, self.oda_row)
@@ -241,10 +249,13 @@ class MuuntajaDialog(QDialog):
         self.input_summary.setText(f"{count} {noun} valittuna" if count else "Ei syötteitä valittuna")
         paths = [Path(self.inputs.item(index).text()) for index in range(count)]
         may_contain_cad = any(path.is_dir() or path.suffix.lower() in {".dwg", ".dxf"} for path in paths)
+        may_contain_dwg = any(path.is_dir() or path.suffix.lower() == ".dwg" for path in paths)
         may_contain_dfsu = any(path.is_dir() or path.suffix.lower() == ".dfsu" for path in paths)
         self.clean_cad.setEnabled(may_contain_cad)
         if not may_contain_cad:
             self.clean_cad.setChecked(False)
+        self.import_oda_converter.setEnabled(may_contain_dwg)
+        self.import_oda_browse.setEnabled(may_contain_dwg)
         self.dfsu_filter_enabled.setEnabled(may_contain_dfsu)
         if not may_contain_dfsu:
             self.dfsu_filter_enabled.setChecked(False)
@@ -300,10 +311,10 @@ class MuuntajaDialog(QDialog):
         if path:
             self.export_folder.setText(path)
 
-    def _choose_oda_converter(self):
+    def _choose_oda_converter_for(self, field):
         path, _ = QFileDialog.getOpenFileName(self, "Valitse ODA File Converter", "", "Ohjelmat (*.exe)")
         if path:
-            self.oda_converter.setText(path)
+            field.setText(path)
 
     def _update_export_controls(self, *_):
         format_name = self.format.currentText()
@@ -382,6 +393,7 @@ class MuuntajaDialog(QDialog):
                 self.dfsu_column.text().strip() if self.dfsu_filter_enabled.isChecked() else "",
                 self.dfsu_operator.currentText(),
                 self.dfsu_value.text(),
+                self.import_oda_converter.text().strip(),
             )
             self._show_result("Tuonti", successes, failures)
         except OperationCanceled:

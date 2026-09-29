@@ -1,12 +1,14 @@
 """Native QGIS import/export operations. No ArcPy dependency."""
 
+import gc
 import os
 import re
 import shutil
 import struct
 import subprocess
 import tempfile
-from pathlib import Path
+import uuid
+from pathlib import Path, PurePosixPath
 
 from qgis.core import (
     QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsFeature, QgsField,
@@ -61,6 +63,26 @@ def inferred_crs(layer, path=None):
     if path and "etrs89" in str(path).casefold():
         return QgsCoordinateReferenceSystem("EPSG:3067")
     return None
+
+
+def assign_source_crs(layer, path, source_crs=None):
+    """Assign a known CRS or stop when coordinates and common defaults conflict."""
+    if source_crs and source_crs.isValid():
+        layer.setCrs(source_crs)
+        return
+    guessed = inferred_crs(layer, path)
+    current = layer.crs()
+    if current.isValid():
+        if (guessed and current.authid() in {"EPSG:3857", "EPSG:4326"}
+                and current.authid() != guessed.authid()):
+            raise RuntimeError(
+                f"Tason koordinaatisto on {current.authid()}, mutta koordinaatit näyttävät "
+                f"järjestelmältä {guessed.authid()}. Aseta oikea lähtö-CRS lisäasetuksissa.")
+        return
+    if guessed:
+        layer.setCrs(guessed)
+        return
+    raise RuntimeError("Lähtökoordinaatistoa ei tunnistettu. Aseta lähtö-CRS lisäasetuksissa.")
 
 
 def unique_path(path):
@@ -213,7 +235,37 @@ def _open_vector_layers(path):
         layer = QgsVectorLayer(uri, name, "ogr")
         if layer.isValid():
             layers.append(layer)
-    return layers or [probe]
+    if layers:
+        from qgis.PyQt import sip
+        sip.delete(probe)
+        return layers
+    return [probe]
+
+
+def _convert_dwg_to_dxf(path, converter, temporary_folder):
+    """Use ODA when this QGIS build cannot read a newer DWG directly."""
+    converter = Path(converter)
+    if not converter.is_file():
+        raise RuntimeError("ODA File Converterin .exe-tiedostoa ei löytynyt")
+    source_folder = Path(temporary_folder) / "dwg"
+    output_folder = Path(temporary_folder) / "dxf"
+    source_folder.mkdir()
+    output_folder.mkdir()
+    shutil.copy2(path, source_folder / path.name)
+    command = [str(converter), str(source_folder), str(output_folder),
+               "ACAD2018", "DXF", "0", "1", "*.DWG"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise RuntimeError(f"ODA:n DWG–DXF-muunnos epäonnistui: {result.stderr[-500:] or result.stdout[-500:]}")
+    converted = output_folder / f"{path.stem}.dxf"
+    if not converted.is_file() or converted.stat().st_size == 0:
+        raise RuntimeError(f"ODA ei tuottanut DXF-tiedostoa: {path.name}")
+    return converted
+
+
+def _dwg_version(path):
+    with Path(path).open("rb") as source:
+        return source.read(6).decode("ascii", errors="replace")
 
 
 def _dfsu_matches(value, operator, expected):
@@ -385,10 +437,7 @@ def _add_raster_group(project, group_name, paths, destination, source_crs):
         raster = QgsRasterLayer(path, Path(path).stem)
         if not raster.isValid():
             raise RuntimeError(f"Rasteria ei voitu avata: {path}")
-        if not raster.crs().isValid():
-            guessed = source_crs if source_crs and source_crs.isValid() else inferred_crs(raster, path)
-            if guessed:
-                raster.setCrs(guessed)
+        assign_source_crs(raster, path, source_crs)
         rasters.append(raster)
     if len(rasters) == 1:
         if not prior_vrt_layers:
@@ -417,7 +466,8 @@ def _add_raster_group(project, group_name, paths, destination, source_crs):
 
 
 def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=False,
-                progress=None, dfsu_filter_column="", dfsu_filter_operator="=", dfsu_filter_value=""):
+                progress=None, dfsu_filter_column="", dfsu_filter_operator="=", dfsu_filter_value="",
+                oda_converter=""):
     """Import vectors to a GeoPackage or folder; add located rasters by reference."""
     project = QgsProject.instance()
     items = scan_inputs(paths)
@@ -434,6 +484,9 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
     successes, failures = [], []
     raster_groups = {}
     for index, path in enumerate(items, 1):
+        converted_dwg = None
+        virtual_dxf = None
+        layers = []
         if progress:
             progress(index, len(items), str(path))
         try:
@@ -446,7 +499,23 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
                              dfsu_filter_column, dfsu_filter_operator, dfsu_filter_value)
                 successes.append(str(path))
                 continue
-            layers = _open_vector_layers(path)
+            try:
+                layers = _open_vector_layers(path)
+            except RuntimeError as exc:
+                if path.suffix.lower() != ".dwg":
+                    raise
+                converter = oda_converter or find_oda_converter()
+                if not converter:
+                    raise RuntimeError(
+                        f"DWG {_dwg_version(path)} ei avaudu QGISin CAD-ajurilla. "
+                        "Valitse ODA File Converterin .exe tuonnin lisäasetuksista "
+                        "tai tallenna DWG DXF-muotoon.") from exc
+                converted_dwg = tempfile.TemporaryDirectory(prefix="muuntaja_dwg_import_")
+                dxf = _convert_dwg_to_dxf(path, converter, converted_dwg.name)
+                from osgeo import gdal
+                virtual_dxf = f"/vsimem/muuntaja_{uuid.uuid4().hex}.dxf"
+                gdal.FileFromMemBuffer(virtual_dxf, dxf.read_bytes())
+                layers = _open_vector_layers(PurePosixPath(virtual_dxf))
             written = 0
             for layer in layers:
                 if clean_cad and path.suffix.lower() in {".dwg", ".dxf"} and layer.name().casefold() in {"defpoints", "0"}:
@@ -456,12 +525,7 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
                         raise RuntimeError("CAD-tason siivous ei onnistu tälle tiedostolle")
                 if layer.featureCount() == 0:
                     continue
-                if not layer.crs().isValid() and source_crs and source_crs.isValid():
-                    layer.setCrs(source_crs)
-                elif not layer.crs().isValid():
-                    inferred = inferred_crs(layer, path)
-                    if inferred:
-                        layer.setCrs(inferred)
+                assign_source_crs(layer, path, source_crs)
                 name = safe_name(f"{path.stem}_{layer.name()}")
                 if workspace:
                     existing = set(QgsVectorLayer(str(destination), "probe", "ogr").dataProvider().subLayers()) if destination.exists() else set()
@@ -488,6 +552,18 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
             raise
         except Exception as exc:
             failures.append((str(path), str(exc)))
+        finally:
+            if converted_dwg is not None:
+                from qgis.PyQt import sip
+                layer = None
+                for converted_layer in layers:
+                    sip.delete(converted_layer)
+                layers.clear()
+                gc.collect()
+                if virtual_dxf:
+                    from osgeo import gdal
+                    gdal.Unlink(virtual_dxf)
+                converted_dwg.cleanup()
     for group_name, paths in raster_groups.items():
         try:
             _add_raster_group(project, group_name, paths, destination, source_crs)

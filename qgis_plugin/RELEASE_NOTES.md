@@ -18,3 +18,8 @@ Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rast
 ## Muuntaja QGIS 0.2.4
 
 - Tallennetun QGIS-projektin kansio täyttyy oletuksena tuonnin ja viennin tallennuspaikaksi. GeoPackage- ja FileGDB-tallennustavat saavat tiedostonimen samasta kansiosta.
+
+## Muuntaja QGIS 0.2.5
+
+- Uudemman DWG:n tuonti käyttää ODA File Converteria varapolkuna, kun QGISin CAD-ajuri ei avaa tiedostoa. Virhe ilmoittaa DWG-version ja tarvittavan toimenpiteen.
+- Lähtö-CRS voidaan pakottaa myös aineistolle, jolla on virheellinen CRS-merkintä. Puuttuva tai Suomen koordinaattiarvojen kanssa ristiriitainen CRS pysäyttää tuonnin selkeään virheeseen.

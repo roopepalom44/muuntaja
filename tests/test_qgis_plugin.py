@@ -54,6 +54,11 @@ def write_script(folder, name, body):
     path = Path(folder) / name
     path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(body), encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    if sys.platform == "win32":
+        # Windows ei aja shebang-skriptejä: käynnistä skripti .cmd-kääreellä.
+        wrapper = path.with_name(name + ".cmd")
+        wrapper.write_text(f'@"{sys.executable}" "{path}" %*\r\n', encoding="utf-8")
+        return wrapper
     return path
 
 
@@ -465,9 +470,10 @@ class PluginTests(unittest.TestCase):
             shutil.copy(DATA / "cad_sample.dxf", source)
             plugin.import_cad_files([str(source)])
             self.assertTrue((Path(temp) / "piirustus.gpkg").is_file())
+            # Windows ei poista projektissa avoinna olevaa GeoPackagea.
+            QgsProject.instance().clear()
         messages = [call for call in calls if call[0] == "message"]
         self.assertIn("4 tasoa lisätty", messages[-1][1][1])
-        QgsProject.instance().clear()
 
     def test_dropped_dwg_without_crs_asks_for_it(self):
         from muuntaja_qgis import classFactory
@@ -486,7 +492,7 @@ class PluginTests(unittest.TestCase):
             self.assertTrue(layers and all(layer.crs() == chosen for layer in layers))
             with mock.patch.object(plugin, "_ask_crs", return_value=None):
                 plugin.import_cad_files([str(source)])
-        QgsProject.instance().clear()
+            QgsProject.instance().clear()
 
     def test_export_dialog_lists_dxf_and_dwg(self):
         from muuntaja_qgis.plugin import MuuntajaDialog

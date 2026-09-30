@@ -18,7 +18,7 @@ with ZipFile(OUTPUT, "w", ZIP_DEFLATED, compresslevel=9) as archive:
 with ZipFile(OUTPUT) as archive:
     assert f"{PLUGIN.name}/metadata.txt" in archive.namelist()
     assert f"{PLUGIN.name}/__init__.py" in archive.namelist()
-    for tool in ("dwg2dxf.exe", "dxf2dwg.exe", "dwgrewrite.exe", "libredwg-0.dll", "libiconv-2.dll"):
+    for tool in ("dwg2dxf.exe", "libredwg-0.dll", "libiconv-2.dll"):
         assert f"{PLUGIN.name}/libredwg/{tool}" in archive.namelist(), tool
 print(OUTPUT)
 

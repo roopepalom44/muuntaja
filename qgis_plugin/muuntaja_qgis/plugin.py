@@ -198,9 +198,10 @@ class MuuntajaDialog(QDialog):
         self.combined = QCheckBox("Vie valitut tasot samaan tiedostoon")
         self.combined.stateChanged.connect(self._update_export_controls)
         form.addRow("Useita tasoja", self.combined)
-        self.dwg_hint = QLabel()
-        self.dwg_hint.setWordWrap(True)
-        form.addRow("", self.dwg_hint)
+        self.cad_hint = QLabel("DXF tehdään QGISin omalla DXF-viennillä: tasojen symbologia, nimiöt ja "
+                               "tuotujen CAD-tasojen nimet säilyvät. DXF avautuu AutoCADissa ja ArcGISissä.")
+        self.cad_hint.setWordWrap(True)
+        form.addRow("", self.cad_hint)
         layout.addLayout(form)
 
         run = QPushButton("Vie tasot")
@@ -298,22 +299,11 @@ class MuuntajaDialog(QDialog):
 
     def _update_export_controls(self, *_):
         format_name = self.format.currentText()
-        supports_combined = format_name in {"GPKG", "DXF", "DWG"}
+        supports_combined = format_name in {"GPKG", "DXF"}
         self.combined.setEnabled(supports_combined)
         if not supports_combined:
             self.combined.setChecked(False)
-        self.dwg_hint.setVisible(format_name in {"DXF", "DWG"})
-        status = cad.converter_status()
-        if format_name == "DXF":
-            self.dwg_hint.setText("DXF tehdään QGISin omalla DXF-viennillä: tasojen symbologia, "
-                                  "nimiöt ja tuotujen CAD-tasojen nimet säilyvät.")
-        elif status:
-            self.dwg_hint.setText(f"Kokeellinen: DWG tehdään QGISin DXF-viennistä – {status}. "
-                                  "Toimii aluetasoille (ilman reunaviivoja); viivat, pisteet ja tekstit "
-                                  "vie DXF-muotoon.")
-        else:
-            self.dwg_hint.setText("DWG-vienti vaatii LibreDWG:n (dxf2dwg). "
-                                  "DXF-vienti ei vaadi lisäohjelmaa.")
+        self.cad_hint.setVisible(format_name == "DXF")
 
     def refresh_layers(self):
         self.layers.clear()
@@ -409,7 +399,6 @@ class MuuntajaDialog(QDialog):
         self.progress.setWindowModality(Qt.WindowModal)
         self.progress.setMinimumDuration(0)
         self.progress.show()
-        warnings = []
         try:
             successes, failures = export_data(
                 layers,
@@ -418,10 +407,8 @@ class MuuntajaDialog(QDialog):
                 self.combined.isChecked(),
                 self._progress,
                 self._symbology_scale(),
-                warnings,
             )
-            note = "\n".join(f"Huomio – {warning}" for warning in warnings)
-            self._show_result("Vienti", successes, failures, note)
+            self._show_result("Vienti", successes, failures)
         except OperationCanceled:
             QMessageBox.information(self, "Muuntaja", "Vienti keskeytettiin.")
         except Exception as exc:
@@ -501,8 +488,8 @@ class MuuntajaPlugin:
             self.iface.insertAddLayerAction(self.add_cad_action)
         else:
             self.iface.addPluginToMenu("Muuntaja", self.add_cad_action)
-        self.export_cad_action = QAction(icon, "Vie tasot DWG/DXF-muotoon (Muuntaja)…", self.iface.mainWindow())
-        self.export_cad_action.triggered.connect(lambda: self._dialog().show_export("DWG"))
+        self.export_cad_action = QAction(icon, "Vie tasot DXF-muotoon (Muuntaja)…", self.iface.mainWindow())
+        self.export_cad_action.triggered.connect(lambda: self._dialog().show_export("DXF"))
         menu = self.iface.projectImportExportMenu() if hasattr(self.iface, "projectImportExportMenu") else None
         if menu is not None:
             menu.addAction(self.export_cad_action)

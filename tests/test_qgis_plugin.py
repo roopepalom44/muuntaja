@@ -102,14 +102,15 @@ class FormatHelperTests(unittest.TestCase):
     def test_bundled_libredwg_is_used_on_windows(self):
         with mock.patch.object(formats.sys, "platform", "win32"), \
                 mock.patch.object(formats.shutil, "which", return_value=None):
-            for name in ("dwg2dxf", "dxf2dwg"):
-                self.assertEqual(formats.find_libredwg_tool(name),
-                                 str(formats.BUNDLED_LIBREDWG / f"{name}.exe"))
+            self.assertEqual(formats.find_libredwg_tool("dwg2dxf"),
+                             str(formats.BUNDLED_LIBREDWG / "dwg2dxf.exe"))
 
     def test_bundled_libredwg_has_its_libraries_and_licenses(self):
         names = {path.name for path in formats.BUNDLED_LIBREDWG.iterdir()}
-        self.assertTrue({"dwg2dxf.exe", "dxf2dwg.exe", "dwgrewrite.exe", "libredwg-0.dll", "libiconv-2.dll",
+        self.assertTrue({"dwg2dxf.exe", "libredwg-0.dll", "libiconv-2.dll",
                          "COPYING.txt", "COPYING.LIB.txt", "README.txt"} <= names)
+        # DWG-vientiä ei ole, joten kirjoitustyökaluja ei jaeta.
+        self.assertFalse({"dxf2dwg.exe", "dwgrewrite.exe"} & names)
 
     def test_windows_binaries_are_not_used_on_other_platforms(self):
         with mock.patch.object(formats.sys, "platform", "linux"), \
@@ -278,33 +279,6 @@ class RealLibreDwgTests(QgisTestCase):
         layers = self.cad.import_cad(DATA / "cad_sample_r2000.dwg", self.folder / "tuonti.gpkg")
         self.assertIn("cad_sample_r2000_alueet", [layer.name() for layer in layers])
 
-    def test_real_area_export_keeps_fills_and_warns_about_outlines(self):
-        layer = QgsVectorLayer("Polygon?crs=EPSG:3067", "alueet", "memory")
-        features = []
-        for index in range(6):
-            feature = QgsFeature(layer.fields())
-            x = 385000 + index * 50
-            feature.setGeometry(QgsGeometry.fromWkt(
-                f"POLYGON(({x} 6672000, {x + 30} 6672000, {x + 30} 6672030, {x} 6672030, {x} 6672000))"))
-            features.append(feature)
-        layer.dataProvider().addFeatures(features)
-        layer.updateExtents()
-        self.project.addMapLayer(layer)
-        warnings = []
-        written, failures = self.core.export_data([layer], self.folder, "DWG", warnings=warnings)
-        self.assertEqual(failures, [])
-        self.assertEqual(formats.dwg_version(written[0]), "AC1015")
-        self.assertTrue(any("kaikki 6 aluetta" in warning for warning in warnings), warnings)
-
-    def test_real_line_export_stops_with_details(self):
-        layer = QgsVectorLayer("LineString?crs=EPSG:3067", "viivat", "memory")
-        feature = QgsFeature(layer.fields())
-        feature.setGeometry(QgsGeometry.fromWkt("LINESTRING(385000 6672000, 385030 6672030)"))
-        layer.dataProvider().addFeatures([feature])
-        layer.updateExtents()
-        self.project.addMapLayer(layer)
-        with self.assertRaisesRegex(RuntimeError, r"viivat 0/1"):
-            self.core.export_data([layer], self.folder, "DWG")
 
 
 class CadExportTests(QgisTestCase):
@@ -340,133 +314,10 @@ class CadExportTests(QgisTestCase):
         self.assertTrue({"Tiet", "Rakennukset", "Tekstit", "Puut"} <= cad_layers)
         self.assertTrue({"Kauppakatu", "Talo A"} <= texts)
 
-    def libredwg_stand_ins(self, dwg_bytes=None, drop=()):
-        """dxf2dwg writes the DXF behind a DWG header (without ``drop`` entities); dwg2dxf strips it.
-
-        dwgrewrite copies the file and leaves a marker, so the test sees that it ran.
-        """
-        writer = write_script(self.folder, "dxf2dwg", f"""
-            import sys
-            from pathlib import Path
-            target, source = sys.argv[sys.argv.index("-o") + 1], sys.argv[-1]
-            body = {dwg_bytes!r}
-            if body is None:
-                lines = Path(source).read_text(encoding="utf-8", errors="replace").splitlines()
-                kept, skip, in_entities = [], False, False
-                for code, value in zip(lines[::2], lines[1::2]):
-                    if code.strip() == "2" and value.strip() == "ENTITIES":
-                        in_entities = True
-                    if code.strip() == "0":
-                        skip = in_entities and value.strip() in {tuple(drop)!r}
-                        if value.strip() == "ENDSEC":
-                            in_entities = False
-                    if not skip:
-                        kept += [code, value]
-                body = b"AC1015" + "\\n".join(kept).encode("utf-8")
-            Path(target).write_bytes(body)
-        """)
-        rewriter = write_script(self.folder, "dwgrewrite", """
-            import sys
-            from pathlib import Path
-            source, target = sys.argv[-2], sys.argv[-1]
-            Path(target).write_bytes(Path(source).read_bytes())
-            Path(target + ".rewritten").write_text("ok")
-        """)
-        reader = write_script(self.folder, "dwg2dxf", """
-            import sys
-            from pathlib import Path
-            target, source = sys.argv[sys.argv.index("-o") + 1], sys.argv[-1]
-            Path(target).write_bytes(Path(source).read_bytes()[6:])
-        """)
-        return {"dxf2dwg": str(writer), "dwgrewrite": str(rewriter), "dwg2dxf": str(reader)}
-
-    def polygon_layer(self, count=3, name="alueet"):
-        layer = QgsVectorLayer("Polygon?crs=EPSG:3067&field=nimi:string", name, "memory")
-        features = []
-        for index in range(count):
-            feature = QgsFeature(layer.fields())
-            x = 385000 + index * 50
-            feature.setGeometry(QgsGeometry.fromWkt(
-                f"POLYGON(({x} 6672000, {x + 30} 6672000, {x + 30} 6672030, {x} 6672000))"))
-            features.append(feature)
-        layer.dataProvider().addFeatures(features)
-        layer.updateExtents()
-        self.project.addMapLayer(layer)
-        return layer
-
-    def test_dwg_export_uses_libredwg_and_checks_the_result(self):
-        layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
-        with mock.patch.object(formats_module(), "find_libredwg_tool", side_effect=self.libredwg_stand_ins().get):
-            written, failures = self.core.export_data([layer], self.folder / "dwg", "DWG")
-        self.assertEqual(failures, [])
-        self.assertEqual(Path(written[0]).name, "pisteet.dwg")
-        self.assertEqual(formats.dwg_version(written[0]), "AC1015")
-        # ArcGIS Pro kaatui suoraan dxf2dwg:n tuloksiin: tulos kirjoitetaan uudelleen.
-        self.assertTrue(Path(written[0] + ".rewritten").exists())
-        # LibreDWG hylkää QGISin MTEXT-kohteet, joten DWG:n pohjana on TEXT-DXF.
-        self.assertNotIn(b"\nMTEXT", Path(written[0]).read_bytes().replace(b"\r", b""))
-
-    def test_areas_without_outlines_are_accepted_with_a_warning(self):
-        layer = self.polygon_layer(3)
-        warnings = []
-        tools = self.libredwg_stand_ins(drop=("LWPOLYLINE",))
-        with mock.patch.object(formats_module(), "find_libredwg_tool", side_effect=tools.get):
-            written, failures = self.core.export_data([layer], self.folder / "dwg", "DWG", warnings=warnings)
-        self.assertEqual(failures, [])
-        self.assertTrue(Path(written[0]).is_file())
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("reunaviivat puuttuvat (3 kpl)", warnings[0])
-        self.assertIn("kaikki 3 aluetta", warnings[0])
-
-    def test_lost_lines_that_are_not_outlines_stop_the_export(self):
-        layer = QgsVectorLayer("LineString?crs=EPSG:3067", "viivat", "memory")
-        feature = QgsFeature(layer.fields())
-        feature.setGeometry(QgsGeometry.fromWkt("LINESTRING(385000 6672000, 385030 6672030)"))
-        layer.dataProvider().addFeatures([feature])
-        layer.updateExtents()
-        self.project.addMapLayer(layer)
-        tools = self.libredwg_stand_ins(drop=("LWPOLYLINE", "POLYLINE"))
-        with mock.patch.object(formats_module(), "find_libredwg_tool", side_effect=tools.get):
-            with self.assertRaisesRegex(RuntimeError, r"viivat 0/1"):
-                self.core.export_data([layer], self.folder / "dwg", "DWG")
-        self.assertEqual(list((self.folder / "dwg").glob("*.dwg")), [])
-
-    def test_lost_fills_stop_the_export_even_if_outlines_remain(self):
-        layer = self.polygon_layer(2)
-        tools = self.libredwg_stand_ins(drop=("HATCH",))
-        with mock.patch.object(formats_module(), "find_libredwg_tool", side_effect=tools.get):
-            with self.assertRaisesRegex(RuntimeError, r"alueet 0/2"):
-                self.core.export_data([layer], self.folder / "dwg", "DWG")
-
-    def test_broken_converter_output_is_rejected(self):
-        layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
-        tools = self.libredwg_stand_ins(dwg_bytes=b"not a dwg")
-        with mock.patch.object(formats_module(), "find_libredwg_tool", side_effect=tools.get):
-            with self.assertRaisesRegex(RuntimeError, "kelvollista DWG"):
-                self.core.export_data([layer], self.folder / "dwg", "DWG")
-
-    def test_libredwg_output_that_loses_entities_is_rejected(self):
-        layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
-        writer = write_script(self.folder, "dxf2dwg", """
-            import sys
-            from pathlib import Path
-            Path(sys.argv[sys.argv.index("-o") + 1]).write_bytes(b"AC1015" + b"\\0" * 1000)
-        """)
-        empty_dxf = self.folder / "tyhja.dxf"
-        empty_dxf.write_text("0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n", encoding="utf-8")
-        reader = write_script(self.folder, "dwg2dxf", f"""
-            import shutil, sys
-            shutil.copy({str(empty_dxf)!r}, sys.argv[sys.argv.index("-o") + 1])
-        """)
-        tools = {"dxf2dwg": str(writer), "dwg2dxf": str(reader)}
-        with mock.patch.object(formats_module(), "find_libredwg_tool", side_effect=tools.get):
-            with self.assertRaisesRegex(RuntimeError, r"pisteet 0/\d+"):
-                self.core.export_data([layer], self.folder / "dwg", "DWG")
-        self.assertEqual(list((self.folder / "dwg").glob("*.dwg")), [])
-
-    def test_dwg_export_without_converter_explains_what_to_install(self):
+    def test_dwg_is_not_an_export_format(self):
         layer = self.point_layer("EPSG:3067", [(385000, 6672000)])
-        with self.assertRaisesRegex(RuntimeError, "LibreDWG"):
+        self.assertNotIn("DWG", self.core.EXPORT_FORMATS)
+        with self.assertRaisesRegex(ValueError, "Tuntematon vientimuoto"):
             self.core.export_data([layer], self.folder, "DWG")
 
     def test_removed_layers_are_ignored(self):
@@ -587,7 +438,7 @@ class PluginTests(unittest.TestCase):
         plugin.initGui()
 
         self.assertIn(("insertAddLayerAction", "Lisää DWG/DXF-taso (Muuntaja)…"), calls)
-        self.assertIn("Vie tasot DWG/DXF-muotoon (Muuntaja)…", [action.text() for action in menu.actions()])
+        self.assertIn("Vie tasot DXF-muotoon (Muuntaja)…", [action.text() for action in menu.actions()])
         handler = next(call[1] for call in calls if call[0] == "register")
         with mock.patch.object(plugin, "import_cad_files") as imported:
             self.assertFalse(handler.handleFileDrop("/data/tiet.shp"))
@@ -636,36 +487,15 @@ class PluginTests(unittest.TestCase):
                 plugin.import_cad_files([str(source)])
             QgsProject.instance().clear()
 
-    def test_export_warnings_are_shown_in_the_result(self):
-        from muuntaja_qgis import plugin as plugin_module
-        QgsProject.instance().clear()
-        layer = QgsVectorLayer("Polygon?crs=EPSG:3067", "alueet", "memory")
-        QgsProject.instance().addMapLayer(layer)
-        dialog = plugin_module.MuuntajaDialog()
-        dialog.refresh_layers()
-        dialog.layers.item(0).setCheckState(plugin_module.Qt.Checked)
-        dialog.format.setCurrentText("DWG")
-        dialog.export_folder.setText(tempfile.gettempdir())
-
-        def export(layers, folder, format_name, combined, progress, scale, warnings):
-            warnings.append("alueet.dwg: alueiden reunaviivat puuttuvat (6 kpl)")
-            return [str(Path(folder) / "alueet.dwg")], []
-
-        with mock.patch.object(plugin_module, "export_data", side_effect=export), \
-                mock.patch.object(plugin_module.QMessageBox, "information") as shown:
-            dialog._run_export()
-        self.assertIn("reunaviivat puuttuvat", shown.call_args[0][2])
-        dialog.close()
-        QgsProject.instance().clear()
-
-    def test_export_dialog_lists_dxf_and_dwg(self):
+    def test_export_dialog_offers_dxf_but_not_dwg(self):
         from muuntaja_qgis.plugin import MuuntajaDialog
         dialog = MuuntajaDialog()
         formats_in_dialog = [dialog.format.itemText(i) for i in range(dialog.format.count())]
-        self.assertEqual(formats_in_dialog[-2:], ["DXF", "DWG"])
+        self.assertEqual(formats_in_dialog[-1], "DXF")
+        self.assertNotIn("DWG", formats_in_dialog)
         dialog.format.setCurrentText("DXF")
         self.assertTrue(dialog.combined.isEnabled())
-        self.assertIn("symbologia", dialog.dwg_hint.text())
+        self.assertIn("symbologia", dialog.cad_hint.text())
         dialog.close()
 
 

@@ -21,7 +21,9 @@ from .qgisutil import (  # noqa: F401
 DRIVERS = {"GPKG": ("GPKG", ".gpkg"), "GeoJSON": ("GeoJSON", ".geojson"),
            "Shapefile": ("ESRI Shapefile", ".shp"), "KML": ("LIBKML", ".kml"),
            "KMZ": ("LIBKML", ".kmz")}
-CAD_FORMATS = ("DXF", "DWG")
+# DWG-vientiä ei tarjota: LibreDWG ei kirjoita DWG:hen viivoja, pisteitä eikä
+# tekstejä. DXF avautuu AutoCADissa, ArcGISissa ja QGISissä sellaisenaan.
+CAD_FORMATS = ("DXF",)
 EXPORT_FORMATS = list(DRIVERS) + list(CAD_FORMATS)
 MANAGED_PROPERTY = "muuntaja/managed"
 SOURCE_PATHS_PROPERTY = "muuntaja/source_paths"
@@ -297,15 +299,14 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
 
 
 def export_data(layers, folder, format_name, combined=False, progress=None,
-                symbology_scale=None, warnings=None):
+                symbology_scale=None):
     if format_name not in EXPORT_FORMATS:
         raise ValueError(f"Tuntematon vientimuoto: {format_name}")
     layers = [layer for layer in layers or [] if layer is not None]
     if not layers:
         raise ValueError("Valitse vähintään yksi vektoritaso.")
     if format_name in CAD_FORMATS:
-        return cad.export_cad(layers, folder, format_name, combined, progress,
-                              symbology_scale, warnings=warnings)
+        return cad.export_cad(layers, folder, combined, progress, symbology_scale)
     driver, extension = DRIVERS[format_name]
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)

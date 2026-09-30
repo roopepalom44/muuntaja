@@ -9,6 +9,8 @@
 - **Kansiotuonti:** Anna tuonnissa yhden kansion polku. Muuntaja käy kansion ja sen alikansiot läpi, tunnistaa kaikki tuetut tiedostomuodot ja lisää muunnetut tasot työtilaan.
 - **Rasterituonti ryhmiteltynä:** Tuonti tunnistaa myös rasterit (TIFF, JP2, IMG sekä PNG/JPG, joiden vieressä on world-tiedosto kuten `.pgw`). Rasterit lisätään työtilaan ryhmätasoihin lähimmän `taustakartta_`-alkuisen kansion mukaan, joten MML:n latauskansion voi antaa sellaisenaan (ks. alla).
 - **Tasovalinta viennissä:** Vientitilassa tasot valitaan ArcGIS Pron omalla monitasovalitsimella aktiivisesta kartasta tai selaamalla. Vienti noudattaa tason valintaa ja määrityskyselyä (definition query) kuten ArcGISin omat työkalut: vain kartalla näkyvät tai valitut kohteet viedään, ja loki kertoo rajauksesta.
+- **Kohdekoordinaatisto viennissä:** Vientiin voi valita koordinaatiston, johon aineisto muunnetaan: ETRS-TM35FIN, ETRS-GK19–GK31 (esim. EUREF-FIN / ETRS-GK23), KKJ-kaistat, WGS 84 tai Web Mercator. Muunnos koskee GPKG-, Shapefile-, GeoJSON-, DWG- ja DXF-vientiä; KML/KMZ on standardin mukaan aina WGS84. Oletus on lähteen oma koordinaatisto, ja GeoJSON viedään ilman valintaa WGS84:ään kuten ennenkin.
+- **Tyyli mukaan:** GeoPackage- ja Shapefile-viennin viereen kirjoitetaan tason symbologia `.lyrx`-tasotiedostona (GeoPackagessa `<tiedosto>_<taso>.lyrx`), joka viittaa viedyn tiedoston dataan suhteellisella polulla. KML/KMZ saa tyylin ArcGISin KML-viennistä. GeoJSONille ei ole tyylistandardia, eikä DWG/DXF-vienti kirjoita symbologiaa.
 - **Monitasoviennin paketointi:** Shapefile-, GeoJSON- ja KML/KMZ-viennit tehdään aina omiksi tiedostoiksi tasoittain. GPKG-, DWG- ja DXF-vienneissä voi valita yhden yhteisen tiedoston tai oman tiedoston jokaiselle tasolle.
 - **Selkeä CAD-vienti:** DWG/DXF-vientiin kirjoitetaan vain valittujen tasojen geometriat. Labeltekstejä tai erillisiä attribuuttitaulukoita ei muodosteta.
 - **Hallittu karttasisältö:** Vienti kirjoittaa vain tiedostot eikä lisää vientituloksia aktiiviselle kartalle. Tuonti lisää muunnetut aineistot normaalisti työtilaan.
@@ -58,7 +60,7 @@ QGIS-testit ajetaan, kun Python löytää QGISin kirjastot (muuten ne ohitetaan)
 2. Siirry Add-In (tai Muuntaja) -välilehdelle.
 3. Klikkaa **Muuntaja**-painiketta avataksesi työkalun.
 4. Valitse tuonnissa joko tiedostoja tai kansio. Kansiota käytettäessä kansioon voi kerätä eri muotoja sekaisin; Muuntaja skannaa myös alikansiot, ohittaa Shapefilen sivutiedostot (DBF/SHX/PRJ) ja tuo jokaisen varsinaisen aineiston erikseen.
-5. Valitse viennissä tasot ArcGIS Pron monitasovalitsimella ja määritä vientiformaatti sekä vientikansio. Usean tason GPKG-, DWG- tai DXF-viennissä valitse lisäksi yhteinen tai tasokohtainen tiedosto.
+5. Valitse viennissä tasot ArcGIS Pron monitasovalitsimella ja määritä vientiformaatti, vientikansio ja tarvittaessa kohdekoordinaatisto. Usean tason GPKG-, DWG- tai DXF-viennissä valitse lisäksi yhteinen tai tasokohtainen tiedosto.
 6. CAD-vienti vie valitut tasot DWG/DXF-tiedostoon geometrioina ilman labeltekstejä tai erillisiä attribuuttitaulukoita.
 
 ## Rasterit (esim. MML:n taustakarttasarja)

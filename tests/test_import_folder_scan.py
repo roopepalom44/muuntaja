@@ -107,7 +107,8 @@ class ImportFolderScanTests(unittest.TestCase):
         parameters = self.tool.getParameterInfo()
         export_layers = parameters[12]
 
-        self.assertEqual(len(parameters), 14)
+        self.assertEqual(len(parameters), 15)
+        self.assertEqual(parameters[14].name, "export_target_sr")
         # Ajonaikainen pip-asennus on poistettu; kirjastot asennetaan condalla.
         self.assertNotIn("dfsu_auto_install", [parameter.name for parameter in parameters])
         self.assertEqual(export_layers.datatype, "GPFeatureLayer")
@@ -236,7 +237,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
             exported = []
             self.tool._prepare_export_feature_class = (
-                lambda source, _messages, copy_source=True: source
+                lambda source, _messages, copy_source=True, target_sr=None: source
             )
             self.tool._export_source_label = lambda source: Path(source).stem
 
@@ -276,7 +277,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
             exported = []
             self.tool._prepare_export_feature_class = (
-                lambda source, _messages, copy_source=True: source
+                lambda source, _messages, copy_source=True, target_sr=None: source
             )
             self.tool._export_source_label = lambda source: Path(source).stem
             self.tool._export_to_cad = (
@@ -408,13 +409,19 @@ class ImportFolderScanTests(unittest.TestCase):
                 Project=lambda *_args, **_kwargs: self.fail("export must not project")
             )
 
-            def prepare(source, _messages, copy_source=True):
+            def prepare(source, _messages, copy_source=True, target_sr=None):
                 prepared.append(source)
                 return source
 
             self.tool._prepare_export_feature_class = prepare
             self.tool._export_source_label = lambda _source: "roads"
-            self.tool._export_to_geojson = lambda _fc, out, _messages: out
+            kept_crs = []
+
+            def export_geojson(_fc, out, _messages, keep_input_sr=False):
+                kept_crs.append(keep_input_sr)
+                return out
+
+            self.tool._export_to_geojson = export_geojson
             messages = types.SimpleNamespace(
                 addMessage=lambda _message: None,
                 addWarningMessage=lambda _message: None,
@@ -424,6 +431,8 @@ class ImportFolderScanTests(unittest.TestCase):
             self.tool._execute_export(parameters, messages, ["Roads"])
 
             self.assertEqual(prepared, ["Roads"])
+            # Ilman viennin kohdekoordinaatistoa GeoJSON viedään WGS84:ään.
+            self.assertEqual(kept_crs, [False])
 
     def test_geopackage_schema_prefix_is_not_used_as_layer_name(self):
         self.assertEqual(

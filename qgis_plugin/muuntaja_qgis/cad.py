@@ -1,14 +1,14 @@
-"""DWG/DXF import and export that behave like native QGIS layers.
+"""DWG/DXF import and DXF export that behave like native QGIS layers.
 
 Tuonti lukee CAD-kohteet GDAL:n DXF-ajurilla (DWG muunnetaan ensin DXF:ksi
 LibreDWG:llä, joka tulee Windowsissa lisäosan mukana) ja kirjoittaa ne neljäksi tasoksi:
 tekstit, pisteet, viivat ja alueet. Tasot saavat CAD-värit, CAD-tasot
 näkyvät sisällysluettelossa päälle/pois kytkettävinä sääntöinä ja tekstit
 nimiöinä. Vienti käyttää QGISin omaa DXF-vientiä, joten tasojen symbologia,
-nimiöt ja CAD-tasonimet säilyvät; DWG tehdään DXF:stä LibreDWG:llä (kokeellinen).
+nimiöt ja CAD-tasonimet säilyvät. DWG-vientiä ei ole: LibreDWG ei kirjoita
+DWG:hen viivoja, pisteitä eikä tekstejä.
 """
 
-import shutil
 import tempfile
 from collections import Counter
 from contextlib import contextmanager
@@ -74,21 +74,12 @@ def _fields():
     return fields
 
 
-# --- DWG <-> DXF conversion ---------------------------------------------------
-
-def converter_status():
-    """Describe the DWG converter that would be used (for the user interface)."""
-    tool = formats.find_libredwg_tool("dwg2dxf")
-    if not tool:
-        return ""
-    bundled = Path(tool).parent == formats.BUNDLED_LIBREDWG
-    return "LibreDWG (lisäosan mukana)" if bundled else f"LibreDWG: {Path(tool).parent}"
-
+# --- DWG -> DXF conversion ---------------------------------------------------
 
 def missing_converter_message(action, version=""):
     detail = f" ({formats.dwg_version_label(version)})" if version else ""
     return (f"DWG{detail} {action} vaatii LibreDWG:n. Windowsissa se tulee lisäosan mukana; "
-            "muilla alustoilla asenna LibreDWG (komennot dwg2dxf ja dxf2dwg) tai tallenna piirustus DXF-muotoon.")
+            "muilla alustoilla asenna LibreDWG (komento dwg2dxf) tai tallenna piirustus DXF-muotoon.")
 
 
 def dwg_to_dxf(path, work_folder):
@@ -102,105 +93,6 @@ def dwg_to_dxf(path, work_folder):
     if not converted.is_file() or converted.stat().st_size == 0:
         raise RuntimeError(f"DWG-muunnin ei tuottanut DXF-tiedostoa: {path.name}")
     return converted
-
-
-def dxf_to_dwg(dxf_paths, output_folder, warnings=None):
-    """Convert DXF files to DWG files in ``output_folder``; returns {dxf: dwg}.
-
-    dxf2dwg:n tulos kirjoitetaan vielä kerran dwgrewrite:llä: ArcGIS Pro 3.7
-    kaatui suoraan DXF:stä tehtyihin LibreDWG-tiedostoihin, mutta avasi
-    uudelleen kirjoitetut. Hyväksytyt puutteet lisätään ``warnings``-listaan.
-    """
-    output_folder = Path(output_folder)
-    produced = {}
-    tool = formats.find_libredwg_tool("dxf2dwg")
-    if not tool:
-        raise RuntimeError(missing_converter_message("vienti"))
-    rewriter = formats.find_libredwg_tool("dwgrewrite")
-    with tempfile.TemporaryDirectory(prefix="muuntaja_dxf2dwg_") as temp:
-        for dxf in dxf_paths:
-            draft = Path(temp) / f"{Path(dxf).stem}.dwg"
-            target = formats.unique_path(output_folder / f"{Path(dxf).stem}.dwg")
-            try:
-                formats.run_converter([tool, "-y", "-o", draft, dxf], "LibreDWG dxf2dwg")
-                _check_dwg(draft, dxf)
-                if rewriter:
-                    formats.run_converter([rewriter, "-y", draft, target], "LibreDWG dwgrewrite")
-                else:
-                    shutil.copy2(draft, target)
-                _check_dwg(target, dxf)
-                warning = _verify_libredwg_output(target, dxf)
-            except Exception:
-                Path(target).unlink(missing_ok=True)
-                raise
-            if warning and warnings is not None:
-                warnings.append(f"{Path(target).name}: {warning}")
-            produced[str(dxf)] = str(target)
-    return produced
-
-
-def _outline_count(buckets):
-    """Count lines that are the outline of an area (QGIS writes fill and outline separately)."""
-    from osgeo import ogr
-
-    def key(record):
-        envelope = ogr.CreateGeometryFromWkb(record["wkb"]).GetEnvelope()
-        return record["attributes"]["cad_layer"], tuple(round(value, 3) for value in envelope)
-
-    areas = Counter(key(record) for record in buckets["alueet"])
-    outlines = 0
-    for record in buckets["viivat"]:
-        area = key(record)
-        if areas[area] > 0:
-            areas[area] -= 1
-            outlines += 1
-    return outlines
-
-
-def _verify_libredwg_output(dwg, dxf):
-    """Compare the DWG with its DXF; return a warning or raise when content is lost.
-
-    LibreDWG:n DWG-kirjoitus on kokeellinen. Jos ainoastaan alueiden
-    reunaviivat puuttuvat ja kaikki täytöt ovat tallessa, DWG hyväksytään
-    varoituksella; muu puute pysäyttää viennin.
-    """
-    reader = formats.find_libredwg_tool("dwg2dxf")
-    if not reader:
-        return None
-    with tempfile.TemporaryDirectory(prefix="muuntaja_verify_") as temp:
-        back = Path(temp) / "tarkistus.dxf"
-        formats.run_converter([reader, "-y", "-o", back, dwg], "LibreDWG dwg2dxf (tarkistus)")
-        # Lohkot (esim. QGISin pistesymbolit) lasketaan yhtenä pisteenä.
-        expected_buckets, _samples = read_cad(dxf, inline_blocks=False)
-        try:
-            actual_buckets, _samples = read_cad(back, inline_blocks=False)
-        except RuntimeError:
-            actual_buckets = {name: [] for name, _flat, _z in BUCKETS}
-    expected = {name: len(records) for name, records in expected_buckets.items()}
-    actual = {name: len(records) for name, records in actual_buckets.items()}
-    if all(actual[name] >= expected[name] for name in expected):
-        return None
-    lost_lines = expected["viivat"] - actual["viivat"]
-    only_outlines_lost = (
-        expected["alueet"] > 0
-        and all(actual[name] >= expected[name] for name in ("tekstit", "pisteet", "alueet"))
-        and 0 < lost_lines <= _outline_count(expected_buckets)
-    )
-    if only_outlines_lost:
-        return (f"alueiden reunaviivat puuttuvat ({lost_lines} kpl), koska LibreDWG ei kirjoita niitä; "
-                f"kaikki {actual['alueet']} aluetta ovat mukana täyttöinä. Reunat säilyvät DXF-viennissä.")
-    details = ", ".join(f"{name} {actual[name]}/{expected[name]}" for name in expected
-                        if actual[name] < expected[name])
-    raise RuntimeError(f"LibreDWG ei kirjoittanut kaikkia kohteita DWG:hen ({details}). "
-                       "LibreDWG:n DWG-kirjoitus on vielä kokeellinen: vie DXF-muotoon.")
-
-
-def _check_dwg(path, source):
-    # QGISin CAD-ajuri ei avaa AutoCAD 2004+ -tiedostoja, joten DWG:n kelpoisuus
-    # tarkistetaan tiedoston otsakkeesta eikä avaamalla sitä tasona.
-    path = Path(path)
-    if not path.is_file() or path.stat().st_size < 512 or not formats.dwg_version(path):
-        raise RuntimeError(f"DWG-muunnin ei tuottanut kelvollista DWG-tiedostoa: {Path(source).name}")
 
 
 # --- reading ------------------------------------------------------------------
@@ -258,13 +150,12 @@ def _bucket(geometry, has_text):
     return None
 
 
-def read_cad(path, clean_cad=False, inline_blocks=True):
+def read_cad(path, clean_cad=False):
     """Read model-space CAD entities; returns {bucket: [record]} and sample points."""
     from osgeo import gdal
     buckets = {name: [] for name, _flat, _z in BUCKETS}
     samples = []
-    with _gdal_config(DXF_MERGE_BLOCK_GEOMETRIES="FALSE",
-                      DXF_INLINE_BLOCKS="TRUE" if inline_blocks else "FALSE"):
+    with _gdal_config(DXF_MERGE_BLOCK_GEOMETRIES="FALSE", DXF_INLINE_BLOCKS="TRUE"):
         try:
             dataset = gdal.OpenEx(str(path), gdal.OF_VECTOR)
         except RuntimeError as exc:
@@ -552,7 +443,7 @@ def _combined_extent(layers, crs, project):
     return extent
 
 
-def write_dxf(layers, path, crs=None, symbology_scale=None, project=None, mtext=True):
+def write_dxf(layers, path, crs=None, symbology_scale=None, project=None):
     """Export layers with QGIS' own DXF writer (symbology, labels, CAD layer names)."""
     project = project or QgsProject.instance()
     crs = crs if crs and crs.isValid() else _destination_crs(layers, project)
@@ -574,8 +465,6 @@ def write_dxf(layers, path, crs=None, symbology_scale=None, project=None, mtext=
                               if hasattr(Qgis, "FeatureSymbologyExport") else QgsDxfExport.FeatureSymbology)
     export.setDestinationCrs(crs)
     export.setLayerTitleAsName(False)
-    if not mtext:
-        export.setFlags(QgsDxfExport.Flags(QgsDxfExport.FlagNoMText))
     result = export.writeToFile(QFile(str(path)), "UTF-8")
     if result != QgsDxfExport.ExportResult.Success:
         messages = {
@@ -587,45 +476,27 @@ def write_dxf(layers, path, crs=None, symbology_scale=None, project=None, mtext=
     return Path(path)
 
 
-def export_cad(layers, folder, format_name, combined=False, progress=None,
-               symbology_scale=None, project=None, warnings=None):
-    """Export vector layers to DXF or DWG. Returns (written paths per layer, failures).
-
-    DWG-viennin hyväksytyt puutteet (esim. puuttuvat reunaviivat) lisätään
-    ``warnings``-listaan.
-    """
+def export_cad(layers, folder, combined=False, progress=None, symbology_scale=None, project=None):
+    """Export vector layers to DXF. Returns (written paths per layer, failures)."""
     project = project or QgsProject.instance()
-    if format_name == "DWG" and not formats.find_libredwg_tool("dxf2dwg"):
-        raise RuntimeError(missing_converter_message("vienti"))
     invalid = [layer.name() for layer in layers if not layer.isValid()]
     if invalid:
         raise RuntimeError("Tasot eivät ole kelvollisia (tietolähde puuttuu): " + ", ".join(invalid))
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     crs = _destination_crs(layers, project)
-    # LibreDWG:n dxf2dwg hylkää QGISin MTEXT-kohteet ("Invalid DXF code 50");
-    # DWG:tä varten tekstit kirjoitetaan yksirivisinä TEXT-kohteina.
-    mtext = format_name == "DXF"
-    groups = [(list(layers), "muuntaja_vienti")] if combined else \
-        [([layer], formats.safe_name(layer.name())) for layer in layers]
+    groups = [(list(layers), "muuntaja_vienti")] if combined else         [([layer], formats.safe_name(layer.name())) for layer in layers]
     successes, failures = [], []
-    with tempfile.TemporaryDirectory(prefix="muuntaja_dxf_") as temp:
-        for index, (group, name) in enumerate(groups, 1):
-            if progress:
-                progress(index, len(groups), name)
-            try:
-                if format_name == "DXF":
-                    target = write_dxf(group, formats.unique_path(folder / f"{name}.dxf"), crs,
-                                       symbology_scale, project)
-                else:
-                    dxf = write_dxf(group, formats.unique_path(Path(temp) / f"{name}.dxf"), crs,
-                                    symbology_scale, project, mtext)
-                    target = dxf_to_dwg([dxf], folder, warnings)[str(dxf)]
-                successes.extend(str(target) for _layer in group)
-            except Exception as exc:
-                if combined:
-                    raise
-                failures.append((group[0].name(), str(exc)))
+    for index, (group, name) in enumerate(groups, 1):
+        if progress:
+            progress(index, len(groups), name)
+        try:
+            target = write_dxf(group, formats.unique_path(folder / f"{name}.dxf"), crs, symbology_scale, project)
+            successes.extend(str(target) for _layer in group)
+        except Exception as exc:
+            if combined:
+                raise
+            failures.append((group[0].name(), str(exc)))
     if not successes:
         raise RuntimeError("Yksikään vienti ei onnistunut: " + "; ".join(f"{n}: {e}" for n, e in failures))
     return successes, failures

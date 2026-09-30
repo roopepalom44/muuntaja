@@ -44,3 +44,8 @@ Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rast
 - Korjattu: DFSU-taso avattiin väärällä nimellä GeoPackageen, jossa oli jo muita tasoja; rasterituonti poisti käyttäjän omia tasoja samannimisestä ryhmästä; GeoPackage-tasonimet vertaillaan kirjainkoosta riippumatta; projektista poistettu taso kaatoi viennin; kansioskannaus otti mukaan muitakin kuin paikkatieto-JSONeja.
 - Muuntimen aikakatkaisu ja puuttuva muunnin näytetään selkeänä suomenkielisenä virheenä, eikä Windows avaa konsoli-ikkunaa muunnoksen ajaksi. Muuntimen muu kuin UTF-8-tuloste (esim. ääkköset polussa) ei enää kaada muunnosta.
 - Tunnettu rajoitus: Linuxissa ja macOS:ssä ilman järjestelmän LibreDWG:tä avautuu vain AutoCAD 2000 -DWG, ja silloin GDAL:n CAD-ajuri ei lue täyttöjä (HATCH) eikä lohkoviittauksia (INSERT). LibreDWG 0.14 ei kirjoita DWG:hen viivoja, pistesymboleita eikä tekstejä.
+
+## Muuntaja QGIS 0.3.1
+
+- **DWG-vienti poistettu.** LibreDWG ei kirjoita DWG:hen viivoja, pistesymboleita eikä tekstejä, joten CAD-vienti tehdään DXF-muotoon, jonka AutoCAD, ArcGIS ja QGIS avaavat sellaisenaan. Valikon toiminto on nyt **Projekti → Tuo/Vie → Vie tasot DXF-muotoon (Muuntaja)**.
+- Lisäosan mukana tulee enää LibreDWG:n DWG-lukija (`dwg2dxf`), joten asennuspaketti pieneni. DWG-tuonti toimii ennallaan (AutoCAD 2000–2018).

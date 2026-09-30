@@ -1,4 +1,4 @@
-# Muuntaja QGIS (esijulkaisu 0.3.0)
+# Muuntaja QGIS (esijulkaisu 0.3.1)
 
 QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus pysyy samassa projektissa.
 
@@ -17,16 +17,16 @@ QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus py
 - Rasterien ryhmittely `taustakartta_`-kansion mukaan, yhden VRT-mosaiikin rakentaminen ryhmää kohti, viittaus alkuperäisiin rastereihin ja duplikaattien ohitus.
 - Suomen koordinaatiston tunnistus koordinaateista sekä valinnainen lähtö- ja kohde-CRS. Jos aineisto on merkitty väärään koordinaatistoon, valitse **Lisäasetukset → Lähtö-CRS (pakota)** ja anna aineiston todellinen järjestelmä, esimerkiksi `EPSG:3067`. Epäselvästä tai ristiriitaisesta CRS:stä näytetään virhe ennen tason lisäämistä. Jos itse aineiston CRS-merkintä oli väärä, aiemmin väärään paikkaan tallennetut tasot pitää tuoda uudelleen alkuperäisestä aineistosta.
 - DFSU-tuonti ensimmäisestä aika-askeleesta ja sarakesuodatus. Tämä vaatii erikseen `mikeio`-kirjaston QGISin Python-ympäristöön.
-- Projektin vektoritasojen vienti GPKG-, GeoJSON-, Shapefile-, KML-, KMZ-, DXF- ja DWG-muotoon. Yhdistetty GPKG-, DXF- ja DWG-vienti.
-- DXF/DWG-vienti käyttää QGISin omaa DXF-vientiä: tasojen symbologia (kartan nykyisessä mittakaavassa), nimiöt tekstikohteina ja tuotujen CAD-tasojen alkuperäiset nimet säilyvät, ja kaikki tasot muunnetaan projektin koordinaatistoon. Vienti on myös valikossa **Projekti → Tuo/Vie**.
-- **DWG-vienti on kokeellinen ja sopii käytännössä vain aluetasoille.** DWG tehdään QGISin DXF:stä LibreDWG:n `dxf2dwg`:llä (tekstit yksirivisinä TEXT-kohteina, koska LibreDWG hylkää QGISin MTEXT-kohteet) ja kirjoitetaan vielä kerran `dwgrewrite`:llä: ilman sitä ArcGIS Pro 3.7 kaatui LibreDWG:n DWG-tiedostoihin, uudelleen kirjoitetut se avaa (testattu). Tulos luetaan takaisin ja sitä verrataan DXF:ään kohdetyypeittäin. LibreDWG 0.14 säilyttää alueiden täytöt mutta ei kirjoita viivoja, pistesymboleita eikä tekstejä. Jos vain alueiden reunaviivat puuttuvat, DWG hyväksytään ja tulosikkuna kertoo puuttuvat reunat; muuten vienti pysähtyy virheeseen, joka kertoo mitä puuttuu (esim. `viivat 0/6`), eikä tiedostoa jätetä. **Viivat, pisteet ja tekstit kannattaa viedä DXF-muotoon**, jonka AutoCAD, ArcGIS ja QGIS avaavat luotettavasti.
+- Projektin vektoritasojen vienti GPKG-, GeoJSON-, Shapefile-, KML-, KMZ- ja DXF-muotoon. Yhdistetty GPKG- ja DXF-vienti.
+- DXF-vienti käyttää QGISin omaa DXF-vientiä: tasojen symbologia (kartan nykyisessä mittakaavassa), nimiöt tekstikohteina ja tuotujen CAD-tasojen alkuperäiset nimet säilyvät, ja kaikki tasot muunnetaan projektin koordinaatistoon. Vienti on myös valikossa **Projekti → Tuo/Vie**.
+- **DWG-vientiä ei ole.** QGIS ei kirjoita DWG:tä, eikä LibreDWG kirjoita siihen viivoja, pisteitä eikä tekstejä (testattu LibreDWG 0.14:llä). Vie CAD-aineisto DXF-muotoon: AutoCAD, ArcGIS ja QGIS avaavat sen sellaisenaan.
 - GeoJSON-vienti muuntaa tunnetun lähtökoordinaatiston WGS84:ään, kuten ArcGIS Pro -versio.
 - Tallennetun QGIS-projektin kansio ehdotetaan oletukseksi sekä tuonnissa että viennissä. Tallentamaton projekti ei vielä anna oletuskansiota.
 
 ## Erot ArcGIS Pro -versioon
 
 - DWG luetaan LibreDWG:llä, koska QGIS ei tarjoa DWG-lukua lisäosille: GDAL lukee vain AutoCAD 2000 -DWG:n, ja QGISin oma **Projekti → Tuo/Vie → Tuo tasot DWG/DXF:stä** ei ole Python-rajapinnassa eikä lue AutoCAD 2018 -muotoa (testattu QGIS 3.44:llä: tyhjä tulos). ODA File Converteria ei käytetä: se on suljettu ohjelma, jota ei saa jakaa lisäosan mukana.
-- ArcGIS Pro kirjoittaa DWG:n itse; QGIS-lisäosan luotettava CAD-vientimuoto on DXF.
+- ArcGIS Pro -versio vie myös DWG-muotoon; QGIS-lisäosa vie CAD-aineiston DXF-muotoon.
 - QGISin VRT-mosaiikki on eri tallennusmuoto kuin ArcGIS Pron FileGDB-mosaiikkiaineisto. Se viittaa alkuperäisiin rasteritiedostoihin.
 - DFSU-tuontia on testattu jäljitellyllä `mikeio`-aineistolla, ei oikealla DFSU-tiedostolla.
 - QGISin ja ArcGIS Pron vientiajurien erot voivat muuttaa joidenkin attribuuttien nimiä ja tyyppejä.
@@ -35,4 +35,4 @@ Lisäosa on merkitty esijulkaisuksi, koska käyttöliittymä, aineiston käsitte
 
 ## Kehitys ja testaus
 
-Paketointi: `python qgis_plugin/package.py` (ZIPiin tulevat myös LibreDWG:n Windows-binäärit; päivitysohje ja tarkistussummat: `muuntaja_qgis/libredwg/README.txt`). Yksikkötestit ajetaan QGISin Pythonilla: `python -m unittest discover -s tests` (Linuxissa `QT_QPA_PLATFORM=offscreen`); CI ajaa ne jokaisessa pull requestissa. Lisäksi `qgis_plugin/smoke_spatial_imports.py` tarkistaa, että jokainen tuontimuoto osuu Suomeen (Windowsissa QGISin asennuspolun voi antaa ympäristömuuttujalla `QGIS_PREFIX_PATH`).
+Paketointi: `python qgis_plugin/package.py` (ZIPiin tulee myös LibreDWG:n Windows-lukija; päivitysohje ja tarkistussummat: `muuntaja_qgis/libredwg/README.txt`). Yksikkötestit ajetaan QGISin Pythonilla: `python -m unittest discover -s tests` (Linuxissa `QT_QPA_PLATFORM=offscreen`); CI ajaa ne jokaisessa pull requestissa. Lisäksi `qgis_plugin/smoke_spatial_imports.py` tarkistaa, että jokainen tuontimuoto osuu Suomeen (Windowsissa QGISin asennuspolun voi antaa ympäristömuuttujalla `QGIS_PREFIX_PATH`).

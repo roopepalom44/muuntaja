@@ -2825,9 +2825,11 @@ class UniversalImportTool(object):
             self.log(messages, summary + ".")
         return succeeded, failures
 
-    def _add_layers_to_map(self, paths, messages):
+    def _add_layers_to_map(self, paths, messages, styles=None):
+        """Lisää tasot aktiiviseen karttaan; ``styles`` = {tuotu polku: lähteen .lyrx}."""
         if not paths:
             return
+        styles = styles or {}
         try:
             aprx = arcpy.mp.ArcGISProject("CURRENT")
             active_map = aprx.activeMap
@@ -2835,7 +2837,9 @@ class UniversalImportTool(object):
                 return
             for path in paths:
                 if path and arcpy.Exists(path):
-                    active_map.addDataFromPath(path)
+                    layer = active_map.addDataFromPath(path)
+                    if styles.get(path):
+                        self._apply_source_style(layer, styles[path], messages)
         except Exception as e:
             if str(e).strip() == "CURRENT":
                 pass  # Headless-ajo ilman aktiivista ArcGIS Pro -käyttöliittymäprojektia
@@ -3380,12 +3384,17 @@ class UniversalImportTool(object):
             self.log(messages, f"Tallennusvirhe ({output_name}): {str(e)}", "WARNING")
             raise
 
-    def _bulk_convert_and_add(self, source_items, output_loc, is_folder, messages, input_sr=None, target_sr=None):
-        """Eräkirjoitus usealle tasolle: yksi karttalisäys lopuksi, GP-ympäristö viritetään suorituskykyyn."""
+    def _bulk_convert_and_add(self, source_items, output_loc, is_folder, messages, input_sr=None, target_sr=None,
+                              styles=None):
+        """Eräkirjoitus usealle tasolle: yksi karttalisäys lopuksi, GP-ympäristö viritetään suorituskykyyn.
+
+        ``styles`` = {lähdepolku: .lyrx}; tyyli otetaan käyttöön tuodulle tasolle.
+        """
         if not source_items:
             return []
 
         saved_paths = []
+        saved_styles = {}
         prev_gp_env = {}
         for key, value in (("parallelProcessingFactor", "100%"), ("autoCommit", 1000)):
             try:
@@ -3417,6 +3426,8 @@ class UniversalImportTool(object):
                     continue
                 if saved:
                     saved_paths.append(saved)
+                    if styles and styles.get(src_path):
+                        saved_styles[saved] = styles[src_path]
         finally:
             for key, value in prev_gp_env.items():
                 try:
@@ -3425,7 +3436,7 @@ class UniversalImportTool(object):
                     pass
 
         if saved_paths:
-            self._add_layers_to_map(saved_paths, messages)
+            self._add_layers_to_map(saved_paths, messages, saved_styles)
         if failed and not saved_paths:
             raise RuntimeError(
                 "Yhtään tasoa ei voitu tallentaa: "
@@ -3788,9 +3799,13 @@ class UniversalImportTool(object):
                     continue
                 out_name = self._geopackage_import_output_name(input_path, fc)
                 batch_items.append((src_path, out_name))
+            styles = {
+                src_path: self._find_source_style(input_path, os.path.basename(src_path), len(fcs))
+                for src_path, _out_name in batch_items
+            }
             if batch_items:
                 self.log(messages, f"  > GPKG-eräajo: {len(batch_items)} tasoa.")
-                self._bulk_convert_and_add(batch_items, output_loc, is_folder, messages)
+                self._bulk_convert_and_add(batch_items, output_loc, is_folder, messages, styles=styles)
             else:
                 raise RuntimeError("GeoPackagesta ei löytynyt ei-tyhjiä tasoja.")
         finally:
@@ -3798,7 +3813,56 @@ class UniversalImportTool(object):
 
     def process_generic(self, input_path, output_loc, is_folder, messages):
         base_name = os.path.splitext(os.path.basename(input_path))[0]
-        self.convert_and_add(input_path, output_loc, self.sanitize_name(base_name), is_folder, messages)
+        style = self._find_source_style(input_path)
+        if not style:
+            self.convert_and_add(input_path, output_loc, self.sanitize_name(base_name), is_folder, messages)
+            return
+        saved = self.convert_and_add(
+            input_path, output_loc, self.sanitize_name(base_name), is_folder, messages, add_to_map=False
+        )
+        self._add_layers_to_map([saved], messages, {saved: style})
+
+    def _find_source_style(self, input_path, layer_name=None, layer_count=1):
+        """Etsi lähteen vierestä sen tyylitiedosto (.lyrx), jos sellainen on.
+
+        Nimet ovat samat kuin viennissä: <tiedosto>.lyrx tai GeoPackagessa
+        <gpkg>_<taso>.lyrx (yksitasoisessa GeoPackagessa myös <gpkg>.lyrx).
+        """
+        folder = os.path.dirname(input_path)
+        stem = os.path.splitext(os.path.basename(input_path))[0]
+        candidates = []
+        if layer_name:
+            name = str(layer_name)
+            if "." in name and name.split(".", 1)[0].casefold() in ("main", "temp"):
+                name = name.split(".", 1)[1]
+            candidates.append(f"{stem}_{self.sanitize_name(name)}.lyrx")
+        if not layer_name or layer_count == 1:
+            candidates.append(f"{stem}.lyrx")
+        try:
+            existing = {entry.casefold(): entry for entry in os.listdir(folder or ".")}
+        except OSError:
+            return None
+        for candidate in candidates:
+            match = existing.get(candidate.casefold())
+            if match:
+                return os.path.join(folder, match)
+        return None
+
+    def _apply_source_style(self, layer, style_path, messages):
+        """Ota lähteen .lyrx-symbologia käyttöön tuodulle karttatasolle."""
+        try:
+            style_layers = arcpy.mp.LayerFile(style_path).listLayers()
+            if not style_layers:
+                raise RuntimeError("tasotiedostossa ei ole tasoja")
+            layer.symbology = style_layers[0].symbology
+            self.log(messages, f"  > Tyyli otettiin käyttöön: {os.path.basename(style_path)}")
+        except Exception as error:
+            try:
+                arcpy.management.ApplySymbologyFromLayer(layer, style_path)
+                self.log(messages, f"  > Tyyli otettiin käyttöön: {os.path.basename(style_path)}")
+            except Exception:
+                self.log(messages, f"  > Tyyliä {os.path.basename(style_path)} ei voitu ottaa käyttöön ({error}).",
+                         "WARNING")
 
     def _detect_dfsu_shape_type(self, geometry):
         """Tunnista DFSU-geometrian ArcGIS-muoto: POINT, POLYLINE tai POLYGON.

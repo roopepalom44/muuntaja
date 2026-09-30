@@ -16,8 +16,8 @@ from .formats import (  # noqa: F401  (julkinen rajapinta lisäosalle ja testeil
     unique_name, unique_path,
 )
 from .qgisutil import (  # noqa: F401
-    add_project_layer, assign_source_crs, ensure_project_crs, field_type, inferred_crs, save_style,
-    write_vector,
+    add_project_layer, assign_source_crs, copy_style, ensure_project_crs, field_type, inferred_crs,
+    save_style, source_style, write_vector,
 )
 
 DRIVERS = {"GPKG": ("GPKG", ".gpkg"), "GeoJSON": ("GeoJSON", ".geojson"),
@@ -218,7 +218,22 @@ def _add_raster_group(project, group_name, paths, destination, source_crs):
     group.addLayer(layer)
 
 
-def _import_vector(path, destination, workspace, file_gdb, source_crs, target_crs, project, taken_names):
+def _apply_source_style(source, output, path, save_as_default, notes=None):
+    """Carry the source file's own style (.qml or GeoPackage style) over to the imported layer."""
+    style = source_style(path, source.name())
+    if not style:
+        return
+    try:
+        copy_style(source, output, save_as_default=save_as_default)
+        if notes is not None:
+            notes.append(f"Tyyli otettiin käyttöön tasolle {output.name()} ({style}).")
+    except Exception as exc:
+        if notes is not None:
+            notes.append(f"Tason {output.name()} tyyliä ({style}) ei voitu ottaa käyttöön: {exc}")
+
+
+def _import_vector(path, destination, workspace, file_gdb, source_crs, target_crs, project, taken_names,
+                   notes=None):
     written = 0
     for layer in _open_vector_layers(path):
         if layer.featureCount() == 0:
@@ -237,6 +252,7 @@ def _import_vector(path, destination, workspace, file_gdb, source_crs, target_cr
             output = QgsVectorLayer(str(output_path), name, "ogr")
         if not output.isValid():
             raise RuntimeError("Kirjoitettua tasoa ei voitu avata")
+        _apply_source_style(layer, output, path, save_as_default=not file_gdb, notes=notes)
         add_project_layer(project, output)
         written += 1
     if not written:
@@ -244,8 +260,13 @@ def _import_vector(path, destination, workspace, file_gdb, source_crs, target_cr
 
 
 def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=False,
-                progress=None, dfsu_filter_column="", dfsu_filter_operator="=", dfsu_filter_value=""):
-    """Import vectors to a GeoPackage/FileGDB or folder; add located rasters by reference."""
+                progress=None, dfsu_filter_column="", dfsu_filter_operator="=", dfsu_filter_value="",
+                notes=None):
+    """Import vectors to a GeoPackage/FileGDB or folder; add located rasters by reference.
+
+    Lähteen oma tyyli (.qml tai GeoPackagen tyyli) siirtyy tuotuun tasoon; tiedot
+    lisätään ``notes``-listaan käyttäjälle näytettäviksi.
+    """
     project = QgsProject.instance()
     items = scan_inputs(paths)
     if not items:
@@ -277,7 +298,7 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
                 taken_names.update(layer.name() for layer in layers)
             else:
                 _import_vector(path, destination, workspace, file_gdb, source_crs, target_crs,
-                               project, taken_names)
+                               project, taken_names, notes)
             successes.append(str(path))
         except OperationCanceled:
             raise

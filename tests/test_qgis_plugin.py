@@ -132,7 +132,8 @@ class QgisTestCase(unittest.TestCase):
         self.cad, self.core = cad, core
         self.project = QgsProject.instance()
         self.project.clear()
-        self.temp = tempfile.TemporaryDirectory()
+        # QGISin OGR-yhteysvaranto pitää luetut lähdetiedostot hetken auki (Windows).
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.folder = Path(self.temp.name)
         # Ei oikeita muuntimia testeissä, ellei testi itse anna niitä.
         self.no_tools = [
@@ -474,6 +475,41 @@ class ExportCrsAndStyleTests(QgisTestCase):
                     dataset = ogr.Open(written[0])
                     self.assertIsNone(dataset.GetLayerByName("layer_styles"))
                     dataset = None
+
+    def imported_layers(self):
+        return [layer for layer in self.project.mapLayers().values()
+                if isinstance(layer, QgsVectorLayer) and "tuonti" in layer.source()]
+
+    def test_import_applies_style_from_shapefile_qml_and_geopackage(self):
+        layer = self.styled_layer()
+        shp, _ = self.core.export_data([layer], self.folder / "shp", "Shapefile")
+        gpkg, _ = self.core.export_data([layer], self.folder / "gpkg", "GPKG")
+        self.project.removeMapLayer(layer.id())
+        for source, mode in ((shp[0], "gpkg"), (gpkg[0], "gpkg"), (shp[0], "folder")):
+            with self.subTest(source=Path(source).suffix, mode=mode):
+                destination = self.folder / f"tuonti_{Path(source).suffix[1:]}_{mode}"
+                destination = destination.with_suffix(".gpkg") if mode == "gpkg" else destination
+                notes = []
+                successes, failures = self.core.import_data([source], str(destination), notes=notes)
+                self.assertEqual((len(successes), failures), (1, []))
+                imported = [item for item in self.imported_layers() if str(destination) in item.source()]
+                self.assertEqual(len(imported), 1)
+                self.assertEqual(imported[0].renderer().type(), "categorizedSymbol")
+                self.assertTrue(any("Tyyli otettiin käyttöön" in note for note in notes), notes)
+                # Tyyli tallentuu tuonnin GeoPackageen, joten taso avautuu tyylillä myöhemminkin.
+                reopened = QgsVectorLayer(imported[0].source(), "uudelleen", "ogr")
+                self.assertEqual(reopened.renderer().type(), "categorizedSymbol")
+                del reopened
+
+    def test_import_without_source_style_keeps_default_style(self):
+        layer = self.point_layer("EPSG:3067", [(385000, 6672000)])
+        shp, _ = self.core.export_data([layer], self.folder / "shp", "Shapefile", include_styles=False)
+        notes = []
+        self.core.import_data([shp[0]], str(self.folder / "tuonti.gpkg"), notes=notes)
+        imported = self.imported_layers()
+        self.assertEqual(len(imported), 1)
+        self.assertEqual(imported[0].renderer().type(), "singleSymbol")
+        self.assertFalse(any("Tyyli" in note for note in notes), notes)
 
     def test_kml_contains_the_layer_style(self):
         layer = self.styled_layer()

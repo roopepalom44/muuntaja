@@ -131,25 +131,12 @@ def save_style(source, path, format_name, layer_name=None):
     kirjoitetaan samanniminen .qml, jonka QGIS lataa automaattisesti.
     """
     from qgis.core import QgsVectorLayer
-    from qgis.PyQt.QtXml import QDomDocument
     path = Path(path)
     if format_name == "GPKG":
         written = QgsVectorLayer(f"{path}|layername={layer_name}", layer_name, "ogr")
         if not written.isValid():
             raise RuntimeError(f"Vietyä tasoa ei voitu avata tyylin tallennusta varten: {layer_name}")
-        document = QDomDocument("qgis")
-        error = source.exportNamedStyle(document)
-        if error:
-            raise RuntimeError(error)
-        imported, error = written.importNamedStyle(document)
-        if not imported:
-            raise RuntimeError(error)
-        if hasattr(written, "saveStyleToDatabaseV2"):
-            _result, error = written.saveStyleToDatabaseV2(layer_name, "Muuntaja", True, "")
-        else:
-            error = written.saveStyleToDatabase(layer_name, "Muuntaja", True, "")
-        if error:
-            raise RuntimeError(error)
+        copy_style(source, written, save_as_default=True)
         return f"{path.name} (layer_styles)"
     if format_name in {"Shapefile", "GeoJSON"}:
         style_path = path.with_suffix(".qml")
@@ -158,3 +145,54 @@ def save_style(source, path, format_name, layer_name=None):
             raise RuntimeError(message)
         return style_path.name
     return None
+
+
+def copy_style(source, target, save_as_default=False):
+    """Copy the full QGIS style of ``source`` to ``target``.
+
+    ``save_as_default`` tallentaa tyylin myös kohteen GeoPackageen oletustyyliksi
+    (layer_styles), jolloin taso avautuu tyylillä myös myöhemmin.
+    """
+    from qgis.PyQt.QtXml import QDomDocument
+    document = QDomDocument("qgis")
+    error = source.exportNamedStyle(document)
+    if error:
+        raise RuntimeError(error)
+    imported, error = target.importNamedStyle(document)
+    if not imported:
+        raise RuntimeError(error)
+    target.triggerRepaint()
+    if save_as_default:
+        name = target.name()
+        if hasattr(target, "saveStyleToDatabaseV2"):
+            _result, error = target.saveStyleToDatabaseV2(name, "Muuntaja", True, "")
+        else:
+            error = target.saveStyleToDatabase(name, "Muuntaja", True, "")
+        if error:
+            raise RuntimeError(error)
+
+
+def source_style(path, layer_name=None):
+    """Return where the source file's own style is, or ``None``.
+
+    QGIS käyttää samannimistä .qml-tiedostoa ja GeoPackagen layer_styles-taulun
+    oletustyyliä tason oletustyylinä, joten tuonti voi siirtää sen tuotuun tasoon.
+    """
+    path = Path(path)
+    qml = path.with_suffix(".qml")
+    if qml.is_file():
+        return qml.name
+    if path.suffix.lower() != ".gpkg" or not layer_name:
+        return None
+    from osgeo import ogr
+    dataset = ogr.Open(str(path))
+    if dataset is None:
+        return None
+    try:
+        styles = dataset.GetLayerByName("layer_styles")
+        if styles is None:
+            return None
+        styles.SetAttributeFilter("f_table_name = '" + str(layer_name).replace("'", "''") + "'")
+        return f"{path.name} (layer_styles)" if styles.GetFeatureCount() > 0 else None
+    finally:
+        dataset = None

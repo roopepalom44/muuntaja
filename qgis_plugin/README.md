@@ -1,4 +1,4 @@
-# Muuntaja QGIS (esijulkaisu 0.4.0)
+# Muuntaja QGIS (esijulkaisu 0.4.1)
 
 QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus pysyy samassa projektissa.
 
@@ -22,6 +22,7 @@ QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus py
 - **DWG-vientiä ei ole.** QGIS ei kirjoita DWG:tä, eikä LibreDWG kirjoita siihen viivoja, pisteitä eikä tekstejä (testattu LibreDWG 0.14:llä). Vie CAD-aineisto DXF-muotoon: AutoCAD, ArcGIS ja QGIS avaavat sen sellaisenaan.
 - **Kohdekoordinaatisto viennissä:** vientiin voi valita koordinaatiston, johon aineisto muunnetaan: ETRS-TM35FIN, ETRS-GK19–GK31 (esim. EUREF-FIN / ETRS-GK23), KKJ-kaistat, WGS 84, Web Mercator tai **Muu koordinaatisto…** QGISin omasta valitsimesta. Muunnos koskee GPKG-, Shapefile-, GeoJSON- ja DXF-vientiä; KML/KMZ on standardin mukaan aina WGS84. Oletus on **Tason oma**; GeoJSON viedään ilman valintaa WGS84:ään, kuten ArcGIS Pro -versio. Usean tason viennissä jokainen taso säilyttää oman koordinaatistonsa ("Tason oma"), eikä tasoja projisoida ensimmäisen tason koordinaatistoon. Yhteen DXF-tiedostoon mahtuu vain yksi koordinaatisto, joten eri koordinaatistoissa olevat tasot vaativat joko kohdekoordinaatiston tai oman tiedoston jokaiselle tasolle; muuten vienti pysähtyy ja kertoo tämän.
 - **Tyyli mukaan:** valinta **Pakkaa tasojen tyylit mukaan** (oletuksena päällä). GeoPackageen tason tyyli tallennetaan sisäisesti (`layer_styles`, oletustyyli), joten QGIS avaa tason samalla tyylillä. Shapefilen ja GeoJSONin viereen kirjoitetaan samanniminen `.qml`, jonka QGIS lataa automaattisesti, ja KML/KMZ saa tyylit mukaan. QGIS ei osaa kirjoittaa ArcGISin `.lyrx`-tiedostoa; ArcGIS-tyylin saa ArcGIS Pro -version viennistä.
+- **Tyyli tuonnissa:** kun tuotavalla Shapefilellä tai GeoJSONilla on vieressään samanniminen `.qml` tai GeoPackagessa on tasolle tallennettu tyyli, tuotu taso saa saman tyylin, ja tyyli tallennetaan myös tuonnin GeoPackageen oletustyyliksi. Muuntajan omat viennit tuodaan siis takaisin tyyleineen. (QGIS lataa `.qml`:n ja GeoPackagen tyylin automaattisesti myös, kun tiedoston avaa QGISissä suoraan.)
 - Tallennetun QGIS-projektin kansio ehdotetaan oletukseksi sekä tuonnissa että viennissä. Tallentamaton projekti ei vielä anna oletuskansiota.
 
 ## Erot ArcGIS Pro -versioon

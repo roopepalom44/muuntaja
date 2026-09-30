@@ -101,7 +101,7 @@ class ArcGisFixTests(unittest.TestCase):
         self.tool.detect_finnish_crs = detect
         self.tool._count_safe = lambda _path: 3
         self.tool._is_remote_output = lambda _output: False
-        self.tool._add_layers_to_map = lambda _paths, _messages: None
+        self.tool._add_layers_to_map = lambda _paths, _messages, _styles=None: None
         self.tool._save_cad_layer = lambda *args, **_kwargs: saved.append(args) or args[2]
 
         self.tool.process_cad(r"C:\cad\drawing.dwg", r"C:\out.gdb", False, False, None, target, None)
@@ -170,6 +170,22 @@ class ArcGisFixTests(unittest.TestCase):
         self.assertEqual(self.tool._style_file_path(os.path.join("C:", "vienti", "kaikki.gpkg", "tiet")),
                          os.path.join("C:", "vienti", "kaikki_tiet.lyrx"))
 
+    def test_import_finds_the_style_file_written_by_export(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            for name in ("tiet.shp", "Tiet.LYRX", "alueet.gpkg", "alueet_Rakennukset.lyrx", "yksi.gpkg", "yksi.lyrx"):
+                (folder / name).write_text("", encoding="utf-8")
+
+            shp = self.tool._find_source_style(str(folder / "tiet.shp"))
+            layer = self.tool._find_source_style(str(folder / "alueet.gpkg"), "main.Rakennukset", 2)
+            missing = self.tool._find_source_style(str(folder / "alueet.gpkg"), "main.Tiet", 2)
+            single = self.tool._find_source_style(str(folder / "yksi.gpkg"), "main.jotain", 1)
+
+        self.assertEqual(Path(shp).name, "Tiet.LYRX")
+        self.assertEqual(Path(layer).name, "alueet_Rakennukset.lyrx")
+        self.assertIsNone(missing)
+        self.assertEqual(Path(single).name, "yksi.lyrx")
+
     # 1.5 ---------------------------------------------------------------
     def test_dfsu_without_projection_is_detected_from_coordinates(self):
         geometry = types.SimpleNamespace(projection_string="NON-UTM")
@@ -233,7 +249,7 @@ class ArcGisFixTests(unittest.TestCase):
             return src
 
         self.tool.save_and_reproject = save
-        self.tool._add_layers_to_map = lambda _paths, _messages: None
+        self.tool._add_layers_to_map = lambda _paths, _messages, _styles=None: None
 
         saved = self.tool._bulk_convert_and_add([("a", "a"), ("b", "b")], r"C:\out.gdb", False, None)
 

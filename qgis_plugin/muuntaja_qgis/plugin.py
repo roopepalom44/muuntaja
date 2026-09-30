@@ -15,7 +15,7 @@ from qgis.gui import QgsCustomDropHandler
 
 from . import cad
 from .core import EXPORT_FORMATS, OperationCanceled, export_data, import_data
-from .formats import COMMON_EXPORT_CRS
+from .formats import COMMON_EXPORT_CRS, STYLE_EXPORT_FORMATS
 
 OTHER_CRS = "__muu__"
 
@@ -199,13 +199,18 @@ class MuuntajaDialog(QDialog):
         self.format.currentTextChanged.connect(self._update_export_controls)
         form.addRow("Tiedostomuoto", self.format)
         self.export_crs = QComboBox()
-        self.export_crs.addItem("Lähteen koordinaatisto (ei muunnosta)", "")
+        self.export_crs.addItem("Tason oma", "")
         for label, code in COMMON_EXPORT_CRS:
             self.export_crs.addItem(f"{label} (EPSG:{code})", f"EPSG:{code}")
         self.export_crs.addItem("Muu koordinaatisto…", OTHER_CRS)
         self._export_crs_index = 0
         self.export_crs.activated.connect(self._choose_export_crs)
         form.addRow("Kohdekoordinaatisto", self.export_crs)
+        self.include_styles = QCheckBox("Pakkaa tasojen tyylit mukaan")
+        self.include_styles.setChecked(True)
+        self.include_styles.setToolTip("GeoPackage: tyyli tallennetaan tiedoston sisään. Shapefile ja GeoJSON: "
+                                       "samanniminen .qml viereen. KML/KMZ: tyylit tiedostoon.")
+        form.addRow("Tyylit", self.include_styles)
         self.combined = QCheckBox("Vie valitut tasot samaan tiedostoon")
         self.combined.stateChanged.connect(self._update_export_controls)
         form.addRow("Useita tasoja", self.combined)
@@ -340,6 +345,7 @@ class MuuntajaDialog(QDialog):
         if not supports_combined:
             self.combined.setChecked(False)
         self.cad_hint.setVisible(format_name == "DXF")
+        self.include_styles.setEnabled(format_name in STYLE_EXPORT_FORMATS)
         wgs84_only = format_name in {"KML", "KMZ"}
         self.export_crs.setEnabled(not wgs84_only)
         self.export_crs.setToolTip("KML/KMZ viedään aina WGS84:ään." if wgs84_only else
@@ -451,6 +457,7 @@ class MuuntajaDialog(QDialog):
                 self._symbology_scale(),
                 self._export_target_crs(),
                 notes,
+                self.include_styles.isChecked(),
             )
             self._show_result("Vienti", successes, failures, "\n".join(notes))
         except OperationCanceled:

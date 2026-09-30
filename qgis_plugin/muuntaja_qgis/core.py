@@ -301,11 +301,11 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
 
 
 def export_data(layers, folder, format_name, combined=False, progress=None,
-                symbology_scale=None, target_crs=None, notes=None):
+                symbology_scale=None, target_crs=None, notes=None, include_styles=True):
     """Export layers; ``target_crs`` reprojects every format except KML/KMZ (always WGS84).
 
-    Tason tyyli tallennetaan vientiin (GeoPackageen sisäisesti, Shapefilen ja
-    GeoJSONin viereen .qml, KML:ään tyyleinä). Tyylin ja muunnoksen tiedot
+    Kun ``include_styles`` on päällä, tason tyyli tallennetaan vientiin
+    (GeoPackageen sisäisesti, Shapefilen ja GeoJSONin viereen .qml, KML:ään tyyleinä). Tyylin ja muunnoksen tiedot
     lisätään ``notes``-listaan käyttäjälle näytettäviksi.
     """
     if format_name not in EXPORT_FORMATS:
@@ -346,15 +346,17 @@ def export_data(layers, folder, format_name, combined=False, progress=None,
                                    "tunnetun lähtökoordinaatiston")
             write_vector(layer, path, driver, layer_name if format_name == "GPKG" else None,
                          target_crs=target_crs, append=bool(common_path and path.exists()),
-                         symbology=format_name in WGS84_ONLY_EXPORT_FORMATS, symbology_scale=symbology_scale)
+                         symbology=include_styles and format_name in WGS84_ONLY_EXPORT_FORMATS,
+                         symbology_scale=symbology_scale)
             successes.append(str(path))
-            try:
-                style = save_style(layer, path, format_name, layer_name)
-                if style and notes is not None:
-                    notes.append(f"Tyyli tallennettu: {style}")
-            except Exception as exc:
-                if notes is not None:
-                    notes.append(f"Tason {name} tyyliä ei voitu tallentaa ({exc}); aineisto vietiin ilman tyyliä.")
+            if include_styles:
+                try:
+                    style = save_style(layer, path, format_name, layer_name)
+                    if style and notes is not None:
+                        notes.append(f"Tyyli tallennettu: {style}")
+                except Exception as exc:
+                    if notes is not None:
+                        notes.append(f"Tason {name} tyyliä ei voitu tallentaa ({exc}); aineisto vietiin ilman tyyliä.")
         except OperationCanceled:
             raise
         except Exception as exc:

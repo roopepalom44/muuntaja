@@ -304,3 +304,5 @@ COMMON_EXPORT_CRS = (
 )
 # KML/KMZ on standardin mukaan aina WGS84.
 WGS84_ONLY_EXPORT_FORMATS = {"KML", "KMZ"}
+# Muodot, joihin tason tyyli voidaan pakata (GPKG sisäisesti, SHP/GeoJSON .qml, KML tyyleinä).
+STYLE_EXPORT_FORMATS = {"GPKG", "Shapefile", "GeoJSON", "KML", "KMZ"}

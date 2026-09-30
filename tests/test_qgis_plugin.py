@@ -283,18 +283,53 @@ class RealLibreDwgTests(QgisTestCase):
 
 
 class CadExportTests(QgisTestCase):
-    def test_combined_dxf_reprojects_layers_to_one_crs(self):
+    def test_combined_dxf_reprojects_layers_to_the_chosen_crs(self):
         metric = self.point_layer("EPSG:3067", [(385000, 6672000)], "metrinen")
         degrees = self.point_layer("EPSG:4326", [(24.93, 60.17)], "asteet")
-        self.project.setCrs(QgsCoordinateReferenceSystem("EPSG:3067"))
 
-        written, failures = self.core.export_data([metric, degrees], self.folder, "DXF", combined=True)
+        written, failures = self.core.export_data([metric, degrees], self.folder, "DXF", combined=True,
+                                                  target_crs=QgsCoordinateReferenceSystem("EPSG:3067"))
 
         self.assertEqual(failures, [])
         check = QgsVectorLayer(written[0], "tarkistus", "ogr")
         extent = check.extent()
+        del check
         self.assertGreater(extent.xMinimum(), 300000)
         self.assertGreater(extent.yMinimum(), 6600000)
+
+    def test_combined_dxf_of_mixed_crs_asks_for_a_target_crs(self):
+        metric = self.point_layer("EPSG:3067", [(385000, 6672000)], "metrinen")
+        gk25 = self.point_layer("EPSG:3879", [(25496000, 6672000)], "gk25")
+        self.project.setCrs(QgsCoordinateReferenceSystem("EPSG:3067"))
+        with self.assertRaisesRegex(RuntimeError, "eri koordinaatistoissa.*EPSG:3067.*EPSG:3879"):
+            self.core.export_data([metric, gk25], self.folder, "DXF", combined=True)
+
+    def test_every_layer_keeps_its_own_crs_in_multi_layer_export(self):
+        from osgeo import ogr
+        metric = self.point_layer("EPSG:3067", [(385000, 6672000)], "metrinen")
+        gk25 = self.point_layer("EPSG:3879", [(25496000, 6672000)], "gk25")
+        self.project.setCrs(QgsCoordinateReferenceSystem("EPSG:3067"))
+        expected = {"metrinen": 385000, "gk25": 25496000}
+        for format_name, combined in (("DXF", False), ("GPKG", True), ("GPKG", False), ("Shapefile", False)):
+            with self.subTest(format_name=format_name, combined=combined):
+                folder = self.folder / f"{format_name}_{combined}"
+                written, failures = self.core.export_data([metric, gk25], folder, format_name, combined=combined)
+                self.assertEqual(failures, [])
+                found = {}
+                for path in sorted(set(written)):
+                    dataset = ogr.Open(path)
+                    for index in range(dataset.GetLayerCount()):
+                        layer = dataset.GetLayer(index)
+                        if layer.GetName() == "layer_styles":
+                            continue
+                        for feature in layer:
+                            name = layer.GetName() if format_name == "GPKG" else Path(path).stem
+                            found[name] = feature.GetGeometryRef().GetEnvelope()[0]
+                    dataset = None
+                # DXF:n pistesymbolilla on koko, joten sallitaan muutaman metrin ero.
+                self.assertEqual(set(found), set(expected))
+                for name, x in expected.items():
+                    self.assertAlmostEqual(found[name], x, delta=5)
 
     def test_single_point_layer_exports(self):
         layer = self.point_layer("EPSG:3067", [(385000, 6672000)])
@@ -424,6 +459,21 @@ class ExportCrsAndStyleTests(QgisTestCase):
                 reopened = QgsVectorLayer(written[0], "tarkistus", "ogr")
                 self.assertEqual(reopened.renderer().type(), "categorizedSymbol")
                 del reopened
+
+    def test_styles_are_left_out_when_not_wanted(self):
+        layer = self.styled_layer()
+        for format_name in ("GPKG", "Shapefile", "GeoJSON"):
+            with self.subTest(format_name=format_name):
+                notes = []
+                written, _failures = self.core.export_data([layer], self.folder / format_name, format_name,
+                                                           notes=notes, include_styles=False)
+                self.assertFalse(Path(written[0]).with_suffix(".qml").exists())
+                self.assertFalse(any("Tyyli" in note for note in notes), notes)
+                if format_name == "GPKG":
+                    from osgeo import ogr
+                    dataset = ogr.Open(written[0])
+                    self.assertIsNone(dataset.GetLayerByName("layer_styles"))
+                    dataset = None
 
     def test_kml_contains_the_layer_style(self):
         layer = self.styled_layer()
@@ -605,7 +655,13 @@ class PluginTests(unittest.TestCase):
         self.assertIn("ETRS-GK23 (EPSG:3877)", labels)
         self.assertIn("ETRS-TM35FIN (EPSG:3067)", labels)
         self.assertEqual(labels[-1], "Muu koordinaatisto…")
+        self.assertEqual(labels[0], "Tason oma")
         self.assertIsNone(dialog._export_target_crs())
+        self.assertTrue(dialog.include_styles.isChecked())
+        dialog.format.setCurrentText("DXF")
+        self.assertFalse(dialog.include_styles.isEnabled())
+        dialog.format.setCurrentText("GPKG")
+        self.assertTrue(dialog.include_styles.isEnabled())
         dialog.export_crs.setCurrentIndex(labels.index("ETRS-GK23 (EPSG:3877)"))
         self.assertEqual(dialog._export_target_crs().authid(), "EPSG:3877")
         dialog.format.setCurrentText("KML")

@@ -8,6 +8,7 @@ import datetime
 import traceback
 import importlib
 import json
+import shutil
 import struct
 
 class Toolbox(object):
@@ -57,6 +58,24 @@ MULTI_EXPORT_PACKAGING_FORMATS = ("GPKG", "DWG", "DXF")
 SHAPEFILE_MAX_RECORD_LENGTH = 4000
 SHAPEFILE_SAFE_RECORD_LENGTH = SHAPEFILE_MAX_RECORD_LENGTH - 100
 IMPORT_MODE_LABEL = "Tuonti (gpkg, geojson, json, kml, kmz, gpx, dwg, dxf, dfsu, shp, rasterit)"
+EXPORT_MODE_LABEL = "Vienti (gpkg, shapefile, geojson, dwg, dxf, kml, kmz)"
+# Viennin kohdekoordinaatisto. KML/KMZ on standardin mukaan aina WGS84.
+EXPORT_CRS_KEEP = "Tason oma"
+EXPORT_CRS_LIST = [EXPORT_CRS_KEEP, "ETRS-TM35FIN (3067)"] + [
+    f"ETRS-GK{zone} ({3873 + zone - 19})" for zone in range(19, 32)
+] + [
+    "KKJ kaista 1 (2391)",
+    "KKJ kaista 2 (2392)",
+    "KKJ Yhtenäiskoordinaatisto (2393)",
+    "KKJ kaista 4 (2394)",
+    "WGS 84 (4326)",
+    "WGS 84 / Pseudo-Mercator (3857)",
+]
+EXPORT_WGS84_ONLY_FORMATS = ("KML", "KMZ")
+# Näihin vienteihin kirjoitetaan tason tyyli .lyrx-tiedostona. KML/KMZ saa
+# tyylin LayerToKML:ltä. GeoJSONille ei ole tyylistandardia, eikä ArcGIS avaa
+# GeoJSONia geoprosessointitasoksi; ExportCAD ei kirjoita symbologiaa.
+STYLE_FILE_FORMATS = ("GPKG", "Shapefile")
 
 
 def classify_finnish_xy(x, y):
@@ -167,7 +186,7 @@ class UniversalImportTool(object):
         param0.filter.type = "ValueList"
         param0.filter.list = [
             IMPORT_MODE_LABEL,
-            "Vienti (gpkg, dwg, dxf, geojson, shp, kml, kmz)"
+            EXPORT_MODE_LABEL,
         ]
         param0.value = IMPORT_MODE_LABEL
 
@@ -344,7 +363,31 @@ class UniversalImportTool(object):
         param13.value = MULTI_EXPORT_PACKAGING_COMBINED
         param13.enabled = False
 
-        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13]
+        # 14. Viennin kohdekoordinaatisto. Lisätty viimeiseksi, jotta aiempien
+        # parametrien indeksit ja tallennetut työkaluasetukset säilyvät.
+        param14 = arcpy.Parameter(
+            displayName="Vienti: Kohdekoordinaatisto (KML/KMZ aina WGS84)",
+            name="export_target_sr",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+        param14.filter.type = "ValueList"
+        param14.filter.list = EXPORT_CRS_LIST
+        param14.value = EXPORT_CRS_KEEP
+        param14.enabled = False
+
+        # 15. Pakataanko tasojen tyylit vientiin (GPKG/Shapefile: .lyrx, KML: tyylit).
+        param15 = arcpy.Parameter(
+            displayName="Vienti: Pakkaa tasojen tyylit mukaan (GPKG, Shapefile, KML/KMZ)",
+            name="export_include_styles",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input")
+        param15.value = True
+        param15.enabled = False
+
+        return [param0, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11,
+                param12, param13, param14, param15]
 
     def updateParameters(self, parameters):
         """Mode-perustainen parametrienhallinta: tuonti vs. vienti sekä DFSU-suodatin."""
@@ -363,7 +406,9 @@ class UniversalImportTool(object):
         p_dfsu_filter_val = parameters[11] # DFSU: value
         p_export_layers = parameters[12]  # Vienti: ArcGISin monitasovalitsin
         p_multi_packaging = parameters[13]  # Vienti: GPKG/DWG/DXF-paketointi
-        
+        p_export_sr = parameters[14] if len(parameters) > 14 else None  # Vienti: kohdekoordinaatisto
+        p_export_styles = parameters[15] if len(parameters) > 15 else None  # Vienti: tyylit mukaan
+
         # Lue käyttäjän valittu moodi
         mode = (p_mode.valueAsText or "Tuonti").strip()
         is_import = mode.startswith("Tuonti")
@@ -421,7 +466,11 @@ class UniversalImportTool(object):
             p_export_folder.enabled = False
             p_export_fmt.enabled = False
             p_multi_packaging.enabled = False
-            
+            if p_export_sr is not None:
+                p_export_sr.enabled = False
+            if p_export_styles is not None:
+                p_export_styles.enabled = False
+
             # DFSU-suodatin näkyy vain DFSU-tuonnissa
             if has_dfsu:
                 p_dfsu_filter_en.enabled = True
@@ -479,6 +528,14 @@ class UniversalImportTool(object):
             p_export_folder.enabled = True
             p_export_fmt.enabled = True
             current_fmt = (p_export_fmt.valueAsText or "").strip()
+            if p_export_sr is not None:
+                # KML/KMZ on aina WGS84, joten valinta ei koske niitä.
+                p_export_sr.enabled = current_fmt not in EXPORT_WGS84_ONLY_FORMATS
+                if (p_export_sr.valueAsText or "").strip() not in EXPORT_CRS_LIST:
+                    p_export_sr.value = EXPORT_CRS_KEEP
+            if p_export_styles is not None:
+                # Tyylin voi pakata vain muotoihin, joissa se on mahdollista.
+                p_export_styles.enabled = current_fmt in STYLE_FILE_FORMATS + EXPORT_WGS84_ONLY_FORMATS
             p_multi_packaging.enabled = (
                 current_fmt in MULTI_EXPORT_PACKAGING_FORMATS
                 and len(paths) > 1
@@ -1210,12 +1267,17 @@ class UniversalImportTool(object):
         folder = (parameters[6].valueAsText or "").strip()  # Index shifted from 5 to 6
         fmt = (parameters[7].valueAsText or "GPKG").strip()  # Index shifted from 6 to 7
         # Parametri 5 kuuluu vain tuontiin. Piilotettu aiempi arvo ei saa
-        # projisoida vientiaineistoja huomaamatta, joten vienti ei lue sitä.
+        # projisoida vientiaineistoja huomaamatta, joten vienti ei lue sitä;
+        # viennin kohdekoordinaatisto on oma parametrinsa (14).
         multi_packaging = self._multi_export_packaging_from_param(
             parameters[13] if len(parameters) > 13 else None,
             len(input_paths),
             fmt,
         )
+        export_sr_text = (parameters[14].valueAsText or "").strip() if len(parameters) > 14 else ""
+        export_sr = self._parse_input_sr(export_sr_text)
+        styles_value = parameters[15].value if len(parameters) > 15 else None
+        include_styles = True if styles_value is None else bool(styles_value)
 
         if not folder:
             self.log(messages, "Vientikansio puuttuu.", "ERROR")
@@ -1227,6 +1289,15 @@ class UniversalImportTool(object):
         if not os.path.isdir(folder):
             self.log(messages, f"Vientikansio ei ole olemassa tai ei ole hakemisto: {folder}", "ERROR")
             return
+        if fmt in EXPORT_WGS84_ONLY_FORMATS:
+            if export_sr is not None:
+                self.log(messages, f"  > {fmt} viedään aina WGS84:ään (KML-standardi); "
+                                   "kohdekoordinaatiston valinta ei koske sitä.", "WARNING")
+            export_sr = None
+        elif export_sr is not None:
+            self.log(messages, f"Vienti — kohdekoordinaatisto: {export_sr_text} ({export_sr.name})")
+        if not include_styles and fmt in STYLE_FILE_FORMATS + EXPORT_WGS84_ONLY_FORMATS:
+            self.log(messages, "Vienti — tasojen tyylejä ei pakata mukaan (valinta pois päältä).")
 
         combined_label = self._export_combined_stamp_label(input_paths)
         separate_outputs = (
@@ -1236,6 +1307,20 @@ class UniversalImportTool(object):
                 or multi_packaging == MULTI_EXPORT_PACKAGING_SEPARATE
             )
         )
+        if fmt in ("DWG", "DXF") and not separate_outputs and len(input_paths) > 1 and export_sr is None:
+            # Yhdessä CAD-tiedostossa voi olla vain yksi koordinaatisto. ExportCAD
+            # projisoisi hiljaa kaikki tasot ensimmäisen tason koordinaatistoon,
+            # mikä ei ole "Tason oma" -valinnan mukaista.
+            systems = self._spatial_reference_names(input_paths)
+            if len(systems) > 1:
+                self.log(
+                    messages,
+                    "Tasot ovat eri koordinaatistoissa (" + ", ".join(sorted(systems)) + "), eikä yhteen "
+                    f"{fmt}-tiedostoon mahdu kuin yksi koordinaatisto. Valitse kohdekoordinaatisto tai "
+                    f"'{MULTI_EXPORT_PACKAGING_SEPARATE}', jolloin jokainen taso säilyttää omansa.",
+                    "ERROR",
+                )
+                return
         out_path = None if separate_outputs else self._unique_export_path(
             self._build_export_path_in_folder(folder, fmt, combined_label)
         )
@@ -1269,7 +1354,7 @@ class UniversalImportTool(object):
                         sub_src = self._export_source_label(in_src)
                         try:
                             self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
-                            fc_work = self._prepare_export_feature_class(in_src, messages)
+                            fc_work = self._prepare_export_feature_class(in_src, messages, target_sr=export_sr)
                             out_one = self._unique_export_path(
                                 self._build_export_path_in_folder(folder, fmt, sub_src)
                             )
@@ -1292,7 +1377,7 @@ class UniversalImportTool(object):
                             self.log(messages, traceback.format_exc(), "WARNING")
                 else:
                     for in_src in input_paths:
-                        fc_pairs.append((self._prepare_export_feature_class(in_src, messages), in_src))
+                        fc_pairs.append((self._prepare_export_feature_class(in_src, messages, target_sr=export_sr), in_src))
                     written_paths = [
                         self._export_to_cad(
                             fc_pairs,
@@ -1304,20 +1389,24 @@ class UniversalImportTool(object):
             elif len(input_paths) == 1:
                 in_src = input_paths[0]
                 fc_work = self._prepare_export_feature_class(
-                    in_src, messages, copy_source=False
+                    in_src, messages, copy_source=False, target_sr=export_sr
                 )
                 src_one = self._export_source_label(in_src)
                 if fmt == "GeoJSON":
-                    written_paths = [self._export_to_geojson(fc_work, out_path, messages)]
+                    written_paths = [self._export_to_geojson(
+                        fc_work, out_path, messages, keep_input_sr=export_sr is not None
+                    )]
                 elif fmt == "Shapefile":
                     written_paths = [self._export_to_shapefile(fc_work, out_path, messages)]
                 elif fmt == "GPKG":
                     written_paths = [self._export_to_geopackage(fc_work, out_path, messages, source_label=src_one)]
                 elif fmt in ("KML", "KMZ"):
-                    written_paths = [self._export_to_kml(fc_work, out_path, messages)]
+                    written_paths = [self._export_to_kml(fc_work, out_path, messages, keep_style=include_styles)]
                 else:
                     self.log(messages, f"Tuntematon vientiformaatti: {fmt}", "ERROR")
                     return
+                if include_styles and fmt in STYLE_FILE_FORMATS:
+                    self._write_style_file(in_src, written_paths[0], messages)
 
             else:
                 # Monitasovienti: GPKG voi mennä yhteiseen tai omiin tiedostoihin,
@@ -1325,10 +1414,12 @@ class UniversalImportTool(object):
                 # suojatun kierroksen läpi, jotta yksi rikkinäinen taso ei
                 # hukkaa muita.
                 simple_exporters = {
-                    "GeoJSON": self._export_to_geojson,
+                    "GeoJSON": lambda fc, out, msg: self._export_to_geojson(
+                        fc, out, msg, keep_input_sr=export_sr is not None
+                    ),
                     "Shapefile": self._export_to_shapefile,
-                    "KML": self._export_to_kml,
-                    "KMZ": self._export_to_kml,
+                    "KML": lambda fc, out, msg: self._export_to_kml(fc, out, msg, keep_style=include_styles),
+                    "KMZ": lambda fc, out, msg: self._export_to_kml(fc, out, msg, keep_style=include_styles),
                 }
                 if fmt != "GPKG" and fmt not in simple_exporters:
                     self.log(messages, f"Tuntematon vientiformaatti: {fmt}", "ERROR")
@@ -1340,7 +1431,7 @@ class UniversalImportTool(object):
                     try:
                         self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
                         fc_work = self._prepare_export_feature_class(
-                            in_src, messages, copy_source=False
+                            in_src, messages, copy_source=False, target_sr=export_sr
                         )
                         if fmt == "GPKG":
                             gpkg_target = out_path
@@ -1363,6 +1454,8 @@ class UniversalImportTool(object):
                             written_paths.append(
                                 simple_exporters[fmt](fc_work, out_one, messages)
                             )
+                        if include_styles and fmt in STYLE_FILE_FORMATS:
+                            self._write_style_file(in_src, written_paths[-1], messages)
                         export_succeeded.append(sub_src)
                     except Exception as layer_error:
                         export_failures.append((sub_src, str(layer_error)))
@@ -1507,20 +1600,49 @@ class UniversalImportTool(object):
         except Exception:
             return None
 
-    def _prepare_export_feature_class(self, in_src, messages, copy_source=True):
+    def _prepare_export_feature_class(self, in_src, messages, copy_source=True, target_sr=None):
         """Valmistele vientitaso; tarvittaessa scratchGDB-kopio.
 
         Lukuun perustuvissa viennissä lähdetasoa käytetään suoraan. CAD-vienti
         käyttää scratch-kopiota, koska CAD-valmistelu voi lisätä tai muuttaa
         kenttiä. Taso käytetään sellaisenaan (ei catalogPathia), jotta valinta
         ja määrityskysely rajaavat viennin kuten ArcGISin omissa työkaluissa.
-        Vienti ei koskaan projisoi: tuonnin kohde-CRS ei kuulu vientiin.
+        Tuonnin kohde-CRS ei kuulu vientiin; viennin oma kohdekoordinaatisto
+        (``target_sr``) projisoi tason scratch-kopioksi ennen vientiä.
         """
         desc = arcpy.Describe(in_src)
         self._log_layer_subset(in_src, desc, messages)
+        if target_sr is not None and self._export_needs_projection(desc, target_sr, in_src):
+            out_fc = self._new_export_scratch_path()
+            transform = self._list_datum_transform(desc.spatialReference, target_sr)
+            detail = f", muunnos {transform}" if transform else ""
+            self.log(messages, f"  > Muunnetaan koordinaatistosta {desc.spatialReference.name} "
+                               f"koordinaatistoon {target_sr.name}{detail}...")
+            # Project noudattaa tason valintaa ja määrityskyselyä kuten muutkin työkalut.
+            arcpy.management.Project(in_src, out_fc, target_sr, transform)
+            self._queue_deferred_cleanup(out_fc)
+            return out_fc
         if not copy_source:
             return in_src
 
+        out_fc = self._new_export_scratch_path()
+        self.log(messages, "  > Luodaan vientiä varten väliaikainen scratch-kopio...")
+        arcpy.management.CopyFeatures(in_src, out_fc)
+        self._queue_deferred_cleanup(out_fc)
+        return out_fc
+
+    def _spatial_reference_names(self, paths):
+        """Palauta vietävien tasojen koordinaatistojen nimet (tuntemattomat mukaan lukien)."""
+        names = set()
+        for path in paths:
+            try:
+                sr = arcpy.Describe(path).spatialReference
+                names.add(str(getattr(sr, "name", "") or "Unknown"))
+            except Exception:
+                names.add("Unknown")
+        return names
+
+    def _new_export_scratch_path(self):
         scratch = arcpy.env.scratchGDB
         sequence = int(getattr(self, "_export_temp_sequence", 0) or 0) + 1
         self._export_temp_sequence = sequence
@@ -1530,11 +1652,18 @@ class UniversalImportTool(object):
             sequence += 1
             self._export_temp_sequence = sequence
             out_fc = os.path.join(scratch, f"muuntaja_vienti_{stamp}_{sequence}")
-
-        self.log(messages, "  > Luodaan vientiä varten väliaikainen scratch-kopio...")
-        arcpy.management.CopyFeatures(in_src, out_fc)
-        self._queue_deferred_cleanup(out_fc)
         return out_fc
+
+    def _export_needs_projection(self, desc, target_sr, in_src):
+        """True, jos taso pitää projisoida kohdekoordinaatistoon; tuntematon lähde on virhe."""
+        source_sr = getattr(desc, "spatialReference", None)
+        source_name = str(getattr(source_sr, "name", "") or "").strip().lower()
+        if not source_sr or source_name in ("", "unknown"):
+            raise RuntimeError(
+                f"Tason '{in_src}' koordinaatisto on tuntematon, joten sitä ei voi muuntaa "
+                f"koordinaatistoon {target_sr.name}. Määritä tason koordinaatisto ensin."
+            )
+        return self._needs_projection(source_sr, target_sr)
 
 
     def _cad_force_point_entity_type(self, fc_path, messages):
@@ -1621,14 +1750,16 @@ class UniversalImportTool(object):
         self.log(messages, f"CAD-vienti valmis: {out_path} ({len(fc_source_pairs)} lähdettä).")
         return out_path
 
-    def _export_to_geojson(self, fc_path, out_path, messages):
+    def _export_to_geojson(self, fc_path, out_path, messages, keep_input_sr=False):
+        """GeoJSON on oletuksena WGS84 (RFC 7946); valittu kohdekoordinaatisto säilytetään."""
         if arcpy.Exists(out_path):
             try:
                 arcpy.management.Delete(out_path)
             except Exception:
                 pass
         arcpy.conversion.FeaturesToJSON(
-            fc_path, out_path, geoJSON="GEOJSON", outputToWGS84="WGS84"
+            fc_path, out_path, geoJSON="GEOJSON",
+            outputToWGS84="KEEP_INPUT_SR" if keep_input_sr else "WGS84",
         )
         if not os.path.isfile(out_path):
             raise RuntimeError(
@@ -1898,21 +2029,81 @@ class UniversalImportTool(object):
         self.log(messages, f"GeoPackage-vienti valmis: {target}")
         return target
 
-    def _export_to_kml(self, fc_path, out_path, messages):
-        lyr_name = "muuntaja_kml_lyr"
-        if arcpy.Exists(lyr_name):
-            arcpy.management.Delete(lyr_name)
-        arcpy.management.MakeFeatureLayer(fc_path, lyr_name)
+    def _export_to_kml(self, fc_path, out_path, messages, keep_style=True):
+        # Karttataso viedään sellaisenaan, jotta sen symbologia kulkee KML:n
+        # tyyleiksi. Pelkästä feature classista (tai ilman tyylejä) tehdään
+        # väliaikainen taso oletussymbologialla.
+        try:
+            is_layer = keep_style and arcpy.Describe(fc_path).dataType == "FeatureLayer"
+        except Exception:
+            is_layer = False
+        lyr_name = fc_path if is_layer else "muuntaja_kml_lyr"
+        if not is_layer:
+            if arcpy.Exists(lyr_name):
+                arcpy.management.Delete(lyr_name)
+            arcpy.management.MakeFeatureLayer(fc_path, lyr_name)
         try:
             # LayerToKML: kolmas parametri on kartan mittakaava (esim. 10 000)
             arcpy.conversion.LayerToKML(lyr_name, out_path, 10000)
         finally:
-            try:
-                arcpy.management.Delete(lyr_name)
-            except Exception:
-                pass
+            if not is_layer:
+                try:
+                    arcpy.management.Delete(lyr_name)
+                except Exception:
+                    pass
         self.log(messages, f"KML/KMZ-vienti valmis: {out_path}")
         return out_path
+
+    def _style_file_path(self, written_path):
+        """Tyylitiedoston polku: <tiedosto>.lyrx, GeoPackagessa <gpkg>_<taso>.lyrx."""
+        text = str(written_path)
+        match = re.search(r"\.gpkg[\\/]", text, flags=re.IGNORECASE)
+        if match:
+            gpkg = text[:match.start() + len(".gpkg")]
+            layer_name = text[match.end():]
+            return os.path.splitext(gpkg)[0] + "_" + self.sanitize_name(layer_name) + ".lyrx"
+        return os.path.splitext(text)[0] + ".lyrx"
+
+    def _write_style_file(self, in_src, written_path, messages):
+        """Kirjoita lähdetason symbologia .lyrx-tiedostoksi viedyn aineiston viereen.
+
+        ArcGIS ei lue GeoPackageen tai Shapefileen tallennettua tyyliä, joten
+        tyyli kulkee .lyrx-tasotiedostona, joka viittaa viedyn tiedoston
+        dataan suhteellisella polulla. Tyylin puuttuminen ei kaada vientiä.
+        """
+        style_path = self._style_file_path(written_path)
+        temp_dir = None
+        out_layer = None
+        try:
+            import tempfile
+            label = self.sanitize_name(self._export_source_label(in_src))[:50] or "vienti"
+            sequence = int(getattr(self, "_style_layer_sequence", 0) or 0) + 1
+            self._style_layer_sequence = sequence
+            stamp = datetime.datetime.now().strftime("%H%M%S%f")
+            out_layer = f"{label[:30]}_tyyli_{stamp}_{sequence}"
+            arcpy.management.MakeFeatureLayer(written_path, out_layer)
+            if getattr(arcpy.Describe(in_src), "dataType", "") == "FeatureLayer":
+                temp_dir = tempfile.mkdtemp(prefix="muuntaja_tyyli_")
+                source_style = os.path.join(temp_dir, "lahde.lyrx")
+                arcpy.management.SaveToLayerFile(in_src, source_style, "ABSOLUTE")
+                arcpy.management.ApplySymbologyFromLayer(out_layer, source_style)
+            if os.path.exists(style_path):
+                os.remove(style_path)
+            arcpy.management.SaveToLayerFile(out_layer, style_path, "RELATIVE")
+            self.log(messages, f"  > Tyyli tallennettu: {os.path.basename(style_path)}")
+            return style_path
+        except Exception as error:
+            self.log(messages, f"  > Tyylitiedoston kirjoitus epäonnistui ({error}); aineisto vietiin ilman tyyliä.",
+                     "WARNING")
+            return None
+        finally:
+            if out_layer:
+                try:
+                    arcpy.management.Delete(out_layer)
+                except Exception:
+                    pass
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     # --- SUOMEN KOORDINAATISTON PÄÄTTELY ---
     def detect_finnish_crs(self, feature_class, messages, input_path=None):

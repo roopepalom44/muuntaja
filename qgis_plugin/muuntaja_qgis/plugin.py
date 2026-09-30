@@ -15,6 +15,9 @@ from qgis.gui import QgsCustomDropHandler
 
 from . import cad
 from .core import EXPORT_FORMATS, OperationCanceled, export_data, import_data
+from .formats import COMMON_EXPORT_CRS, STYLE_EXPORT_FORMATS
+
+OTHER_CRS = "__muu__"
 
 
 class MuuntajaDialog(QDialog):
@@ -195,6 +198,19 @@ class MuuntajaDialog(QDialog):
         self.format.addItems(EXPORT_FORMATS)
         self.format.currentTextChanged.connect(self._update_export_controls)
         form.addRow("Tiedostomuoto", self.format)
+        self.export_crs = QComboBox()
+        self.export_crs.addItem("Tason oma", "")
+        for label, code in COMMON_EXPORT_CRS:
+            self.export_crs.addItem(f"{label} (EPSG:{code})", f"EPSG:{code}")
+        self.export_crs.addItem("Muu koordinaatisto…", OTHER_CRS)
+        self._export_crs_index = 0
+        self.export_crs.activated.connect(self._choose_export_crs)
+        form.addRow("Kohdekoordinaatisto", self.export_crs)
+        self.include_styles = QCheckBox("Pakkaa tasojen tyylit mukaan")
+        self.include_styles.setChecked(True)
+        self.include_styles.setToolTip("GeoPackage: tyyli tallennetaan tiedoston sisään. Shapefile ja GeoJSON: "
+                                       "samanniminen .qml viereen. KML/KMZ: tyylit tiedostoon.")
+        form.addRow("Tyylit", self.include_styles)
         self.combined = QCheckBox("Vie valitut tasot samaan tiedostoon")
         self.combined.stateChanged.connect(self._update_export_controls)
         form.addRow("Useita tasoja", self.combined)
@@ -297,6 +313,31 @@ class MuuntajaDialog(QDialog):
         if path:
             self.export_folder.setText(path)
 
+    def _choose_export_crs(self, index):
+        """Open QGIS' own CRS selector for "Muu koordinaatisto…"."""
+        if self.export_crs.itemData(index) != OTHER_CRS:
+            self._export_crs_index = index
+            return
+        from qgis.gui import QgsProjectionSelectionDialog
+        dialog = QgsProjectionSelectionDialog(self)
+        dialog.setWindowTitle("Viennin kohdekoordinaatisto")
+        project_crs = QgsProject.instance().crs()
+        dialog.setCrs(project_crs if project_crs.isValid() else QgsCoordinateReferenceSystem("EPSG:3067"))
+        if not dialog.exec() or not dialog.crs().isValid():
+            self.export_crs.setCurrentIndex(self._export_crs_index)
+            return
+        crs = dialog.crs()
+        existing = self.export_crs.findData(crs.authid())
+        if existing < 0:
+            existing = self.export_crs.count() - 1
+            self.export_crs.insertItem(existing, f"{crs.description()} ({crs.authid()})", crs.authid())
+        self.export_crs.setCurrentIndex(existing)
+        self._export_crs_index = existing
+
+    def _export_target_crs(self):
+        authid = self.export_crs.currentData()
+        return QgsCoordinateReferenceSystem(authid) if authid and authid != OTHER_CRS else None
+
     def _update_export_controls(self, *_):
         format_name = self.format.currentText()
         supports_combined = format_name in {"GPKG", "DXF"}
@@ -304,6 +345,12 @@ class MuuntajaDialog(QDialog):
         if not supports_combined:
             self.combined.setChecked(False)
         self.cad_hint.setVisible(format_name == "DXF")
+        self.include_styles.setEnabled(format_name in STYLE_EXPORT_FORMATS)
+        wgs84_only = format_name in {"KML", "KMZ"}
+        self.export_crs.setEnabled(not wgs84_only)
+        self.export_crs.setToolTip("KML/KMZ viedään aina WGS84:ään." if wgs84_only else
+                                   "GeoJSON viedään WGS84:ään, jos koordinaatistoa ei valita." if format_name == "GeoJSON"
+                                   else "")
 
     def refresh_layers(self):
         self.layers.clear()
@@ -400,6 +447,7 @@ class MuuntajaDialog(QDialog):
         self.progress.setMinimumDuration(0)
         self.progress.show()
         try:
+            notes = []
             successes, failures = export_data(
                 layers,
                 folder,
@@ -407,8 +455,11 @@ class MuuntajaDialog(QDialog):
                 self.combined.isChecked(),
                 self._progress,
                 self._symbology_scale(),
+                self._export_target_crs(),
+                notes,
+                self.include_styles.isChecked(),
             )
-            self._show_result("Vienti", successes, failures)
+            self._show_result("Vienti", successes, failures, "\n".join(notes))
         except OperationCanceled:
             QMessageBox.information(self, "Muuntaja", "Vienti keskeytettiin.")
         except Exception as exc:

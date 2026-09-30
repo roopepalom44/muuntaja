@@ -11,11 +11,13 @@ from qgis.core import (
 from . import cad
 from .formats import (  # noqa: F401  (julkinen rajapinta lisäosalle ja testeille)
     CAD_EXTENSIONS, RASTER_EXTENSIONS, VECTOR_EXTENSIONS, classify_finnish_xy, dfsu_matches,
-    dfsu_wkb, find_libredwg_tool, has_georeference, raster_group, safe_name, scan_inputs,
+    COMMON_EXPORT_CRS, WGS84_ONLY_EXPORT_FORMATS, dfsu_wkb, find_libredwg_tool, has_georeference,
+    raster_group, safe_name, scan_inputs,
     unique_name, unique_path,
 )
 from .qgisutil import (  # noqa: F401
-    add_project_layer, assign_source_crs, ensure_project_crs, field_type, inferred_crs, write_vector,
+    add_project_layer, assign_source_crs, ensure_project_crs, field_type, inferred_crs, save_style,
+    write_vector,
 )
 
 DRIVERS = {"GPKG": ("GPKG", ".gpkg"), "GeoJSON": ("GeoJSON", ".geojson"),
@@ -299,14 +301,29 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
 
 
 def export_data(layers, folder, format_name, combined=False, progress=None,
-                symbology_scale=None):
+                symbology_scale=None, target_crs=None, notes=None, include_styles=True):
+    """Export layers; ``target_crs`` reprojects every format except KML/KMZ (always WGS84).
+
+    Kun ``include_styles`` on päällä, tason tyyli tallennetaan vientiin
+    (GeoPackageen sisäisesti, Shapefilen ja GeoJSONin viereen .qml, KML:ään tyyleinä). Tyylin ja muunnoksen tiedot
+    lisätään ``notes``-listaan käyttäjälle näytettäviksi.
+    """
     if format_name not in EXPORT_FORMATS:
         raise ValueError(f"Tuntematon vientimuoto: {format_name}")
     layers = [layer for layer in layers or [] if layer is not None]
     if not layers:
         raise ValueError("Valitse vähintään yksi vektoritaso.")
+    target_crs = target_crs if target_crs is not None and target_crs.isValid() else None
+    if format_name in WGS84_ONLY_EXPORT_FORMATS:
+        if target_crs is not None and notes is not None:
+            notes.append(f"{format_name} viedään aina WGS84:ään (KML-standardi); "
+                         "kohdekoordinaatiston valinta ei koske sitä.")
+        target_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+    elif format_name == "GeoJSON" and target_crs is None:
+        # RFC 7946: GeoJSON on oletuksena WGS84.
+        target_crs = QgsCoordinateReferenceSystem("EPSG:4326")
     if format_name in CAD_FORMATS:
-        return cad.export_cad(layers, folder, combined, progress, symbology_scale)
+        return cad.export_cad(layers, folder, combined, progress, symbology_scale, target_crs=target_crs)
     driver, extension = DRIVERS[format_name]
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
@@ -324,12 +341,22 @@ def export_data(layers, folder, format_name, combined=False, progress=None,
             path = common_path or unique_path(folder / f"{safe_name(name)}{extension}")
             layer_name = unique_name(safe_name(name), used_names, 80)
             used_names.add(layer_name)
-            if format_name == "GeoJSON" and not layer.crs().isValid():
-                raise RuntimeError("GeoJSON-vienti vaatii tunnetun lähtökoordinaatiston")
+            if target_crs is not None and not layer.crs().isValid():
+                raise RuntimeError(f"{format_name}-vienti koordinaatistoon {target_crs.authid()} vaatii "
+                                   "tunnetun lähtökoordinaatiston")
             write_vector(layer, path, driver, layer_name if format_name == "GPKG" else None,
-                         target_crs=QgsCoordinateReferenceSystem("EPSG:4326") if format_name == "GeoJSON" else None,
-                         append=bool(common_path and path.exists()))
+                         target_crs=target_crs, append=bool(common_path and path.exists()),
+                         symbology=include_styles and format_name in WGS84_ONLY_EXPORT_FORMATS,
+                         symbology_scale=symbology_scale)
             successes.append(str(path))
+            if include_styles:
+                try:
+                    style = save_style(layer, path, format_name, layer_name)
+                    if style and notes is not None:
+                        notes.append(f"Tyyli tallennettu: {style}")
+                except Exception as exc:
+                    if notes is not None:
+                        notes.append(f"Tason {name} tyyliä ei voitu tallentaa ({exc}); aineisto vietiin ilman tyyliä.")
         except OperationCanceled:
             raise
         except Exception as exc:

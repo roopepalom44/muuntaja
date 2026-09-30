@@ -476,23 +476,40 @@ def write_dxf(layers, path, crs=None, symbology_scale=None, project=None):
     return Path(path)
 
 
-def export_cad(layers, folder, combined=False, progress=None, symbology_scale=None, project=None):
-    """Export vector layers to DXF. Returns (written paths per layer, failures)."""
+def export_cad(layers, folder, combined=False, progress=None, symbology_scale=None, project=None,
+               target_crs=None):
+    """Export vector layers to DXF. Returns (written paths per layer, failures).
+
+    Ilman ``target_crs``:ää jokainen tasokohtainen DXF säilyttää tason oman
+    koordinaatiston. Yhteen DXF:ään mahtuu vain yksi koordinaatisto, joten
+    eri koordinaatistoissa olevia tasoja ei yhdistetä ilman kohdekoordinaatistoa.
+    """
     project = project or QgsProject.instance()
     invalid = [layer.name() for layer in layers if not layer.isValid()]
     if invalid:
         raise RuntimeError("Tasot eivät ole kelvollisia (tietolähde puuttuu): " + ", ".join(invalid))
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    crs = _destination_crs(layers, project)
-    groups = [(list(layers), "muuntaja_vienti")] if combined else         [([layer], formats.safe_name(layer.name())) for layer in layers]
+    target = target_crs if target_crs is not None and target_crs.isValid() else None
+    if combined and target is None:
+        systems = {layer.crs().authid() or "tuntematon" for layer in layers}
+        if len(systems) > 1:
+            raise RuntimeError(
+                "Tasot ovat eri koordinaatistoissa (" + ", ".join(sorted(systems)) + "), eikä yhteen "
+                "DXF-tiedostoon mahdu kuin yksi koordinaatisto. Valitse kohdekoordinaatisto tai vie tasot "
+                "omiin tiedostoihinsa, jolloin jokainen taso säilyttää omansa.")
+    groups = ([(list(layers), "muuntaja_vienti")] if combined
+              else [([layer], formats.safe_name(layer.name())) for layer in layers])
     successes, failures = [], []
     for index, (group, name) in enumerate(groups, 1):
         if progress:
             progress(index, len(groups), name)
         try:
-            target = write_dxf(group, formats.unique_path(folder / f"{name}.dxf"), crs, symbology_scale, project)
-            successes.extend(str(target) for _layer in group)
+            # Tason oma koordinaatisto; tuntemattomalle tasolle projektin koordinaatisto.
+            own = group[0].crs()
+            crs = target or (own if own.isValid() else _destination_crs(group, project))
+            written = write_dxf(group, formats.unique_path(folder / f"{name}.dxf"), crs, symbology_scale, project)
+            successes.extend(str(written) for _layer in group)
         except Exception as exc:
             if combined:
                 raise

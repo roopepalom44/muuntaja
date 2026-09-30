@@ -142,6 +142,34 @@ class ArcGisFixTests(unittest.TestCase):
 
         self.assertEqual(result, os.path.join(r"C:\out.gdb", "roads_proj_2"))
 
+    # Viennin kohdekoordinaatisto ja tyyli ---------------------------------
+    def test_export_crs_list_has_common_finnish_systems(self):
+        self.assertIn("ETRS-GK23 (3877)", self.module.EXPORT_CRS_LIST)
+        self.assertIn("ETRS-TM35FIN (3067)", self.module.EXPORT_CRS_LIST)
+        self.assertEqual(self.module.EXPORT_CRS_LIST[0], self.module.EXPORT_CRS_KEEP)
+        self.assertIsNone(self.tool._parse_input_sr(self.module.EXPORT_CRS_KEEP))
+        self.assertEqual(self.tool._parse_input_sr("ETRS-GK23 (3877)").factoryCode, 3877)
+        self.assertIn("shapefile", self.module.EXPORT_MODE_LABEL)
+
+    def test_export_of_layer_without_crs_to_target_crs_fails_clearly(self):
+        unknown = types.SimpleNamespace(spatialReference=types.SimpleNamespace(name="Unknown"))
+        target = types.SimpleNamespace(name="ETRS-GK23", factoryCode=3877)
+
+        with self.assertRaisesRegex(RuntimeError, "koordinaatisto on tuntematon"):
+            self.tool._export_needs_projection(unknown, target, "tasot")
+
+    def test_export_skips_projection_when_crs_already_matches(self):
+        same = types.SimpleNamespace(spatialReference=types.SimpleNamespace(name="GK23", factoryCode=3877))
+        target = types.SimpleNamespace(name="ETRS-GK23", factoryCode=3877)
+
+        self.assertFalse(self.tool._export_needs_projection(same, target, "tasot"))
+
+    def test_style_file_is_named_after_the_export(self):
+        self.assertEqual(self.tool._style_file_path(os.path.join("C:", "vienti", "tiet.shp")),
+                         os.path.join("C:", "vienti", "tiet.lyrx"))
+        self.assertEqual(self.tool._style_file_path(os.path.join("C:", "vienti", "kaikki.gpkg", "tiet")),
+                         os.path.join("C:", "vienti", "kaikki_tiet.lyrx"))
+
     # 1.5 ---------------------------------------------------------------
     def test_dfsu_without_projection_is_detected_from_coordinates(self):
         geometry = types.SimpleNamespace(projection_string="NON-UTM")

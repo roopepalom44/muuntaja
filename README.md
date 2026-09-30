@@ -1,5 +1,7 @@
 # Muuntaja
 
+**Käyttöohjeet:** [ArcGIS Pro (PDF)](docs/Muuntaja_ArcGIS_Pro_ohje.pdf) · [QGIS (PDF)](docs/Muuntaja_QGIS_ohje.pdf) – Word-versiot samassa `docs`-kansiossa.
+
 **QGIS-versio (esijulkaisu):** [asennus ja nykyinen toiminnallisuus](qgis_plugin/README.md). Uusimmat asennuspaketit: [Muuntaja-QGIS-Windows.zip](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja-QGIS-Windows.zip) ja [Muuntaja-QGIS.zip](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja-QGIS.zip).
 
 **Muuntaja** on ArcGIS Pro Add-In -laajennus, joka on suunniteltu helpottamaan erilaisten tiedostomuotojen (kuten CAD, GPX, KML jne.) tuomista ja viemistä ArcGIS Pro -ympäristössä. Se tarjoaa käyttäjäystävällisen käyttöliittymän aineistojen nopeaan kääntämiseen ja siirtämiseen.
@@ -182,5 +184,8 @@ Version 1.5.2 [testiraportti](tests/VALIDATION_2026-09-30.md) sisältää
 - **ArcGIS Pro SDK:** 3.5.0
 - **Kehittäjä:** Roope Palomaa
 
-Katso tarkemmat käyttöohjeet projektin mukana tulevasta manuaalista:
-- `Muuntaja_User_Manual.pdf` tai `.docx`
+Kuvitetut asennus- ja käyttöohjeet työkavereille (Word ja PDF):
+- ArcGIS Pro: [docs/Muuntaja_ArcGIS_Pro_ohje.pdf](docs/Muuntaja_ArcGIS_Pro_ohje.pdf) ([.docx](docs/Muuntaja_ArcGIS_Pro_ohje.docx))
+- QGIS: [docs/Muuntaja_QGIS_ohje.pdf](docs/Muuntaja_QGIS_ohje.pdf) ([.docx](docs/Muuntaja_QGIS_ohje.docx))
+
+Vanhempi, vain ArcGIS Prota koskeva manuaali (versio 1.2.4): `Muuntaja_User_Manual.pdf` tai `.docx`.

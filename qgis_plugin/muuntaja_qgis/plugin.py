@@ -309,8 +309,8 @@ class MuuntajaDialog(QDialog):
                                   "nimiöt ja tuotujen CAD-tasojen nimet säilyvät.")
         elif status:
             self.dwg_hint.setText(f"Kokeellinen: DWG tehdään QGISin DXF-viennistä – {status}. "
-                                  "Tulos luetaan takaisin ja hylätään, jos kohteita puuttuu. "
-                                  "Luotettavin CAD-muoto on DXF.")
+                                  "Toimii aluetasoille (ilman reunaviivoja); viivat, pisteet ja tekstit "
+                                  "vie DXF-muotoon.")
         else:
             self.dwg_hint.setText("DWG-vienti vaatii LibreDWG:n (dxf2dwg). "
                                   "DXF-vienti ei vaadi lisäohjelmaa.")
@@ -409,6 +409,7 @@ class MuuntajaDialog(QDialog):
         self.progress.setWindowModality(Qt.WindowModal)
         self.progress.setMinimumDuration(0)
         self.progress.show()
+        warnings = []
         try:
             successes, failures = export_data(
                 layers,
@@ -417,8 +418,10 @@ class MuuntajaDialog(QDialog):
                 self.combined.isChecked(),
                 self._progress,
                 self._symbology_scale(),
+                warnings,
             )
-            self._show_result("Vienti", successes, failures)
+            note = "\n".join(f"Huomio – {warning}" for warning in warnings)
+            self._show_result("Vienti", successes, failures, note)
         except OperationCanceled:
             QMessageBox.information(self, "Muuntaja", "Vienti keskeytettiin.")
         except Exception as exc:

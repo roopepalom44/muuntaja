@@ -297,7 +297,7 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
 
 
 def export_data(layers, folder, format_name, combined=False, progress=None,
-                symbology_scale=None):
+                symbology_scale=None, warnings=None):
     if format_name not in EXPORT_FORMATS:
         raise ValueError(f"Tuntematon vientimuoto: {format_name}")
     layers = [layer for layer in layers or [] if layer is not None]
@@ -305,7 +305,7 @@ def export_data(layers, folder, format_name, combined=False, progress=None,
         raise ValueError("Valitse vähintään yksi vektoritaso.")
     if format_name in CAD_FORMATS:
         return cad.export_cad(layers, folder, format_name, combined, progress,
-                              symbology_scale)
+                              symbology_scale, warnings=warnings)
     driver, extension = DRIVERS[format_name]
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,25 @@ import importlib
 import json
 import shutil
 import struct
+import subprocess
+import sys
+import tempfile
+
+
+class ImportItemMessages:
+    """Yhden tuontikohteen virheet ovat varoituksia ennen eräyhteenvetoa."""
+
+    def __init__(self, messages):
+        self.messages = messages
+
+    def addMessage(self, text):
+        self.messages.addMessage(text)
+
+    def addWarningMessage(self, text):
+        self.messages.addWarningMessage(text)
+
+    def addErrorMessage(self, text):
+        self.messages.addWarningMessage(text)
 
 class Toolbox(object):
     def __init__(self):
@@ -57,6 +76,17 @@ MULTI_EXPORT_PACKAGING_FORMATS = ("GPKG", "DWG", "DXF")
 # pieni varmuusvara ArcGISin omille kenttämäärittelyille.
 SHAPEFILE_MAX_RECORD_LENGTH = 4000
 SHAPEFILE_SAFE_RECORD_LENGTH = SHAPEFILE_MAX_RECORD_LENGTH - 100
+# dBASE ei tue ArcGISin uusia kokonaisluku- ja aikatyyppejä. Teksti
+# säilyttää myös pitkät tunnisteet ilman Double-muunnoksen pyöristymistä.
+SHAPEFILE_TEXT_FIELD_LENGTHS = {
+    "biginteger": 20,
+    "big integer": 20,
+    "dateonly": 10,
+    "timeonly": 15,
+    "timestampoffset": 35,
+    "guid": 38,
+    "globalid": 38,
+}
 IMPORT_MODE_LABEL = "Tuonti (gpkg, geojson, json, kml, kmz, gpx, dwg, dxf, dfsu, shp, rasterit)"
 EXPORT_MODE_LABEL = "Vienti (gpkg, shapefile, geojson, dwg, dxf, kml, kmz)"
 # Viennin kohdekoordinaatisto. KML/KMZ on standardin mukaan aina WGS84.
@@ -1196,6 +1226,7 @@ class UniversalImportTool(object):
 
         succeeded = []
         failures = []
+        item_messages = ImportItemMessages(messages)
         try:
             for idx, input_path in enumerate(file_paths, 1):
                 if len(file_paths) > 1:
@@ -1204,16 +1235,16 @@ class UniversalImportTool(object):
                     ext = os.path.splitext(input_path)[1].lower()
 
                     if ext == ".gpkg":
-                        self.process_geopackage(input_path, output_loc, is_folder, messages)
+                        self.process_geopackage(input_path, output_loc, is_folder, item_messages)
                     elif ext in [".geojson", ".json"]:
-                        self.process_geojson_flattened(input_path, output_loc, is_folder, messages)
+                        self.process_geojson_flattened(input_path, output_loc, is_folder, item_messages)
                     elif ext in [".kml", ".kmz"]:
-                        self.process_kml_flattened(input_path, output_loc, is_folder, messages)
+                        self.process_kml_flattened(input_path, output_loc, is_folder, item_messages)
                     elif ext == ".gpx":
-                        self.process_gpx_flattened(input_path, output_loc, is_folder, messages)
+                        self.process_gpx_flattened(input_path, output_loc, is_folder, item_messages)
                     elif ext == ".dfsu":
                         # DFSU tuonti suodattimella
-                        self.process_dfsu(input_path, output_loc, is_folder, messages,
+                        self.process_dfsu(input_path, output_loc, is_folder, item_messages,
                                         filter_enabled=dfsu_filter_enabled,
                                         filter_column=dfsu_filter_column,
                                         filter_operator=dfsu_filter_operator,
@@ -1221,9 +1252,9 @@ class UniversalImportTool(object):
                                         target_sr=target_sr,
                                         input_sr=input_sr)
                     elif ext in [".dwg", ".dxf"]:
-                        self.process_cad(input_path, output_loc, is_folder, use_mapper, input_sr, target_sr, messages)
+                        self.process_cad(input_path, output_loc, is_folder, use_mapper, input_sr, target_sr, item_messages)
                     else:
-                        self.process_generic(input_path, output_loc, is_folder, messages)
+                        self.process_generic(input_path, output_loc, is_folder, item_messages)
 
                     succeeded.append(input_path)
 
@@ -1807,7 +1838,7 @@ class UniversalImportTool(object):
     def _build_shapefile_field_mappings(
         self, fc_path, out_dir, messages, force=False, minimal=False
     ):
-        """Rajaa Shapefilen kentät dBASE:n 4 000 tavun rivirajoitukseen."""
+        """Sovita kenttätyypit ja kenttäleveydet Shapefilen dBASE-rajoihin."""
         try:
             source_fields = list(arcpy.ListFields(fc_path) or [])
         except Exception as e:
@@ -1826,6 +1857,8 @@ class UniversalImportTool(object):
                 raw_length = 0
             if field_type in ("string", "text") and raw_length > 254:
                 needs_mapping = True
+            if field_type in SHAPEFILE_TEXT_FIELD_LENGTHS or field_type in ("blob", "raster"):
+                needs_mapping = True
 
         if not force and estimated_length <= SHAPEFILE_SAFE_RECORD_LENGTH and not needs_mapping:
             return None
@@ -1839,31 +1872,51 @@ class UniversalImportTool(object):
             self.log(messages, f"  > Shapefilen kenttäkartan luonti epäonnistui: {e}", "WARNING")
             return None
 
-        # Shapefile-tekstikenttä ei voi olla yli 254 merkkiä. FieldMap.outputField
-        # on kopioitava, muutettava ja asetettava takaisin ArcGISin API-ohjeen
-        # mukaisesti.
+        # Sovita tyypit ennen rivileveyden laskemista. outputField on kopio:
+        # muutokset asetetaan takaisin FieldMapiin ja FieldMappingsiin.
+        converted = []
+        unsupported = []
         for output_field in list(field_mappings.fields):
             field_type = (getattr(output_field, "type", "") or "").casefold()
-            if field_type not in ("string", "text"):
+            field_index = field_mappings.findFieldMapIndex(output_field.name)
+            if field_type in ("blob", "raster"):
+                field_mappings.removeFieldMap(field_index)
+                unsupported.append(output_field.name)
                 continue
-            try:
-                output_length = int(getattr(output_field, "length", 0) or 0)
-            except Exception:
-                output_length = 0
-            if output_length <= 254:
+            text_length = SHAPEFILE_TEXT_FIELD_LENGTHS.get(field_type)
+            if text_length is None and field_type not in ("string", "text"):
                 continue
-            try:
-                field_index = field_mappings.findFieldMapIndex(output_field.name)
-                if field_index < 0:
+            if text_length is None:
+                try:
+                    output_length = int(getattr(output_field, "length", 0) or 0)
+                except Exception:
+                    output_length = 0
+                if 1 <= output_length <= 254:
                     continue
-                field_map = field_mappings.getFieldMap(field_index)
-                mapped_field = field_map.outputField
-                mapped_field.length = 254
-                field_map.outputField = mapped_field
-                field_mappings.replaceFieldMap(field_index, field_map)
-            except Exception:
-                # Kentän poisto alla pienentää rakennetta silti tarvittaessa.
-                pass
+                text_length = min(max(output_length, 1), 254)
+            field_map = field_mappings.getFieldMap(field_index)
+            mapped_field = field_map.outputField
+            mapped_field.type = "String"
+            mapped_field.length = text_length
+            field_map.outputField = mapped_field
+            field_mappings.replaceFieldMap(field_index, field_map)
+            if field_type in SHAPEFILE_TEXT_FIELD_LENGTHS:
+                converted.append(f"{output_field.name} ({output_field.type})")
+
+        if converted:
+            self.log(
+                messages,
+                "  > Shapefile: muunnettiin tukemattomat kenttätyypit tekstiksi "
+                f"arvojen säilyttämiseksi: {', '.join(converted)}.",
+                "WARNING",
+            )
+        if unsupported:
+            self.log(
+                messages,
+                "  > Shapefile: jätettiin pois BLOB-/rasterikentät, joita dBASE "
+                f"ei tue: {', '.join(unsupported)}.",
+                "WARNING",
+            )
 
         current_length = 1
         removable = []
@@ -2625,17 +2678,21 @@ class UniversalImportTool(object):
         """
         if input_sr is not None:
             return input_sr
-        epsg_codes = set()
+        common_sr = None
         for path in paths:
-            epsg, _source = self._guess_raster_epsg(path)
-            if not epsg:
+            try:
+                sr = arcpy.Describe(path).spatialReference
+            except Exception:
+                sr = None
+            if sr is None or (getattr(sr, "name", "") or "Unknown").casefold() == "unknown":
+                epsg, _source = self._guess_raster_epsg(path)
+                if not epsg:
+                    return None
+                sr = arcpy.SpatialReference(epsg)
+            if common_sr is not None and self._needs_projection(common_sr, sr):
                 return None
-            epsg_codes.add(epsg)
-            if len(epsg_codes) > 1:
-                return None
-        if not epsg_codes:
-            return None
-        return arcpy.SpatialReference(epsg_codes.pop())
+            common_sr = sr
+        return common_sr
 
     def _is_mosaic_dataset(self, path):
         try:
@@ -2956,6 +3013,9 @@ class UniversalImportTool(object):
                         self._define_missing_crs(check_path, input_sr, messages)
                         return check_path
                     except Exception as e:
+                        # GP voi luoda osittaisen kohteen ennen kenttäkartta-
+                        # virhettä. Vapaa kohdenimi oli varattu tälle yritykselle.
+                        self._delete_if_exists(check_path)
                         self.log(
                             messages,
                             f"  > Suora FeatureClassToFeatureClass epäonnistui ({e}), kokeillaan scratch-reittiä.",
@@ -2973,6 +3033,7 @@ class UniversalImportTool(object):
                         input_data, scratch, scratch_name, field_mapping=field_mappings
                     )
                 except arcpy.ExecuteError as e:
+                    self._delete_if_exists(scratch_intermediate)
                     self.log(
                         messages,
                         f"  > FeatureClassToFeatureClass epäonnistui ({e.__class__.__name__}), kokeillaan CopyFeatures-fallbackia.",
@@ -3039,6 +3100,64 @@ class UniversalImportTool(object):
 
     # --- CAD PROCESSOR ---
     def process_cad(self, input_path, output_loc, is_folder, use_mapper, input_sr, target_sr, messages):
+        """Lue CAD erillisessä prosessissa: lukijan native-kaatuminen ei vie eräajoa."""
+        candidates = [os.path.join(sys.prefix, "python.exe"), sys.executable]
+        python = next((path for path in candidates
+                       if os.path.isfile(path) and os.path.basename(path).lower().startswith("python")), None)
+        if python is None:
+            raise RuntimeError("ArcGIS Pron Python-suoritinta ei löytynyt CAD-tuontia varten.")
+        worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cad_worker.py")
+        if not os.path.isfile(worker):
+            raise RuntimeError("CAD-tuonnin cad_worker.py puuttuu Muuntajan asennuksesta.")
+        self.log(messages, f"Analysoidaan CAD-tiedostoa: {os.path.basename(input_path)}...")
+        with tempfile.TemporaryDirectory(prefix="muuntaja_cad_", ignore_cleanup_errors=True) as work_dir:
+            request_path = os.path.join(work_dir, "request.json")
+            result_path = os.path.join(work_dir, "result.json")
+            with open(request_path, "w", encoding="utf-8") as stream:
+                json.dump({
+                    "input_path": input_path,
+                    "work_dir": work_dir,
+                    "use_mapper": bool(use_mapper),
+                    "input_sr": input_sr.exportToString() if input_sr else None,
+                    "target_sr": target_sr.exportToString() if target_sr else None,
+                }, stream, ensure_ascii=False)
+            try:
+                completed = subprocess.run(
+                    [python, worker, request_path, result_path],
+                    capture_output=True, encoding="utf-8", errors="replace",
+                    timeout=3600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError("CAD-tuonnin aikaraja (60 min) ylittyi; muut aineistot voidaan käsitellä.") from error
+            result = {}
+            if os.path.isfile(result_path):
+                with open(result_path, encoding="utf-8") as stream:
+                    result = json.load(stream)
+            for level, text in result.get("messages", []):
+                if level == "ERROR":
+                    messages.addWarningMessage(text)
+                elif level == "WARNING":
+                    messages.addWarningMessage(text)
+                else:
+                    messages.addMessage(text)
+            if completed.returncode != 0 or result.get("error"):
+                reason = result.get("error") or f"ArcGISin CAD-lukija keskeytyi (exit {completed.returncode})."
+                raise RuntimeError(f"CAD-aineistoa ei voitu lukea: {reason}")
+            paths = result.get("paths", [])
+            if not paths:
+                raise RuntimeError("CAD-tiedostossa ei ollut tuotavia kohteita.")
+            try:
+                return self._bulk_convert_and_add(
+                    [(path, os.path.basename(path)) for path in paths],
+                    output_loc, is_folder, messages,
+                )
+            finally:
+                try:
+                    arcpy.management.ClearWorkspaceCache(os.path.join(work_dir, "cad.gdb"))
+                except Exception:
+                    pass
+
+    def _process_cad_in_process(self, input_path, output_loc, is_folder, use_mapper, input_sr, target_sr, messages):
         base_name = os.path.splitext(os.path.basename(input_path))[0]
         sanitized_name = self.sanitize_name(base_name)
         self.log(messages, f"Analysoidaan CAD-tiedostoa: {base_name}...")
@@ -3154,7 +3273,7 @@ class UniversalImportTool(object):
             if not fcs:
                 raise RuntimeError("CAD-tiedostosta ei löytynyt tasoja.")
 
-            fcs = sorted(fcs, key=lambda fc: self._cad_layer_sort_key(fc, dataset_path))
+            fcs = sorted(dict.fromkeys(fcs), key=lambda fc: self._cad_layer_sort_key(fc, dataset_path))
 
             # Automaattitunnistus (ensimmäisestä EI-tyhjästä point/line/polygon-tasosta)
             if not input_sr and not crs_detection_done:
@@ -3323,12 +3442,17 @@ class UniversalImportTool(object):
         try:
             # 1. Tuodaan data (Raw geometry)
             t0 = time.perf_counter()
-            if field_mappings:
+            if is_folder:
+                # Kansiotuonti kirjoittaa Shapefilen ja tarvitsee samat
+                # tyyppi-/rivileveyskorjaukset kuin erillinen vienti.
+                self._export_to_shapefile(input_data, check_path, messages)
+            elif field_mappings:
                 try:
                     arcpy.conversion.FeatureClassToFeatureClass(input_data, output_loc, output_name, field_mapping=field_mappings)
                 except arcpy.ExecuteError as e:
                     # Tyypillisesti "empty geometry" -virhe yhdeltä riviltä kaataa koko muunnoksen.
                     # Yritetään uudelleen CopyFeaturesilla ilman mappingia, jolloin saadaan edes geometriat talteen.
+                    self._delete_if_exists(check_path)
                     self.log(messages, f"  > FeatureClassToFeatureClass epäonnistui ({e.__class__.__name__}), kokeillaan CopyFeatures-fallbackia.", "WARNING")
                     arcpy.management.CopyFeatures(input_data, check_path)
             else:

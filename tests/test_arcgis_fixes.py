@@ -104,7 +104,7 @@ class ArcGisFixTests(unittest.TestCase):
         self.tool._add_layers_to_map = lambda _paths, _messages, _styles=None: None
         self.tool._save_cad_layer = lambda *args, **_kwargs: saved.append(args) or args[2]
 
-        self.tool.process_cad(r"C:\cad\drawing.dwg", r"C:\out.gdb", False, False, None, target, None)
+        self.tool._process_cad_in_process(r"C:\cad\drawing.dwg", r"C:\out.gdb", False, False, None, target, None)
 
         conversion = [args for name, args, _kwargs in self.arcpy.conversion.calls if name == "CADToGeodatabase"]
         self.assertEqual(len(conversion), 1)

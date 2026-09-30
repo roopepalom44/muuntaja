@@ -25,6 +25,9 @@
 		<Content Include="Toolboxes\Muuntaja.pyt">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</Content>
+		<Content Include="Toolboxes\cad_worker.py">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</Content>
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="Properties\launchSettings.json" />

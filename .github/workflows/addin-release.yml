@@ -28,7 +28,7 @@ jobs:
       - name: Lint
         run: |
           pipx run ruff check --select F,E9 --extension pyt:python \
-            Toolboxes/Muuntaja.pyt qgis_plugin tests
+            Toolboxes qgis_plugin tests
 
       - name: Unit tests
         env:

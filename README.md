@@ -94,12 +94,28 @@ paikkaan ennen tuontia.
 
 ## Suorituskyky ja virheensieto
 
+- **Shapefile-vienti sovittaa kenttätyypit dBASEen.** BigInteger-tunnisteet
+  viedään tekstinä, jotta pitkät tunnisteet eivät pyöristy eikä vienti kaadu
+  virheeseen `ERROR 000308: Invalid field type`. Myös DateOnly-, TimeOnly-,
+  TimestampOffset-, GUID- ja GlobalID-kentät viedään tekstinä. BLOB- ja
+  rasterikentät jätetään pois varoituksella. Pitkät tekstikentät rajataan
+  254 merkkiin, ja liian leveistä tauluista jätetään kenttiä pois dBASE:n
+  4 000 tavun rivirajan vuoksi; poistetut kentät ilmoitetaan ajon viesteissä.
+  Samat sovitukset tehdään myös kansioon tuotaessa, koska kansiotuonnin
+  tulos on Shapefile.
+- **CAD-lukijan kaatuminen on eristetty.** DWG/DXF luetaan erillisessä
+  ArcGIS-Python-prosessissa väliaikaiseen geodatabaseen. Vain onnistuneet
+  tulokset kopioidaan lopulliseen kohteeseen. Jos ArcGISin native-lukija
+  kaatuu tai 60 minuutin aikaraja ylittyy, tiedosto ilmoitetaan
+  epäonnistuneeksi ja eräajo voi jatkaa seuraaviin aineistoihin.
 - **Eräajo ei enää kaadu ensimmäiseen virheeseen.** Aiemmin yksi rikkinäinen
   tiedosto keskeytti koko kansiotuonnin, jolloin sen jälkeiset tiedostot jäivät
   käsittelemättä. Nyt virhe kirjataan varoituksena, käsittely jatkuu seuraavaan
   tiedostoon, ja ajon lopussa kerrotaan `n/m onnistui` sekä luettelo
   epäonnistuneista. Ajo merkitään virheelliseksi vain jos yksikään kohde ei
   onnistunut. Sama koskee monitasovientiä.
+  Yksittäisen tuontikohteen sisäiset virheilmoitukset kirjataan varoituksina,
+  jotta ne eivät merkitse osittain onnistunutta geoprocessointia virheelliseksi.
 - **DFSU-geometria kirjoitetaan WKB-tavuina.** Aiemmin jokaiselle elementille
   rakennettiin `arcpy.Array` ja erilliset `arcpy.Point`-oliot; miljoonan
   elementin meshissä se tarkoitti miljoonia COM-rajapinnan yli meneviä olioita.
@@ -159,6 +175,9 @@ kädessä keksityillä kentillä (`Element ID`, `X`, `Y`, `Z`), joista valittu
 suodatin ei osunut koskaan mihinkään.
 
 ## Tekninen kuvaus
+
+Version 1.5.2 [testiraportti](tests/VALIDATION_2026-09-30.md) sisältää
+134 automaattista testiä ja 83 oikean ArcGISin tuonti-/vientitapausta.
 - **Kehitysympäristö:** .NET 8.0 (WPF), C#
 - **ArcGIS Pro SDK:** 3.5.0
 - **Kehittäjä:** Roope Palomaa

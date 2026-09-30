@@ -26,7 +26,8 @@ $files = @(
     @{ Relative = 'Install\Muuntaja.dll'; Source = (Join-Path $output 'Muuntaja.dll') },
     @{ Relative = 'Install\Muuntaja.pdb'; Source = (Join-Path $output 'Muuntaja.pdb') },
     @{ Relative = 'Install\Muuntaja.deps.json'; Source = (Join-Path $output 'Muuntaja.deps.json') },
-    @{ Relative = 'Install\Toolboxes\Muuntaja.pyt'; Source = (Join-Path $root 'Toolboxes\Muuntaja.pyt') }
+    @{ Relative = 'Install\Toolboxes\Muuntaja.pyt'; Source = (Join-Path $root 'Toolboxes\Muuntaja.pyt') },
+    @{ Relative = 'Install\Toolboxes\cad_worker.py'; Source = (Join-Path $root 'Toolboxes\cad_worker.py') }
 )
 
 try {

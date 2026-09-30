@@ -476,16 +476,22 @@ def write_dxf(layers, path, crs=None, symbology_scale=None, project=None):
     return Path(path)
 
 
-def export_cad(layers, folder, combined=False, progress=None, symbology_scale=None, project=None):
-    """Export vector layers to DXF. Returns (written paths per layer, failures)."""
+def export_cad(layers, folder, combined=False, progress=None, symbology_scale=None, project=None,
+               target_crs=None):
+    """Export vector layers to DXF. Returns (written paths per layer, failures).
+
+    Kaikki tasot muunnetaan ``target_crs``:ään tai, jos sitä ei ole annettu,
+    projektin koordinaatistoon.
+    """
     project = project or QgsProject.instance()
     invalid = [layer.name() for layer in layers if not layer.isValid()]
     if invalid:
         raise RuntimeError("Tasot eivät ole kelvollisia (tietolähde puuttuu): " + ", ".join(invalid))
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    crs = _destination_crs(layers, project)
-    groups = [(list(layers), "muuntaja_vienti")] if combined else         [([layer], formats.safe_name(layer.name())) for layer in layers]
+    crs = target_crs if target_crs is not None and target_crs.isValid() else _destination_crs(layers, project)
+    groups = ([(list(layers), "muuntaja_vienti")] if combined
+              else [([layer], formats.safe_name(layer.name())) for layer in layers])
     successes, failures = [], []
     for index, (group, name) in enumerate(groups, 1):
         if progress:

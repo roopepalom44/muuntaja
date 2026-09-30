@@ -34,6 +34,7 @@ try:
         QgsApplication, QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsPointXY,
         QgsProject, QgsRasterLayer, QgsRuleBasedRenderer, QgsVectorLayer,
     )
+    from qgis.PyQt.QtGui import QColor
     HAVE_QGIS = True
 except Exception:  # pragma: no cover - riippuu ympäristöstä
     HAVE_QGIS = False
@@ -333,6 +334,105 @@ class CadExportTests(QgisTestCase):
         self.assertTrue(19 < x < 32 and 59 < y < 71)
 
 
+class ExportCrsAndStyleTests(QgisTestCase):
+    GK23 = "EPSG:3877"
+
+    def styled_layer(self):
+        from qgis.core import QgsCategorizedSymbolRenderer, QgsRendererCategory, QgsSymbol
+        layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385100, 6672100)])
+        categories = []
+        for value, color in (("P0", "#ff0000"), ("P1", "#0000ff")):
+            symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+            symbol.setColor(QColor(color))
+            categories.append(QgsRendererCategory(value, symbol, value))
+        layer.setRenderer(QgsCategorizedSymbolRenderer("nimi", categories))
+        return layer
+
+    def xs(self, path, layer_name=None):
+        from osgeo import ogr
+        dataset = ogr.Open(str(path))
+        layer = dataset.GetLayerByName(layer_name) if layer_name else dataset.GetLayer(0)
+        # Envelope toimii myös DXF:n pistesymboleille (lohkoviittauksille).
+        xs = [feature.GetGeometryRef().GetEnvelope()[0] for feature in layer]
+        dataset = None
+        return xs
+
+    def test_every_format_is_reprojected_to_the_chosen_crs(self):
+        layer = self.styled_layer()
+        target = QgsCoordinateReferenceSystem(self.GK23)
+        for format_name in ("GPKG", "Shapefile", "GeoJSON", "DXF"):
+            with self.subTest(format_name=format_name):
+                written, failures = self.core.export_data([layer], self.folder / format_name, format_name,
+                                                          target_crs=target)
+                self.assertEqual(failures, [])
+                xs = self.xs(written[0])
+                # Helsingin seutu ETRS-GK23:ssa: itäkoordinaatti noin 23 6xx xxx.
+                self.assertTrue(xs and all(23_450_000 < x < 23_750_000 for x in xs), xs)
+                if format_name != "DXF":
+                    check = QgsVectorLayer(written[0], "tarkistus", "ogr")
+                    self.assertEqual(check.crs().authid(), self.GK23)
+                    del check
+
+    def test_kml_stays_in_wgs84_and_tells_why(self):
+        layer = self.styled_layer()
+        for format_name in ("KML", "KMZ"):
+            with self.subTest(format_name=format_name):
+                notes = []
+                written, _failures = self.core.export_data(
+                    [layer], self.folder / format_name, format_name,
+                    target_crs=QgsCoordinateReferenceSystem(self.GK23), notes=notes)
+                xs = self.xs(written[0])
+                self.assertTrue(xs and all(24 < x < 26 for x in xs), xs)
+                self.assertTrue(any("aina WGS84" in note for note in notes), notes)
+
+    def test_geojson_without_chosen_crs_is_still_wgs84(self):
+        layer = self.styled_layer()
+        written, _failures = self.core.export_data([layer], self.folder, "GeoJSON")
+        self.assertTrue(all(24 < x < 26 for x in self.xs(written[0])))
+
+    def test_layer_without_crs_cannot_be_reprojected(self):
+        layer = QgsVectorLayer("Point?field=nimi:string", "tuntematon", "memory")
+        feature = QgsFeature(layer.fields())
+        feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(385000, 6672000)))
+        layer.dataProvider().addFeatures([feature])
+        self.project.addMapLayer(layer)
+        layer.setCrs(QgsCoordinateReferenceSystem())  # QGIS antaa uudelle tasolle oletus-CRS:n
+        with self.assertRaisesRegex(RuntimeError, "tunnetun lähtökoordinaatiston"):
+            self.core.export_data([layer], self.folder, "Shapefile", target_crs=QgsCoordinateReferenceSystem(self.GK23))
+
+    def test_style_is_stored_inside_the_geopackage(self):
+        layer = self.styled_layer()
+        notes = []
+        written, _failures = self.core.export_data([layer], self.folder, "GPKG", notes=notes)
+        reopened = QgsVectorLayer(f"{written[0]}|layername=pisteet", "tarkistus", "ogr")
+        self.assertEqual(reopened.renderer().type(), "categorizedSymbol")
+        del reopened
+        from osgeo import ogr
+        dataset = ogr.Open(written[0])
+        styles = dataset.GetLayerByName("layer_styles")
+        self.assertIsNotNone(styles)
+        self.assertEqual(styles.GetFeatureCount(), 1)
+        styles = dataset = None
+        self.assertTrue(any("layer_styles" in note for note in notes), notes)
+
+    def test_style_is_written_next_to_shapefile_and_geojson(self):
+        layer = self.styled_layer()
+        for format_name in ("Shapefile", "GeoJSON"):
+            with self.subTest(format_name=format_name):
+                written, _failures = self.core.export_data([layer], self.folder / format_name, format_name)
+                self.assertTrue(Path(written[0]).with_suffix(".qml").is_file())
+                reopened = QgsVectorLayer(written[0], "tarkistus", "ogr")
+                self.assertEqual(reopened.renderer().type(), "categorizedSymbol")
+                del reopened
+
+    def test_kml_contains_the_layer_style(self):
+        layer = self.styled_layer()
+        written, _failures = self.core.export_data([layer], self.folder, "KML")
+        text = Path(written[0]).read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("<Style", text)
+        self.assertIn("ff0000ff", text.lower())  # KML-väri aabbggrr: punainen
+
+
 class ImportRegressionTests(QgisTestCase):
     def test_dfsu_into_geopackage_with_existing_layers_opens_right_layer(self):
         existing = self.point_layer("EPSG:3067", [(385000, 6672000)], "olemassa")
@@ -496,6 +596,22 @@ class PluginTests(unittest.TestCase):
         dialog.format.setCurrentText("DXF")
         self.assertTrue(dialog.combined.isEnabled())
         self.assertIn("symbologia", dialog.cad_hint.text())
+        dialog.close()
+
+    def test_export_dialog_offers_common_crs_and_locks_kml_to_wgs84(self):
+        from muuntaja_qgis.plugin import MuuntajaDialog
+        dialog = MuuntajaDialog()
+        labels = [dialog.export_crs.itemText(i) for i in range(dialog.export_crs.count())]
+        self.assertIn("ETRS-GK23 (EPSG:3877)", labels)
+        self.assertIn("ETRS-TM35FIN (EPSG:3067)", labels)
+        self.assertEqual(labels[-1], "Muu koordinaatisto…")
+        self.assertIsNone(dialog._export_target_crs())
+        dialog.export_crs.setCurrentIndex(labels.index("ETRS-GK23 (EPSG:3877)"))
+        self.assertEqual(dialog._export_target_crs().authid(), "EPSG:3877")
+        dialog.format.setCurrentText("KML")
+        self.assertFalse(dialog.export_crs.isEnabled())
+        dialog.format.setCurrentText("Shapefile")
+        self.assertTrue(dialog.export_crs.isEnabled())
         dialog.close()
 
 

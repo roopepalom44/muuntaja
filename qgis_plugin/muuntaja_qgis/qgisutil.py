@@ -97,10 +97,17 @@ def add_layers_as_group(project, layers, group_name):
     return group
 
 
-def write_vector(layer, path, driver, layer_name=None, target_crs=None, append=False):
+def write_vector(layer, path, driver, layer_name=None, target_crs=None, append=False,
+                 symbology=False, symbology_scale=None):
+    """Write a layer with QgsVectorFileWriter; ``symbology`` writes OGR styles (KML)."""
     options = QgsVectorFileWriter.SaveVectorOptions()
     options.driverName = driver
     options.fileEncoding = "UTF-8"
+    if symbology:
+        options.symbologyExport = (Qgis.FeatureSymbologyExport.PerFeature
+                                   if hasattr(Qgis, "FeatureSymbologyExport")
+                                   else QgsVectorFileWriter.FeatureSymbology)
+        options.symbologyScale = float(symbology_scale or 1000)
     if driver == "OpenFileGDB":
         options.layerOptions = ["TARGET_ARCGIS_VERSION=ARCGIS_PRO_3_2_OR_LATER"]
     if layer_name:
@@ -114,3 +121,40 @@ def write_vector(layer, path, driver, layer_name=None, target_crs=None, append=F
     if result[0] != QgsVectorFileWriter.NoError:
         raise RuntimeError(result[1] or f"Kirjoitusvirhe: {result[0]}")
     return Path(path)
+
+
+def save_style(source, path, format_name, layer_name=None):
+    """Store the source layer's style with the export; returns where it went.
+
+    GeoPackageen tyyli tallennetaan sisäisesti (layer_styles-taulu, oletustyyli),
+    jolloin QGIS käyttää sitä tason avautuessa. Shapefilen ja GeoJSONin viereen
+    kirjoitetaan samanniminen .qml, jonka QGIS lataa automaattisesti.
+    """
+    from qgis.core import QgsVectorLayer
+    from qgis.PyQt.QtXml import QDomDocument
+    path = Path(path)
+    if format_name == "GPKG":
+        written = QgsVectorLayer(f"{path}|layername={layer_name}", layer_name, "ogr")
+        if not written.isValid():
+            raise RuntimeError(f"Vietyä tasoa ei voitu avata tyylin tallennusta varten: {layer_name}")
+        document = QDomDocument("qgis")
+        error = source.exportNamedStyle(document)
+        if error:
+            raise RuntimeError(error)
+        imported, error = written.importNamedStyle(document)
+        if not imported:
+            raise RuntimeError(error)
+        if hasattr(written, "saveStyleToDatabaseV2"):
+            _result, error = written.saveStyleToDatabaseV2(layer_name, "Muuntaja", True, "")
+        else:
+            error = written.saveStyleToDatabase(layer_name, "Muuntaja", True, "")
+        if error:
+            raise RuntimeError(error)
+        return f"{path.name} (layer_styles)"
+    if format_name in {"Shapefile", "GeoJSON"}:
+        style_path = path.with_suffix(".qml")
+        message, saved = source.saveNamedStyle(str(style_path))
+        if not saved:
+            raise RuntimeError(message)
+        return style_path.name
+    return None

@@ -290,3 +290,17 @@ def run_converter(command, description):
         details = (result.stderr or result.stdout or "").strip()[-500:]
         raise RuntimeError(f"{description} epäonnistui (exit {result.returncode}): {details}")
     return result
+
+
+# --- export coordinate systems -------------------------------------------------
+
+# Viennin yleisimmät kohdekoordinaatistot (nimi, EPSG). Sama lista kuin ArcGIS
+# Pro -työkalussa; muun koordinaatiston voi valita QGISin omasta valitsimesta.
+COMMON_EXPORT_CRS = (
+    [("ETRS-TM35FIN", 3067)]
+    + [(f"ETRS-GK{zone}", 3873 + zone - 19) for zone in range(19, 32)]
+    + [("KKJ kaista 1", 2391), ("KKJ kaista 2", 2392), ("KKJ Yhtenäiskoordinaatisto", 2393),
+       ("KKJ kaista 4", 2394), ("WGS 84", 4326), ("WGS 84 / Pseudo-Mercator", 3857)]
+)
+# KML/KMZ on standardin mukaan aina WGS84.
+WGS84_ONLY_EXPORT_FORMATS = {"KML", "KMZ"}

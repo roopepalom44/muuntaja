@@ -1,4 +1,4 @@
-# Muuntaja QGIS (esijulkaisu 0.3.1)
+# Muuntaja QGIS (esijulkaisu 0.4.0)
 
 QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus pysyy samassa projektissa.
 
@@ -20,7 +20,8 @@ QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus py
 - Projektin vektoritasojen vienti GPKG-, GeoJSON-, Shapefile-, KML-, KMZ- ja DXF-muotoon. Yhdistetty GPKG- ja DXF-vienti.
 - DXF-vienti käyttää QGISin omaa DXF-vientiä: tasojen symbologia (kartan nykyisessä mittakaavassa), nimiöt tekstikohteina ja tuotujen CAD-tasojen alkuperäiset nimet säilyvät, ja kaikki tasot muunnetaan projektin koordinaatistoon. Vienti on myös valikossa **Projekti → Tuo/Vie**.
 - **DWG-vientiä ei ole.** QGIS ei kirjoita DWG:tä, eikä LibreDWG kirjoita siihen viivoja, pisteitä eikä tekstejä (testattu LibreDWG 0.14:llä). Vie CAD-aineisto DXF-muotoon: AutoCAD, ArcGIS ja QGIS avaavat sen sellaisenaan.
-- GeoJSON-vienti muuntaa tunnetun lähtökoordinaatiston WGS84:ään, kuten ArcGIS Pro -versio.
+- **Kohdekoordinaatisto viennissä:** vientiin voi valita koordinaatiston, johon aineisto muunnetaan: ETRS-TM35FIN, ETRS-GK19–GK31 (esim. EUREF-FIN / ETRS-GK23), KKJ-kaistat, WGS 84, Web Mercator tai **Muu koordinaatisto…** QGISin omasta valitsimesta. Muunnos koskee GPKG-, Shapefile-, GeoJSON- ja DXF-vientiä; KML/KMZ on standardin mukaan aina WGS84. GeoJSON viedään ilman valintaa WGS84:ään, kuten ArcGIS Pro -versio.
+- **Tyyli mukaan:** GeoPackageen tason tyyli tallennetaan sisäisesti (`layer_styles`, oletustyyli), joten QGIS avaa tason samalla tyylillä. Shapefilen ja GeoJSONin viereen kirjoitetaan samanniminen `.qml`, jonka QGIS lataa automaattisesti, ja KML/KMZ saa tyylit mukaan. QGIS ei osaa kirjoittaa ArcGISin `.lyrx`-tiedostoa; ArcGIS-tyylin saa ArcGIS Pro -version viennistä.
 - Tallennetun QGIS-projektin kansio ehdotetaan oletukseksi sekä tuonnissa että viennissä. Tallentamaton projekti ei vielä anna oletuskansiota.
 
 ## Erot ArcGIS Pro -versioon

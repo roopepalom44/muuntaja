@@ -404,6 +404,7 @@ class MuuntajaDialog(QDialog):
         self.progress.setMinimumDuration(0)
         self.progress.show()
         project_crs_missing = not QgsProject.instance().crs().isValid()
+        notes = []
         try:
             successes, failures = import_data(
                 paths,
@@ -415,11 +416,12 @@ class MuuntajaDialog(QDialog):
                 self.dfsu_column.text().strip() if self.dfsu_filter_enabled.isChecked() else "",
                 self.dfsu_operator.currentText(),
                 self.dfsu_value.text(),
+                notes,
             )
             project_crs = QgsProject.instance().crs()
-            note = (f"Projektin koordinaattijärjestelmä asetettiin: {project_crs.authid()}."
-                    if project_crs_missing and project_crs.isValid() else "")
-            self._show_result("Tuonti", successes, failures, note)
+            if project_crs_missing and project_crs.isValid():
+                notes.insert(0, f"Projektin koordinaattijärjestelmä asetettiin: {project_crs.authid()}.")
+            self._show_result("Tuonti", successes, failures, "\n".join(notes))
         except OperationCanceled:
             QMessageBox.information(self, "Muuntaja", "Tuonti keskeytettiin.")
         except Exception as exc:

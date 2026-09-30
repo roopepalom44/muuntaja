@@ -54,3 +54,7 @@ Tässä versiossa toimivat kansio- ja tiedostotuonti, FileGDB/GPKG-kohteet, rast
 
 - **Kohdekoordinaatisto viennissä.** Vientiin voi valita koordinaatiston, johon aineisto muunnetaan (ETRS-TM35FIN, ETRS-GK19–GK31 kuten EUREF-FIN / ETRS-GK23, KKJ-kaistat, WGS 84, Web Mercator tai mikä tahansa QGISin valitsimesta). Oletus on **Tason oma**. Koskee GPKG-, Shapefile-, GeoJSON- ja DXF-vientiä; KML/KMZ on aina WGS84. Usean tason viennissä jokainen taso säilyttää oman koordinaatistonsa; tasokohtaiset DXF:t eivät enää saa projektin koordinaatistoa, ja eri koordinaatistojen tasojen yhdistäminen yhteen DXF:ään vaatii kohdekoordinaatiston.
 - **Tyyli kulkee viennin mukana** (valinta *Pakkaa tasojen tyylit mukaan*, oletuksena päällä). GeoPackageen tyyli tallennetaan sisäisesti, Shapefilen ja GeoJSONin viereen kirjoitetaan `.qml` ja KML/KMZ saa tyylit. Tulosikkuna kertoo, minne tyyli tallennettiin.
+
+## Muuntaja QGIS 0.4.1
+
+- **Tyyli kulkee myös tuonnissa.** Kun tuotavalla Shapefilellä tai GeoJSONilla on vieressään samanniminen `.qml` tai GeoPackagessa on tasolle tallennettu tyyli, tuotu taso saa saman tyylin ja se tallennetaan tuonnin GeoPackageen oletustyyliksi. Tulosikkuna kertoo, mille tasoille tyyli otettiin käyttöön.

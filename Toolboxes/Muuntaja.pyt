@@ -1154,7 +1154,7 @@ class UniversalImportTool(object):
         base = (base + suffix)[:50]
         return base or "export_multi"
 
-    def _log_batch_summary(self, messages, operation, total, succeeded, failures):
+    def _log_batch_summary(self, messages, operation, total, succeeded, failures, map_failures=None):
         """Raportoi eräajon tulos ja kaada ajo vasta, jos mikään ei onnistunut.
 
         Aiemmin ensimmäinen virhe keskeytti koko erän, jolloin sen jälkeiset
@@ -1163,9 +1163,23 @@ class UniversalImportTool(object):
         """
         succeeded = list(succeeded or [])
         failures = list(failures or [])
-        if not failures:
+        map_failures = list(map_failures or [])
+
+        if not failures and not map_failures:
             if total > 1:
                 self.log(messages, f"{operation} valmis: {len(succeeded)}/{total} onnistui.")
+            return
+
+        if not failures and map_failures:
+            # Kaikki kohteet tallennettiin levylle/GDB:hen, mutta osalla karttalisäys epäonnistui
+            self.log(
+                messages,
+                f"{operation} valmis varoituksin: {len(succeeded)}/{total} tiedostoa tallennettu, "
+                f"mutta {len(map_failures)} tason karttalisäys epäonnistui.",
+                "WARNING",
+            )
+            for path, reason in map_failures:
+                self.log(messages, f"  > KARTTALISÄYS EPÄONNISTUI: {os.path.basename(path)} — {reason}", "WARNING")
             return
 
         self.log(
@@ -1176,6 +1190,10 @@ class UniversalImportTool(object):
         )
         for path, reason in failures:
             self.log(messages, f"  > EPÄONNISTUI: {path} — {reason}", "WARNING")
+
+        if map_failures:
+            for path, reason in map_failures:
+                self.log(messages, f"  > KARTTALISÄYS EPÄONNISTUI: {os.path.basename(path)} — {reason}", "WARNING")
 
         if not succeeded:
             # Kaikki epäonnistuivat: ajo on aidosti virheellinen.
@@ -1237,6 +1255,7 @@ class UniversalImportTool(object):
 
         succeeded = []
         failures = []
+        self._current_import_map_failures = []
         item_messages = ImportItemMessages(messages)
         previous_group = getattr(self, "_current_import_group", ())
         try:
@@ -1293,7 +1312,8 @@ class UniversalImportTool(object):
                 failures.extend(raster_failures)
 
             self._log_batch_summary(
-                messages, "Tuonti", len(input_paths), succeeded, failures
+                messages, "Tuonti", len(input_paths), succeeded, failures,
+                map_failures=self._current_import_map_failures,
             )
         finally:
             self._current_import_group = previous_group
@@ -2458,6 +2478,8 @@ class UniversalImportTool(object):
                 return os.path.join(output_loc, candidate)
 
         output_name = validate_name(str(output_name or "output"))
+        if re.match(r'^[nN]_\d+_', output_name):
+            output_name = "t_" + output_name[2:]
         base_name = output_name
         check_path = build_path(output_name)
 
@@ -2471,6 +2493,8 @@ class UniversalImportTool(object):
             suffix = f"_{suffix_number}"
             candidate_base = base_name[: max(1, 50 - len(suffix))]
             candidate = validate_name(candidate_base + suffix)
+            if re.match(r'^[nN]_\d+_', candidate):
+                candidate = "t_" + candidate[2:]
             candidate_path = build_path(candidate)
             if candidate_path == check_path:
                 # Jos ValidateTableName lyhentää nimen niin, että tunniste
@@ -2921,11 +2945,13 @@ class UniversalImportTool(object):
         existing_sources = self._group_layer_data_sources(group_layer if group_layer is not None else active_map)
         if self._normalized_path_key(mosaic_path) not in existing_sources:
             try:
-                layer = active_map.addDataFromPath(mosaic_path)
+                layer = self._add_data_to_map_with_fallback(active_map, mosaic_path, messages)
                 if group_layer is not None:
                     active_map.addLayerToGroup(group_layer, layer)
                     active_map.removeLayer(layer)
             except Exception as e:
+                if hasattr(self, "_current_import_map_failures") and isinstance(self._current_import_map_failures, list):
+                    self._current_import_map_failures.append((mosaic_path, str(e)))
                 self.log(
                     messages,
                     f"  > Mosaiikkiaineisto '{mosaic_name}' luotiin, mutta sen "
@@ -3025,7 +3051,7 @@ class UniversalImportTool(object):
                         crs_name = self._ensure_raster_spatial_reference(path, input_sr, messages)
                         if crs_name:
                             defined_crs.add(crs_name)
-                        layer = active_map.addDataFromPath(path)
+                        layer = self._add_data_to_map_with_fallback(active_map, path, messages)
                         if group_layer is not None:
                             active_map.addLayerToGroup(group_layer, layer)
                             active_map.removeLayer(layer)
@@ -3034,6 +3060,8 @@ class UniversalImportTool(object):
                         succeeded.append(path)
                     except Exception as e:
                         failures.append((path, str(e)))
+                        if hasattr(self, "_current_import_map_failures") and isinstance(self._current_import_map_failures, list):
+                            self._current_import_map_failures.append((path, str(e)))
                         self.log(
                             messages,
                             f"  > Rasterin '{path}' lisäys epäonnistui: {e}",
@@ -3062,32 +3090,107 @@ class UniversalImportTool(object):
             self.log(messages, summary + ".")
         return succeeded, failures
 
+    def _add_data_to_map_with_fallback(self, active_map, path, messages=None):
+        """Lisää aineisto karttaan.
+
+        Jos addDataFromPath kaatuu (esim. tunnettu Esri-bugi 'Failed to add data.
+        Possible credentials issue' tietyillä taulu- tai tiedostonimillä),
+        aineisto lisätään varareittiä väliaikaisen Layer-tiedoston kautta.
+        """
+        try:
+            return active_map.addDataFromPath(path)
+        except Exception as primary_err:
+            desc = None
+            try:
+                desc = arcpy.Describe(path)
+            except Exception:
+                pass
+            base_name = getattr(desc, "baseName", None) if desc else None
+            if not base_name:
+                base_name = os.path.splitext(os.path.basename(path))[0]
+            data_type = getattr(desc, "dataType", "") if desc else ""
+            stamp = hashlib.sha256(f"{path}_{time.perf_counter()}".encode("utf-8")).hexdigest()[:8]
+            temp_lyr_name = f"muuntaja_tmp_{stamp}"
+            temp_dir = tempfile.mkdtemp(prefix="muuntaja_map_")
+            temp_lyrx = os.path.join(temp_dir, f"{base_name}.lyrx")
+            try:
+                if data_type in ("RasterDataset",):
+                    arcpy.management.MakeRasterLayer(path, temp_lyr_name)
+                elif data_type in ("MosaicDataset",):
+                    arcpy.management.MakeMosaicLayer(path, temp_lyr_name)
+                elif data_type in ("Table",):
+                    arcpy.management.MakeTableView(path, temp_lyr_name)
+                elif hasattr(arcpy.management, "MakeFeatureLayer"):
+                    arcpy.management.MakeFeatureLayer(path, temp_lyr_name)
+                else:
+                    raise primary_err
+
+                arcpy.management.SaveToLayerFile(temp_lyr_name, temp_lyrx)
+                layer = active_map.addDataFromPath(temp_lyrx)
+                try:
+                    layer.name = base_name
+                except Exception:
+                    pass
+                if messages is not None:
+                    self.log(
+                        messages,
+                        f"  > Karttalisäys onnistui varareittiä pitkin ({base_name}).",
+                    )
+                return layer
+            except Exception:
+                raise primary_err
+            finally:
+                try:
+                    if arcpy.Exists(temp_lyr_name):
+                        arcpy.management.Delete(temp_lyr_name)
+                except Exception:
+                    pass
+                try:
+                    if os.path.isfile(temp_lyrx):
+                        os.remove(temp_lyrx)
+                    if os.path.isdir(temp_dir):
+                        os.rmdir(temp_dir)
+                except Exception:
+                    pass
+
     def _add_layers_to_map(self, paths, messages, styles=None):
         """Lisää tasot aktiiviseen karttaan; ``styles`` = {tuotu polku: lähteen .lyrx}."""
         if not paths:
-            return
+            return []
         styles = styles or {}
+        failed_additions = []
         try:
             aprx = arcpy.mp.ArcGISProject("CURRENT")
             active_map = aprx.activeMap
             if not active_map:
-                return
+                return []
             group_layer = self._get_or_create_group_path(
                 active_map, getattr(self, "_current_import_group", ())
             )
             for path in paths:
-                if path and arcpy.Exists(path):
-                    layer = active_map.addDataFromPath(path)
+                if not (path and arcpy.Exists(path)):
+                    continue
+                try:
+                    layer = self._add_data_to_map_with_fallback(active_map, path, messages)
                     if styles.get(path):
                         self._apply_source_style(layer, styles[path], messages)
                     if group_layer is not None:
                         active_map.addLayerToGroup(group_layer, layer)
                         active_map.removeLayer(layer)
+                except Exception as e:
+                    failed_additions.append((path, str(e)))
+                    self.log(messages, f"  > Karttalisäys epäonnistui ({os.path.basename(path)}): {e}", "WARNING")
         except Exception as e:
             if str(e).strip() == "CURRENT":
                 pass  # Headless-ajo ilman aktiivista ArcGIS Pro -käyttöliittymäprojektia
             else:
                 self.log(messages, f"  > Karttalisäys epäonnistui: {e}", "WARNING")
+                for path in paths:
+                    failed_additions.append((path, str(e)))
+
+        if hasattr(self, "_current_import_map_failures") and isinstance(self._current_import_map_failures, list):
+            self._current_import_map_failures.extend(failed_additions)
+        return failed_additions
 
     def _save_cad_layer_fallback(self, input_data, output_loc, output_name, is_folder,
                                  field_mappings, input_sr, target_sr, messages, check_path, feat_count=None):
@@ -4809,7 +4912,12 @@ class UniversalImportTool(object):
         if not name:
             name = "layer"
         if name[0].isdigit():
-            name = "n_" + name
+            name = "t_" + name
+        # Estä Esrin sisäisten verkkotietokantojen (Network Dataset / Utility Network)
+        # N_<id>_<suffix> -kaava, joka laukaisee addDataFromPathissa virheellisen
+        # "Failed to add data. Possible credentials issue" -tunnistetarkistuksen.
+        if re.match(r'^[nN]_\d+_', name):
+            name = "t_" + name[2:]
         return name[:50]
     def sanitize_field_name(self, name):
         name = name.replace(":", "_").replace("-", "_").replace(" ", "_")

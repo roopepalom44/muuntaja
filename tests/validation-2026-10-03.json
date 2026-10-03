@@ -1,0 +1,561 @@
+{
+  "date": "2026-10-03",
+  "version": "1.5.3",
+  "base_commit": "fb4841a76280e4652dea7d5427e3276af05aee7b",
+  "base_github_release": "v1.5.2.21",
+  "environment": {
+    "LicenseLevel": "Advanced",
+    "InstallDir": "c:\\program files\\arcgis\\pro\\",
+    "Installer": "Roope",
+    "ProductName": "ArcGISPro",
+    "Version": "3.7",
+    "SourceDir": "C:\\Users\\Roope\\Documents\\ArcGIS Pro 3.7\\ArcGISPro_Finnish\\SetupFiles\\",
+    "InstallType": "N/A",
+    "BuildNumber": "1901",
+    "InstallDate": "24/09/2026",
+    "InstallTime": "9.26.07",
+    "SPNumber": "N/A",
+    "SPBuild": "N/A",
+    "LicenseType": "Named User"
+  },
+  "unit_tests": {
+    "passed": 142,
+    "skipped": 0,
+    "environment": "QGIS 3.44.14 Python"
+  },
+  "arcgis_tests": {
+    "passed": 93,
+    "failed": 0
+  },
+  "groups": [
+    {
+      "name": "folder_import_vectors_and_nested_mosaics",
+      "status": "PASS",
+      "seconds": 29.154
+    },
+    {
+      "name": "same_named_nested_rasters_and_repeat",
+      "status": "PASS",
+      "seconds": 2.745
+    },
+    {
+      "name": "groups_export_GPKG_False",
+      "status": "PASS",
+      "seconds": 9.199
+    },
+    {
+      "name": "groups_export_GPKG_True",
+      "status": "PASS",
+      "seconds": 12.828
+    },
+    {
+      "name": "groups_export_DWG_False",
+      "status": "PASS",
+      "seconds": 11.028
+    },
+    {
+      "name": "groups_export_DWG_True",
+      "status": "PASS",
+      "seconds": 8.379
+    },
+    {
+      "name": "groups_export_DXF_False",
+      "status": "PASS",
+      "seconds": 8.179
+    },
+    {
+      "name": "groups_export_DXF_True",
+      "status": "PASS",
+      "seconds": 8.294
+    },
+    {
+      "name": "groups_export_GeoJSON_True",
+      "status": "PASS",
+      "seconds": 0.803
+    },
+    {
+      "name": "groups_export_Shapefile_True",
+      "status": "PASS",
+      "seconds": 2.733
+    },
+    {
+      "name": "groups_export_KML_True",
+      "status": "PASS",
+      "seconds": 1.126
+    },
+    {
+      "name": "groups_export_KMZ_True",
+      "status": "PASS",
+      "seconds": 1.19
+    },
+    {
+      "name": "resolve_native_picker_group_paths",
+      "status": "PASS",
+      "seconds": 3.364
+    },
+    {
+      "name": "gpkg_groups_roundtrip",
+      "status": "PASS",
+      "seconds": 15.569
+    },
+    {
+      "name": "folder_destination_and_individual_rasters",
+      "status": "PASS",
+      "seconds": 10.79
+    },
+    {
+      "name": "unsafe_group_names_collisions_and_definition_query",
+      "status": "PASS",
+      "seconds": 5.37
+    }
+  ],
+  "regression": [
+    {
+      "name": "export_POINT_GPKG",
+      "status": "PASS",
+      "seconds": 3.152
+    },
+    {
+      "name": "export_POINT_DWG",
+      "status": "PASS",
+      "seconds": 2.095
+    },
+    {
+      "name": "export_POINT_DXF",
+      "status": "PASS",
+      "seconds": 1.731
+    },
+    {
+      "name": "export_POINT_GeoJSON",
+      "status": "PASS",
+      "seconds": 0.269
+    },
+    {
+      "name": "export_POINT_Shapefile",
+      "status": "PASS",
+      "seconds": 0.679
+    },
+    {
+      "name": "export_POINT_KML",
+      "status": "PASS",
+      "seconds": 0.764
+    },
+    {
+      "name": "export_POINT_KMZ",
+      "status": "PASS",
+      "seconds": 0.511
+    },
+    {
+      "name": "export_POLYLINE_GPKG",
+      "status": "PASS",
+      "seconds": 2.406
+    },
+    {
+      "name": "export_POLYLINE_DWG",
+      "status": "PASS",
+      "seconds": 1.532
+    },
+    {
+      "name": "export_POLYLINE_DXF",
+      "status": "PASS",
+      "seconds": 1.405
+    },
+    {
+      "name": "export_POLYLINE_GeoJSON",
+      "status": "PASS",
+      "seconds": 0.312
+    },
+    {
+      "name": "export_POLYLINE_Shapefile",
+      "status": "PASS",
+      "seconds": 0.751
+    },
+    {
+      "name": "export_POLYLINE_KML",
+      "status": "PASS",
+      "seconds": 0.53
+    },
+    {
+      "name": "export_POLYLINE_KMZ",
+      "status": "PASS",
+      "seconds": 0.479
+    },
+    {
+      "name": "export_POLYGON_GPKG",
+      "status": "PASS",
+      "seconds": 2.151
+    },
+    {
+      "name": "export_POLYGON_DWG",
+      "status": "PASS",
+      "seconds": 1.716
+    },
+    {
+      "name": "export_POLYGON_DXF",
+      "status": "PASS",
+      "seconds": 1.962
+    },
+    {
+      "name": "export_POLYGON_GeoJSON",
+      "status": "PASS",
+      "seconds": 0.405
+    },
+    {
+      "name": "export_POLYGON_Shapefile",
+      "status": "PASS",
+      "seconds": 1.33
+    },
+    {
+      "name": "export_POLYGON_KML",
+      "status": "PASS",
+      "seconds": 0.706
+    },
+    {
+      "name": "export_POLYGON_KMZ",
+      "status": "PASS",
+      "seconds": 0.645
+    },
+    {
+      "name": "projected_Shapefile",
+      "status": "PASS",
+      "seconds": 2.598
+    },
+    {
+      "name": "projected_GeoJSON",
+      "status": "PASS",
+      "seconds": 2.055
+    },
+    {
+      "name": "projected_GPKG",
+      "status": "PASS",
+      "seconds": 4.541
+    },
+    {
+      "name": "multi_GPKG_False",
+      "status": "PASS",
+      "seconds": 4.64
+    },
+    {
+      "name": "multi_GPKG_True",
+      "status": "PASS",
+      "seconds": 7.548
+    },
+    {
+      "name": "multi_DWG_False",
+      "status": "PASS",
+      "seconds": 5.575
+    },
+    {
+      "name": "multi_DWG_True",
+      "status": "PASS",
+      "seconds": 5.612
+    },
+    {
+      "name": "multi_DXF_False",
+      "status": "PASS",
+      "seconds": 4.791
+    },
+    {
+      "name": "multi_DXF_True",
+      "status": "PASS",
+      "seconds": 4.755
+    },
+    {
+      "name": "multi_Shapefile_False",
+      "status": "PASS",
+      "seconds": 2.271
+    },
+    {
+      "name": "multi_GeoJSON_False",
+      "status": "PASS",
+      "seconds": 1.025
+    },
+    {
+      "name": "multi_KML_False",
+      "status": "PASS",
+      "seconds": 1.523
+    },
+    {
+      "name": "multi_KMZ_False",
+      "status": "PASS",
+      "seconds": 1.432
+    },
+    {
+      "name": "selection",
+      "status": "PASS",
+      "seconds": 0.519
+    },
+    {
+      "name": "import_export_POINT_GPKG",
+      "status": "PASS",
+      "seconds": 2.824
+    },
+    {
+      "name": "import_export_POINT_Shapefile",
+      "status": "PASS",
+      "seconds": 1.384
+    },
+    {
+      "name": "import_export_POINT_GeoJSON",
+      "status": "PASS",
+      "seconds": 2.585
+    },
+    {
+      "name": "import_export_POINT_KML",
+      "status": "PASS",
+      "seconds": 2.851
+    },
+    {
+      "name": "import_export_POINT_KMZ",
+      "status": "PASS",
+      "seconds": 1.877
+    },
+    {
+      "name": "import_export_POINT_DWG",
+      "status": "PASS",
+      "seconds": 12.304
+    },
+    {
+      "name": "import_export_POINT_DXF",
+      "status": "PASS",
+      "seconds": 10.186
+    },
+    {
+      "name": "import_export_POLYLINE_GPKG",
+      "status": "PASS",
+      "seconds": 1.9
+    },
+    {
+      "name": "import_export_POLYLINE_Shapefile",
+      "status": "PASS",
+      "seconds": 0.899
+    },
+    {
+      "name": "import_export_POLYLINE_GeoJSON",
+      "status": "PASS",
+      "seconds": 1.991
+    },
+    {
+      "name": "import_export_POLYLINE_KML",
+      "status": "PASS",
+      "seconds": 1.753
+    },
+    {
+      "name": "import_export_POLYLINE_KMZ",
+      "status": "PASS",
+      "seconds": 1.943
+    },
+    {
+      "name": "import_export_POLYLINE_DWG",
+      "status": "PASS",
+      "seconds": 10.749
+    },
+    {
+      "name": "import_export_POLYLINE_DXF",
+      "status": "PASS",
+      "seconds": 10.159
+    },
+    {
+      "name": "import_export_POLYGON_GPKG",
+      "status": "PASS",
+      "seconds": 1.944
+    },
+    {
+      "name": "import_export_POLYGON_Shapefile",
+      "status": "PASS",
+      "seconds": 0.865
+    },
+    {
+      "name": "import_export_POLYGON_GeoJSON",
+      "status": "PASS",
+      "seconds": 2.021
+    },
+    {
+      "name": "import_export_POLYGON_KML",
+      "status": "PASS",
+      "seconds": 2.994
+    },
+    {
+      "name": "import_export_POLYGON_KMZ",
+      "status": "PASS",
+      "seconds": 2.078
+    },
+    {
+      "name": "import_export_POLYGON_DWG",
+      "status": "PASS",
+      "seconds": 11.61
+    },
+    {
+      "name": "import_export_POLYGON_DXF",
+      "status": "PASS",
+      "seconds": 11.025
+    },
+    {
+      "name": "import_cad_sample.dxf",
+      "status": "PASS",
+      "seconds": 18.136
+    },
+    {
+      "name": "invalid_only",
+      "status": "PASS",
+      "seconds": 0.47
+    },
+    {
+      "name": "empty_only",
+      "status": "PASS",
+      "seconds": 3.159
+    },
+    {
+      "name": "mixed_invalid_valid",
+      "status": "PASS",
+      "seconds": 5.502
+    },
+    {
+      "name": "mixed_invalid_dfsu_valid",
+      "status": "PASS",
+      "seconds": 1.892
+    },
+    {
+      "name": "native_cad_failure_cad_sample_r2000.dwg",
+      "status": "PASS",
+      "seconds": 10.196
+    },
+    {
+      "name": "native_cad_failure_cad_sample_r2018.dwg",
+      "status": "PASS",
+      "seconds": 31.912
+    },
+    {
+      "name": "folder_shapefile",
+      "status": "PASS",
+      "seconds": 1.645
+    },
+    {
+      "name": "nested_folder",
+      "status": "PASS",
+      "seconds": 2.274
+    }
+  ],
+  "edges": [
+    {
+      "name": "empty_export_Shapefile",
+      "status": "PASS",
+      "seconds": 0.721
+    },
+    {
+      "name": "empty_export_GPKG",
+      "status": "PASS",
+      "seconds": 3.144
+    },
+    {
+      "name": "empty_export_GeoJSON",
+      "status": "PASS",
+      "seconds": 0.245
+    },
+    {
+      "name": "null_geometry_shapefile",
+      "status": "PASS",
+      "seconds": 0.667
+    },
+    {
+      "name": "unknown_crs_projection_rejected",
+      "status": "PASS",
+      "seconds": 0.089
+    },
+    {
+      "name": "wide_unicode_big_integer",
+      "status": "PASS",
+      "seconds": 0.765
+    },
+    {
+      "name": "wide_folder_import",
+      "status": "PASS",
+      "seconds": 0.522
+    },
+    {
+      "name": "locked_input_read",
+      "status": "PASS",
+      "seconds": 0.603
+    },
+    {
+      "name": "import_name_collision",
+      "status": "PASS",
+      "seconds": 2.003
+    },
+    {
+      "name": "raster_mosaic_duplicate_and_invalid",
+      "status": "PASS",
+      "seconds": 17.952
+    },
+    {
+      "name": "cad_projection_and_field_mapping",
+      "status": "PASS",
+      "seconds": 32.722
+    }
+  ],
+  "native_gp_ui": {
+    "status": "PASS",
+    "environment": {
+      "LicenseLevel": "Advanced",
+      "InstallDir": "c:\\program files\\arcgis\\pro\\",
+      "Installer": "Roope",
+      "ProductName": "ArcGISPro",
+      "Version": "3.7",
+      "SourceDir": "C:\\Users\\Roope\\Documents\\ArcGIS Pro 3.7\\ArcGISPro_Finnish\\SetupFiles\\",
+      "InstallType": "N/A",
+      "BuildNumber": "1901",
+      "InstallDate": "24/09/2026",
+      "InstallTime": "9.26.07",
+      "SPNumber": "N/A",
+      "SPBuild": "N/A",
+      "LicenseType": "Named User"
+    },
+    "seconds": 38.9864624000038,
+    "imported_parents": {
+      "Äänekoski/Yhteiset": [
+        2
+      ],
+      "Äänekoski": [
+        2,
+        2
+      ],
+      "Jyväskylä/Yhteiset": [
+        2
+      ],
+      "": [
+        2
+      ]
+    },
+    "exported_parents": {
+      "": [
+        2
+      ],
+      "Äänekoski": [
+        2,
+        2
+      ],
+      "Äänekoski/Yhteiset": [
+        2
+      ],
+      "Jyväskylä/Yhteiset": [
+        2
+      ]
+    },
+    "gp_messages": "Start Time: Saturday, 3 October 2026 14.33.10\n[14:33:12] Vienti — ryhmä: Äänekoski / Yhteiset → C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Äänekoski\\Yhteiset\n[14:33:12] Vienti — lähteet: Äänekoski\\Yhteiset\\aineisto_polygon\n[14:33:12] Vienti — kansio: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Äänekoski\\Yhteiset\n[14:33:12] Vienti — formaatti: Shapefile → aineisto_polygon_20261003_143312.shp\n[14:33:12]   > Shapefilen kenttien tarkistus epäonnistui: \"aineisto_polygon\" does not exist\n[14:33:12] Shapefile-vienti valmis: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Äänekoski\\Yhteiset\\aineisto_polygon_20261003_143312.shp\n[14:33:13]   > Tyyli tallennettu: aineisto_polygon_20261003_143312.lyrx\n[14:33:13] Vienti valmis: 1 tiedostoa.\n[14:33:13] Vienti — ryhmä: Äänekoski → C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Äänekoski\n[14:33:13] Vienti — lähteet: Äänekoski\\aineisto; Äänekoski\\viivat\n[14:33:13] Vienti — kansio: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Äänekoski\n[14:33:13] Vienti — formaatti: Shapefile → oma tiedosto jokaiselle tasolle\n[14:33:13]   > Tasoja valittuna: 2 (yksi tiedosto tasoa kohden).\n[14:33:13]   > Viedään tasoa 'aineisto'...\n[14:33:13]   > Shapefilen kenttien tarkistus epäonnistui: \"aineisto\" does not exist\n[14:33:13] Shapefile-vienti valmis: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Äänekoski\\aineisto_viivat_multi_aineisto_20261003_143313.shp\n[14:33:13]   > Tyyli tallennettu: aineisto_viivat_multi_aineisto_20261003_143313.lyrx\n[14:33:13]   > Viedään tasoa 'viivat'...\n[14:33:14]   > Shapefilen kenttien tarkistus epäonnistui: \"viivat\" does not exist\n[14:33:14] Shapefile-vienti valmis: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Äänekoski\\aineisto_viivat_multi_viivat_20261003_143313.shp\n[14:33:14]   > Tyyli tallennettu: aineisto_viivat_multi_viivat_20261003_143313.lyrx\n[14:33:14] Vienti valmis: 2 tiedostoa.\n[14:33:14] Vienti — ryhmä: Jyväskylä / Yhteiset → C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Jyväskylä\\Yhteiset\n[14:33:14] Vienti — lähteet: Jyväskylä\\Yhteiset\\aineisto_point_2\n[14:33:14] Vienti — kansio: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Jyväskylä\\Yhteiset\n[14:33:14] Vienti — formaatti: Shapefile → aineisto_point_2_20261003_143314.shp\n[14:33:14]   > Shapefilen kenttien tarkistus epäonnistui: \"aineisto_point_2\" does not exist\n[14:33:15] Shapefile-vienti valmis: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\Jyväskylä\\Yhteiset\\aineisto_point_2_20261003_143314.shp\n[14:33:15]   > Tyyli tallennettu: aineisto_point_2_20261003_143314.lyrx\n[14:33:15] Vienti valmis: 1 tiedostoa.\n[14:33:15] Vienti — ryhmä: kartan juuri → C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\n[14:33:15] Vienti — lähteet: aineisto_point\n[14:33:15] Vienti — kansio: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\n[14:33:15] Vienti — formaatti: Shapefile → aineisto_point_20261003_143315.shp\n[14:33:15] Shapefile-vienti valmis: C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\export\\aineisto_point_20261003_143315.shp\n[14:33:16]   > Tyyli tallennettu: aineisto_point_20261003_143315.lyrx\n[14:33:16] Vienti valmis: 1 tiedostoa.\nSucceeded at Saturday, 3 October 2026 14.33.16 (Elapsed Time: 5,69 seconds)"
+  },
+  "test_corrections": [
+    "MosaicLayer Boundary/Footprint sublayers excluded from vector fixtures",
+    "CAD closed entities counted by source geometry types; polygons are also exposed as polylines"
+  ],
+  "source_sha256": "fec1f1c2062e08c50584f9e6d22dadf8cf6852fd30c69e022cf9e00170ccb1cc",
+  "package_sha256": "64da106a8385664f2fc7adc1d343f989d1531c43b95db97f3716bb33cc549d64",
+  "installed_package": "C:\\Users\\Roope\\Documents\\ArcGIS\\AddIns\\ArcGISPro\\{78512C46-1376-4F15-812E-2A0D8D900A9E}\\Muuntaja.esriAddInX",
+  "installed_matches_tested_package": true,
+  "raw_reports": {
+    "groups": "C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-20261003-03\\report.json",
+    "cad_recheck": "C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-cad-20261003\\report.json",
+    "regression": "C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-regression-20261003\\report.json",
+    "edges": "C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-edge-20261003\\report.json",
+    "native_gp_ui": "C:\\Users\\Roope\\Desktop\\työkalut\\tmp\\muuntaja-folder-groups-ui-20261003-02\\ui_report.json"
+  }
+}

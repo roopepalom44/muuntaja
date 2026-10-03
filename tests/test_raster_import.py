@@ -51,7 +51,7 @@ class FakeLayer:
         return prop == "DATASOURCE" and self.dataSource is not None
 
     def listLayers(self):
-        return list(self.children)
+        return [child for layer in self.children for child in [layer] + layer.listLayers()]
 
 
 class FakeMap:
@@ -63,13 +63,17 @@ class FakeMap:
         out = []
         for layer in self.layers:
             out.append(layer)
-            out.extend(layer.children)
+            out.extend(layer.listLayers())
         return out
 
-    def createGroupLayer(self, name):
+    def createGroupLayer(self, name, parent=None):
         group = FakeLayer(name, is_group=True)
-        self.layers.insert(0, group)
-        self.created_groups.append(name)
+        if parent is None:
+            self.layers.insert(0, group)
+        else:
+            group.longName = parent.longName + "\\" + name
+            parent.children.insert(0, group)
+        self.created_groups.append(group.longName)
         return group
 
     def addDataFromPath(self, path):
@@ -78,7 +82,10 @@ class FakeMap:
         return layer
 
     def addLayerToGroup(self, group, layer):
-        group.children.append(FakeLayer(layer.name, data_source=layer.dataSource))
+        added = FakeLayer(layer.name, data_source=layer.dataSource)
+        added.longName = group.longName + "\\" + layer.name
+        group.children.append(added)
+        return [added]
 
     def removeLayer(self, layer):
         self.layers.remove(layer)
@@ -186,23 +193,26 @@ class RasterImportTests(unittest.TestCase):
 
             self.assertEqual(failures, [])
             self.assertEqual(len(ok), 4)
-            self.assertEqual(fake_map.created_groups, ["taustakartta_20k", "taustakartta_5k"])
-            # Karttaan jää vain ryhmätasot, 5k ylimpänä.
-            self.assertEqual([layer.name for layer in fake_map.layers], ["taustakartta_5k", "taustakartta_20k"])
-            by_name = {layer.name: layer for layer in fake_map.layers}
+            expected_groups = ["\\".join(parts[:index]) for parts in (MML_20K, MML_5K)
+                               for index in range(1, len(parts) + 1)]
+            self.assertEqual(set(fake_map.created_groups), set(expected_groups))
+            self.assertTrue(all(layer.isGroupLayer for layer in fake_map.layers))
+            by_name = {layer.longName: layer for layer in fake_map.listLayers()}
+            group20 = by_name["\\".join(MML_20K)]
+            group5 = by_name["\\".join(MML_5K)]
             self.assertEqual(
-                sorted(Path(l.dataSource).name for l in by_name["taustakartta_20k"].children),
+                sorted(Path(l.dataSource).name for l in group20.children),
                 ["R4324.png", "R4342.png"],
             )
-            self.assertEqual(len(by_name["taustakartta_5k"].children), 2)
+            self.assertEqual(len(group5.children), 2)
             self.assertEqual(sorted(code for _, code in defined), [3067] * 4)
 
             # Uudelleenajo käyttää samoja ryhmiä eikä tuplaa karttalehtiä.
             ok_again, failures_again = self.tool._import_rasters(raster_paths, [str(root)], None, None)
             self.assertEqual(failures_again, [])
             self.assertEqual(len(ok_again), 4)
-            self.assertEqual(fake_map.created_groups, ["taustakartta_20k", "taustakartta_5k"])
-            self.assertEqual(len(by_name["taustakartta_20k"].children), 2)
+            self.assertEqual(len(fake_map.created_groups), len(expected_groups))
+            self.assertEqual(len(group20.children), 2)
 
     def test_import_rasters_without_active_map_fails_each_raster(self):
         self.fake_arcpy.mp = types.SimpleNamespace(

@@ -13,6 +13,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import hashlib
 
 
 class ImportItemMessages:
@@ -187,13 +188,14 @@ class UniversalImportTool(object):
             "Tuonti tai vienti — syötteenä voi valita useita tiedostoja tai tasoja. "
             "Tuonti: valitse tiedostoja tai kansio; kansio skannataan myös alikansioineen ja kaikki tuetut muodot "
             "tuodaan tiedosto kerrallaan GDB:hen (CAD, GPKG, GeoJSON, KML, GPX, DFSU ja Shapefile). "
-            "Rasterit (tif, png/jpg + world-tiedosto, jp2, img) lisätään työtilaan ryhmätasoihin "
-            "taustakartta_-alkuisen kansion mukaan (esim. MML:n latauskansio sellaisenaan). "
+            "Kansiotuonnissa sekä vektorit että rasterit ryhmitellään alikansioiden mukaan, "
+            "myös sisäkkäiset kansiot säilyvät sisäkkäisinä ryhminä. "
             "DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
             "Vienti: feature-tasot valitaan ArcGIS Pron omalla monitasovalitsimella. "
             "CAD-vienti vie DWG/DXF-tiedostoihin vain valittujen tasojen geometriat. "
             "Muut viennit: GeoJSON, Shapefile ja KML taso kerrallaan; GPKG/DWG/DXF-viennissä "
-            "usealle tasolle voi valita yhteisen tai oman tiedoston."
+            "usealle tasolle voi valita ryhmäkohtaisen yhteisen tai oman tiedoston. "
+            "Vienti muodostaa alikansiot kartan ryhmärakenteen mukaan."
         )
         self.canRunInBackground = False
         # DFSU-sarakelistan cache UI:lle (polku+mtime -> sarakkeet); updateParameters kutsuu usein.
@@ -922,11 +924,16 @@ class UniversalImportTool(object):
             text = str(value).strip()
             if not text:
                 continue
-            key = self._export_source_text_key(text)
+            is_layer = hasattr(value, "longName")
+            if is_layer:
+                key = getattr(value, "URI", text)
+            else:
+                clean = text.strip("'\"")
+                key = self._export_source_text_key(clean) if os.path.exists(clean) else clean
             if key in seen:
                 continue
             seen.add(key)
-            out.append(text)
+            out.append(value if is_layer else text)
         return out
 
     def _export_source_text_key(self, value):
@@ -1227,8 +1234,10 @@ class UniversalImportTool(object):
         succeeded = []
         failures = []
         item_messages = ImportItemMessages(messages)
+        previous_group = getattr(self, "_current_import_group", ())
         try:
             for idx, input_path in enumerate(file_paths, 1):
+                self._current_import_group = self._import_folder_parts(input_path, folder_roots)
                 if len(file_paths) > 1:
                     self.log(messages, f"Tuonti — ({idx}/{len(file_paths)}) {input_path}")
                 try:
@@ -1283,9 +1292,107 @@ class UniversalImportTool(object):
                 messages, "Tuonti", len(input_paths), succeeded, failures
             )
         finally:
+            self._current_import_group = previous_group
             self._run_deferred_cleanup(messages)
 
     def _execute_export(self, parameters, messages, input_paths=None):
+        """Jaa kartan tasot ryhmäpoluittain ennen varsinaista tiedostovientiä."""
+        if input_paths is None:
+            input_paths = self._export_paths_from_param(parameters[12])
+        else:
+            input_paths = self._export_paths_from_param(None, input_paths)
+        folder = (parameters[6].valueAsText or "").strip()
+        if not folder or not os.path.isdir(folder):
+            return self._execute_export_batch(parameters, messages, input_paths)
+        sources = self._resolve_export_sources(input_paths)
+        groups = {}
+        for source in sources:
+            parts = tuple(str(source.longName).split("\\")[:-1]) if hasattr(source, "longName") else ()
+            groups.setdefault(parts, []).append(source)
+        if not groups:
+            self.log(messages, "Vientitasoja ei valittu.", "ERROR")
+            return
+        folders = self._export_group_folders(folder, groups)
+        succeeded, failures = [], []
+        for parts, layers in groups.items():
+            label = " / ".join(parts) or "kartan juuri"
+            try:
+                destination = folders[parts]
+                os.makedirs(destination, exist_ok=True)
+                self.log(messages, f"Vienti — ryhmä: {label} → {destination}")
+                self._execute_export_batch(parameters, messages, layers, destination)
+                succeeded.append(label)
+            except Exception as error:
+                failures.append((label, str(error)))
+                self.log(messages, f"Ryhmän '{label}' vienti epäonnistui: {error}", "WARNING")
+        if failures:
+            self._log_batch_summary(messages, "Ryhmien vienti", len(groups), succeeded, failures)
+
+    def _resolve_export_sources(self, sources):
+        """Säilytä karttataso, sen ryhmä, tyyli, valinta ja määrityskysely."""
+        try:
+            active_map = arcpy.mp.ArcGISProject("CURRENT").activeMap
+            layers = active_map.listLayers() if active_map else []
+        except Exception:
+            layers = []
+        resolved = []
+        for source in sources:
+            if hasattr(source, "longName"):
+                resolved.append(source)
+                continue
+            text = str(source).strip().strip("'\"")
+            # Selaimella valittu aineistopolku ei yksilöi kartalla olevaa tasoa.
+            if os.path.exists(text):
+                resolved.append(source)
+                continue
+            matches = [layer for layer in layers if layer.longName == text or getattr(layer, "URI", None) == text]
+            if not matches:
+                matches = [layer for layer in layers if layer.name == text]
+            if len(matches) > 1:
+                raise ValueError(f"Tason nimi '{text}' on moniselitteinen. Valitse taso koko ryhmäpolulla.")
+            resolved.append(matches[0] if matches else source)
+        return resolved
+
+    def _export_folder_component(self, name):
+        """Säilytä ryhmän nimi siltä osin kuin Windows sallii kansiossa."""
+        value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(name)).strip().rstrip(". ")
+        value = value[:100].rstrip(". ") or "Ryhmä"
+        if re.match(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", value, re.IGNORECASE):
+            value = "_" + value
+        return value
+
+    def _export_group_folders(self, folder, groups):
+        """Estä nimien siivouksesta syntyvät törmäykset ja kohdekansiosta poistuminen."""
+        groups = list(groups)
+        root = os.path.realpath(folder)
+        children = {}
+        for parts in groups:
+            for index, name in enumerate(parts):
+                children.setdefault(parts[:index], set()).add(name)
+        names = {}
+        for parent, siblings in children.items():
+            used = set()
+            for name in sorted(siblings):
+                base = self._export_folder_component(name)
+                candidate = base
+                if candidate.casefold() in used:
+                    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
+                    candidate = base + "_" + digest
+                    while candidate.casefold() in used:
+                        candidate += "_"
+                used.add(candidate.casefold())
+                names[parent + (name,)] = candidate
+        destinations = {}
+        for parts in groups:
+            path = root
+            for index in range(len(parts)):
+                path = os.path.join(path, names[parts[:index + 1]])
+                if os.path.commonpath([root, os.path.realpath(path)]) != root:
+                    raise ValueError(f"Ryhmän vientipolku poistuu vientikansiosta: {path}")
+            destinations[parts] = path
+        return destinations
+
+    def _execute_export_batch(self, parameters, messages, input_paths=None, folder_override=None):
         """Vienti: yksi tai useampi ArcGIS-taso / FC → tiedosto(t) vientikansioon."""
         if input_paths is None:
             input_param = parameters[12]
@@ -1295,7 +1402,7 @@ class UniversalImportTool(object):
             )  # Index shifted from 0 to 1
         else:
             input_paths = self._export_paths_from_param(None, input_paths)
-        folder = (parameters[6].valueAsText or "").strip()  # Index shifted from 5 to 6
+        folder = folder_override or (parameters[6].valueAsText or "").strip()
         fmt = (parameters[7].valueAsText or "GPKG").strip()  # Index shifted from 6 to 7
         # Parametri 5 kuuluu vain tuontiin. Piilotettu aiempi arvo ei saa
         # projisoida vientiaineistoja huomaamatta, joten vienti ei lue sitä;
@@ -1356,7 +1463,7 @@ class UniversalImportTool(object):
             self._build_export_path_in_folder(folder, fmt, combined_label)
         )
 
-        self.log(messages, "Vienti — lähteet: " + "; ".join(input_paths))
+        self.log(messages, "Vienti — lähteet: " + "; ".join(str(p) for p in input_paths))
         self.log(messages, f"Vienti — kansio: {folder}")
         if separate_outputs:
             self.log(messages, f"Vienti — formaatti: {fmt} → oma tiedosto jokaiselle tasolle")
@@ -1556,6 +1663,8 @@ class UniversalImportTool(object):
 
     def _export_source_label(self, in_src):
         """Lyhyt nimi tiedostonimeä varten (taso / FC)."""
+        if hasattr(in_src, "longName"):
+            return in_src.name
         try:
             d = arcpy.Describe(in_src)
             nm = getattr(d, "name", None) or ""
@@ -2136,10 +2245,15 @@ class UniversalImportTool(object):
             out_layer = f"{label[:30]}_tyyli_{stamp}_{sequence}"
             arcpy.management.MakeFeatureLayer(written_path, out_layer)
             if getattr(arcpy.Describe(in_src), "dataType", "") == "FeatureLayer":
-                temp_dir = tempfile.mkdtemp(prefix="muuntaja_tyyli_")
-                source_style = os.path.join(temp_dir, "lahde.lyrx")
-                arcpy.management.SaveToLayerFile(in_src, source_style, "ABSOLUTE")
-                arcpy.management.ApplySymbologyFromLayer(out_layer, source_style)
+                if hasattr(in_src, "longName"):
+                    # Ryhmän alla SaveToLayerFile sisältää myös vanhempien
+                    # CIM-rakenteen, jota ApplySymbologyFromLayer ei hyväksy.
+                    arcpy.management.ApplySymbologyFromLayer(out_layer, in_src)
+                else:
+                    temp_dir = tempfile.mkdtemp(prefix="muuntaja_tyyli_")
+                    source_style = os.path.join(temp_dir, "lahde.lyrx")
+                    arcpy.management.SaveToLayerFile(in_src, source_style, "ABSOLUTE")
+                    arcpy.management.ApplySymbologyFromLayer(out_layer, source_style)
             if os.path.exists(style_path):
                 os.remove(style_path)
             arcpy.management.SaveToLayerFile(out_layer, style_path, "RELATIVE")
@@ -2541,6 +2655,29 @@ class UniversalImportTool(object):
         except Exception:
             return str(path).casefold()
 
+    def _import_folder_parts(self, path, folder_roots):
+        """Alikansiot lähimmän valitun juurikansion alta, juuri itse jätetään pois."""
+        directory = os.path.dirname(os.path.abspath(str(path)))
+        roots = []
+        for root in folder_roots or []:
+            root = os.path.abspath(str(root))
+            try:
+                if os.path.commonpath([root, directory]).casefold() == root.casefold():
+                    roots.append(root)
+            except ValueError:
+                continue
+        if not roots:
+            return ()
+        relative = os.path.relpath(directory, max(roots, key=len))
+        return tuple(part for part in relative.split(os.sep) if part and part != ".")
+
+    def _get_or_create_group_path(self, active_map, parts):
+        """Luo tai käytä sisäkkäistä ryhmärakennetta koko polun mukaan."""
+        parent = None
+        for name in parts:
+            parent = self._get_or_create_group_layer(active_map, name, parent)
+        return parent
+
     def _raster_group_name(self, path, folder_roots=None):
         """Ryhmätason nimi rasterille.
 
@@ -2598,19 +2735,26 @@ class UniversalImportTool(object):
             scale = int(match.group(1)) if match else None
         return (0 if scale is None else 1, -(scale or 0), lowered)
 
-    def _get_or_create_group_layer(self, active_map, name):
-        """Käytä olemassa olevaa ylätason ryhmätasoa tai luo uusi."""
-        for layer in active_map.listLayers():
+    def _get_or_create_group_layer(self, active_map, name, parent=None):
+        """Käytä saman vanhemman ryhmää tai luo uusi siihen."""
+        long_name = (parent.longName + "\\" if parent is not None else "") + name
+        layers = parent.listLayers() if parent is not None else active_map.listLayers()
+        for layer in layers:
             if (
                 getattr(layer, "isGroupLayer", False)
                 and layer.name == name
-                and getattr(layer, "longName", name) == name
+                and getattr(layer, "longName", name) == long_name
             ):
                 return layer
         create = getattr(active_map, "createGroupLayer", None)
         if callable(create):
-            return create(name)
-        return self._add_group_layer_from_lyrx(active_map, name)
+            return create(name, parent) if parent is not None else create(name)
+        layer = self._add_group_layer_from_lyrx(active_map, name)
+        if parent is None:
+            return layer
+        added = active_map.addLayerToGroup(parent, layer)
+        active_map.removeLayer(layer)
+        return added[0]
 
     def _add_group_layer_from_lyrx(self, active_map, name):
         """Varatapa vanhemmille Pro-versioille, joissa ei ole createGroupLayeria."""
@@ -2754,12 +2898,13 @@ class UniversalImportTool(object):
             enable_pixel_cache="NO_PIXEL_CACHE",
         )
 
-        existing_sources = self._group_layer_data_sources(group_layer)
+        existing_sources = self._group_layer_data_sources(group_layer if group_layer is not None else active_map)
         if self._normalized_path_key(mosaic_path) not in existing_sources:
             try:
                 layer = active_map.addDataFromPath(mosaic_path)
-                active_map.addLayerToGroup(group_layer, layer)
-                active_map.removeLayer(layer)
+                if group_layer is not None:
+                    active_map.addLayerToGroup(group_layer, layer)
+                    active_map.removeLayer(layer)
             except Exception as e:
                 self.log(
                     messages,
@@ -2795,7 +2940,15 @@ class UniversalImportTool(object):
             self.log(messages, f"Rasterit: {reason}.", "WARNING")
             return succeeded, [(path, reason) for path in raster_paths]
 
-        groups = self._group_raster_paths(raster_paths, folder_roots)
+        # Kansiotuonti säilyttää koko rakenteen. Erikseen valittujen rasterien
+        # aiempi taustakartta-ryhmittely säilyy ilman kansiosyötettä.
+        if folder_roots:
+            groups = {}
+            for path in raster_paths:
+                parts = self._import_folder_parts(path, folder_roots)
+                groups.setdefault(parts, []).append(path)
+        else:
+            groups = {(name,): paths for name, paths in self._group_raster_paths(raster_paths).items()}
         self.log(
             messages,
             f"Rasterit — {len(raster_paths)} tiedostoa {len(groups)} ryhmään. "
@@ -2804,10 +2957,16 @@ class UniversalImportTool(object):
         mosaic_import_enabled = self._supports_mosaic_raster_import(
             output_loc, is_folder
         )
-        for group_name in sorted(groups, key=self._raster_group_sort_key):
-            paths = groups[group_name]
+        for parts in sorted(groups, key=lambda parts: self._raster_group_sort_key(" / ".join(parts))):
+            paths = groups[parts]
+            group_name = " / ".join(parts) or "Rasterit"
+            # Sama lehden nimi eri vanhemman alla ei saa jakaa mosaiikkia.
+            mosaic_name = parts[0] if len(parts) == 1 and self.sanitize_name(parts[0]) == parts[0].casefold() else (
+                (parts[-1][:30] if parts else "Rasterit") + "_" +
+                hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
+            )
             try:
-                group_layer = self._get_or_create_group_layer(active_map, group_name)
+                group_layer = self._get_or_create_group_path(active_map, parts)
             except Exception as e:
                 reason = f"ryhmätason '{group_name}' luonti epäonnistui: {e}"
                 self.log(messages, f"  > {reason}", "WARNING")
@@ -2819,7 +2978,7 @@ class UniversalImportTool(object):
                 if source_sr is not None:
                     try:
                         self._import_raster_group_as_mosaic(
-                            active_map, group_layer, group_name, paths,
+                            active_map, group_layer, mosaic_name, paths,
                             output_loc, source_sr, messages,
                         )
                         succeeded.extend(paths)
@@ -2832,7 +2991,7 @@ class UniversalImportTool(object):
                             "WARNING",
                         )
 
-            existing = self._group_layer_data_sources(group_layer)
+            existing = self._group_layer_data_sources(group_layer if group_layer is not None else active_map)
             added = skipped = 0
             defined_crs = set()
             group_total = len(paths)
@@ -2847,8 +3006,9 @@ class UniversalImportTool(object):
                         if crs_name:
                             defined_crs.add(crs_name)
                         layer = active_map.addDataFromPath(path)
-                        active_map.addLayerToGroup(group_layer, layer)
-                        active_map.removeLayer(layer)
+                        if group_layer is not None:
+                            active_map.addLayerToGroup(group_layer, layer)
+                            active_map.removeLayer(layer)
                         existing.add(key)
                         added += 1
                         succeeded.append(path)
@@ -2892,11 +3052,17 @@ class UniversalImportTool(object):
             active_map = aprx.activeMap
             if not active_map:
                 return
+            group_layer = self._get_or_create_group_path(
+                active_map, getattr(self, "_current_import_group", ())
+            )
             for path in paths:
                 if path and arcpy.Exists(path):
                     layer = active_map.addDataFromPath(path)
                     if styles.get(path):
                         self._apply_source_style(layer, styles[path], messages)
+                    if group_layer is not None:
+                        active_map.addLayerToGroup(group_layer, layer)
+                        active_map.removeLayer(layer)
         except Exception as e:
             if str(e).strip() == "CURRENT":
                 pass  # Headless-ajo ilman aktiivista ArcGIS Pro -käyttöliittymäprojektia
@@ -3493,12 +3659,7 @@ class UniversalImportTool(object):
             
             # 4. Lisää kartalle
             if add_to_map:
-                try:
-                    aprx = arcpy.mp.ArcGISProject("CURRENT")
-                    if aprx.activeMap:
-                        aprx.activeMap.addDataFromPath(check_path)
-                except Exception:
-                    pass
+                self._add_layers_to_map([check_path], messages)
 
             return check_path
 

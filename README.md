@@ -8,13 +8,14 @@
 
 ## Ominaisuudet
 - **Tiedostojen muuntaminen:** Tuo CAD-, GPKG-, Shapefile-, GeoJSON-, GPX-, KML/KMZ- ja DFSU-aineistoja suoraan projektiin.
-- **Kansiotuonti:** Anna tuonnissa yhden kansion polku. Muuntaja käy kansion ja sen alikansiot läpi, tunnistaa kaikki tuetut tiedostomuodot ja lisää muunnetut tasot työtilaan.
-- **Rasterituonti ryhmiteltynä:** Tuonti tunnistaa myös rasterit (TIFF, JP2, IMG sekä PNG/JPG, joiden vieressä on world-tiedosto kuten `.pgw`). Rasterit lisätään työtilaan ryhmätasoihin lähimmän `taustakartta_`-alkuisen kansion mukaan, joten MML:n latauskansion voi antaa sellaisenaan (ks. alla).
+- **Kansiotuonti:** Muuntaja käy valitun kansion alikansioineen läpi ja säilyttää alikansioiden nimet ja hierarkian kartan ryhmätasoina. Esimerkiksi `aineistot/Kaupunki/Tiet/tiet.shp` tulee ryhmään `Kaupunki → Tiet`. Valitun kansion juuressa olevat tiedostot ja erikseen valitut vektorit tulevat kartan juureen. Muunnettu data tallennetaan edelleen valittuun GDB:hen tai kohdekansioon.
+- **Rasterituonti ryhmiteltynä:** Tuonti tunnistaa myös rasterit (TIFF, JP2, IMG sekä PNG/JPG, joiden vieressä on world-tiedosto kuten `.pgw`). Kansiotuonnissa rasterit käyttävät samaa ryhmärakennetta kuin vektorit; saman nimiset aliryhmät eri vanhempien alla pysyvät erillisinä.
 - **Tasovalinta viennissä:** Vientitilassa tasot valitaan ArcGIS Pron omalla monitasovalitsimella aktiivisesta kartasta tai selaamalla. Vienti noudattaa tason valintaa ja määrityskyselyä (definition query) kuten ArcGISin omat työkalut: vain kartalla näkyvät tai valitut kohteet viedään, ja loki kertoo rajauksesta.
 - **Kohdekoordinaatisto viennissä:** Vientiin voi valita koordinaatiston, johon aineisto muunnetaan: ETRS-TM35FIN, ETRS-GK19–GK31 (esim. EUREF-FIN / ETRS-GK23), KKJ-kaistat, WGS 84 tai Web Mercator. Muunnos koskee GPKG-, Shapefile-, GeoJSON-, DWG- ja DXF-vientiä; KML/KMZ on standardin mukaan aina WGS84. Oletus on **Tason oma**, ja GeoJSON viedään ilman valintaa WGS84:ään kuten ennenkin. Usean tason viennissä jokainen taso säilyttää oman koordinaatistonsa ("Tason oma"), eikä tasoja projisoida ensimmäisen tason koordinaatistoon. Yhteen DWG/DXF-tiedostoon mahtuu vain yksi koordinaatisto, joten eri koordinaatistoissa olevat tasot vaativat joko kohdekoordinaatiston tai oman tiedoston jokaiselle tasolle; muuten vienti pysähtyy ja kertoo tämän.
 - **Tyyli mukaan:** Valinta **Pakkaa tasojen tyylit mukaan** (oletuksena päällä). GeoPackage- ja Shapefile-viennin viereen kirjoitetaan tason symbologia `.lyrx`-tasotiedostona (GeoPackagessa `<tiedosto>_<taso>.lyrx`), joka viittaa viedyn tiedoston dataan suhteellisella polulla. KML/KMZ saa tyylin ArcGISin KML-viennistä. GeoJSONille ei ole tyylistandardia, eikä DWG/DXF-vienti kirjoita symbologiaa.
 - **Tyyli tuonnissa:** Kun tuotavan Shapefilen tai GeoPackagen vieressä on sen tyylitiedosto (`<tiedosto>.lyrx` tai GeoPackagessa `<gpkg>_<taso>.lyrx`, kuten Muuntajan vienti ne nimeää), tuotu taso saa kartalle saman symbologian automaattisesti. ArcGIS Pro ei itse etsi tyylitiedostoa aineiston vierestä; ilman Muuntajaa lisää kartalle `.lyrx`-tiedosto, joka tuo aineiston tyyleineen.
-- **Monitasoviennin paketointi:** Shapefile-, GeoJSON- ja KML/KMZ-viennit tehdään aina omiksi tiedostoiksi tasoittain. GPKG-, DWG- ja DXF-vienneissä voi valita yhden yhteisen tiedoston tai oman tiedoston jokaiselle tasolle.
+- **Vienti ryhmien alikansioihin:** Valitut karttatasot viedään ryhmähierarkiaa vastaaviin alikansioihin: `Kaupunki → Tiet → tiet` kirjoitetaan `<vientikansio>/Kaupunki/Tiet/`. Ryhmättömät tasot ja selaamalla valitut aineistopolut viedään vientikansion juureen. Windowsille kelpaamattomat kansiomerkit korvataan; nimien siivouksesta syntyvät törmäykset erotetaan nimipäätteellä.
+- **Monitasoviennin paketointi:** Shapefile-, GeoJSON- ja KML/KMZ-viennit tehdään aina omiksi tiedostoiksi tasoittain. GPKG-, DWG- ja DXF-vienneissä voi valita yhteisen tiedoston **kullekin ryhmälle erikseen** tai oman tiedoston jokaiselle tasolle. Eri ryhmien tasoja ei yhdistetä samaan tiedostoon.
 - **Selkeä CAD-vienti:** DWG/DXF-vientiin kirjoitetaan vain valittujen tasojen geometriat. Labeltekstejä tai erillisiä attribuuttitaulukoita ei muodosteta.
 - **Hallittu karttasisältö:** Vienti kirjoittaa vain tiedostot eikä lisää vientituloksia aktiiviselle kartalle. Tuonti lisää muunnetut aineistot normaalisti työtilaan.
 - **Integrointi ArcGIS Prohon:** Laajennus lisää ArcGIS Pron käyttöliittymään oman välilehden / painikkeen (Muuntaja), josta työkalun saa nopeasti auki.
@@ -74,13 +75,13 @@ Anna tuonnissa pelkkä yläkansio (esim. `Downloads\rasterit`), niin Muuntaja:
 
 - etsii kaikki rasterit alikansioineen; PNG/JPG otetaan mukaan vain, jos
   vieressä on world-tiedosto (`.pgw`, `.jgw`, `.wld`) tai `.aux.xml`
-- luo aktiiviseen karttaan ryhmätason jokaiselle `taustakartta_`-kansiolle
-  (`taustakartta_20k`, `taustakartta_5k` …). GDB-kohteella ja ArcGIS Pro
+- luo aktiiviseen karttaan sisäkkäiset ryhmät valitun kansion koko
+  alikansiorakenteen mukaan. GDB-kohteella ja ArcGIS Pro
   Standard/Advanced -lisenssillä kaikki ryhmän karttalehdet lisätään yhdellä
   eräoperaatiolla mosaiikkiaineistoon ja kartalle tulee vain yksi taso ryhmää
   kohti. Basic-lisenssillä tai kansiokohteella karttalehdet lisätään ryhmään
-  yksittäisinä tasoina. Eri latauksista tulevat saman nimiset ryhmät
-  yhdistetään, ja tarkin mittakaava jää sisällysluettelossa ylimmäksi
+  yksittäisinä tasoina. Saman nimiset ryhmät eri vanhempien alla pysyvät
+  erillisinä ja käyttävät eri mosaiikkeja
 - määrittää koordinaatiston rasterille, jolta se puuttuu (MML:n PNG:t):
   ensisijaisesti world-tiedoston koordinaateista (TM35FIN, GK-kaistat, KKJ),
   sitten kansiopolusta (`etrs89` → ETRS-TM35FIN). Lähtökoordinaatisto-valinnalla
@@ -88,8 +89,8 @@ Anna tuonnissa pelkkä yläkansio (esim. `Downloads\rasterit`), niin Muuntaja:
   yksittäistuonnissa määritys kirjoittaa `.aux.xml`-tiedoston rasterin viereen
 - ohittaa karttalehdet, jotka ovat jo samassa ryhmässä, joten uudelleenajo ei tuplaa niitä
 
-Jos rasterit eivät ole `taustakartta_`-kansiossa, ryhmä nimetään syötekansion
-ensimmäisen alikansion mukaan (MML:n latauskohtainen kansio ohitetaan).
+Erikseen valitut rasterit ilman kansiosyötettä ryhmitellään edelleen
+lähimmän `taustakartta_`-kansion tai tiedoston oman kansion mukaan.
 Rasterit lisätään **viittauksina alkuperäisiin tiedostoihin** eikä niitä
 kopioida tallennuspaikkaan, joten latauskansio kannattaa siirtää pysyvään
 paikkaan ennen tuontia.

@@ -72,6 +72,20 @@ class FolderGroupTests(unittest.TestCase):
         paths = ["A\\roads", "a\\roads", "A\\roads"]
         self.assertEqual(self.tool._export_paths_from_param(None, paths), paths[:2])
 
+    def test_native_parameter_keeps_layer_objects(self):
+        layer = types.SimpleNamespace(longName="Ryhmä\\roads", URI="unique")
+        parameter = types.SimpleNamespace(values=[layer], valueAsText="roads")
+        self.assertIs(self.tool._export_paths_from_param(parameter)[0], layer)
+
+    def test_native_gp_copy_recovers_map_group_by_uri(self):
+        active_map = FakeMap()
+        group = active_map.createGroupLayer("A")
+        layer = active_map.addLayerToGroup(group, active_map.addDataFromPath("roads.shp"))[0]
+        layer.URI = "original"
+        gp_copy = types.SimpleNamespace(longName="roads", URI="original")
+        self.arcpy.mp = types.SimpleNamespace(ArcGISProject=lambda _: types.SimpleNamespace(activeMap=active_map))
+        self.assertIs(self.tool._resolve_export_sources([gp_copy])[0], layer)
+
 
 if __name__ == "__main__":
     unittest.main()

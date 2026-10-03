@@ -5,7 +5,7 @@ ja julkaisu `v1.5.2.21`. Alkuperäisen `muuntaja`-hakemiston paikalliset
 muutokset säilytettiin; työ tehtiin erillisessä työpuussa haaralla
 `feature/folder-layer-groups`.
 
-**142 automaattista testiä läpäisi ilman ohituksia. 93 oikean ArcGIS Pro
+**145 automaattista testiä läpäisi ilman ohituksia. 94 oikean ArcGIS Pro
 3.7 Advanced -ympäristön testitapausta läpäisi.** Kooste, ajokohtaiset
 tulokset ja lähdekoodin sekä paketin SHA-256-tunnisteet ovat tiedostossa
 [validation-2026-10-03.json](validation-2026-10-03.json).
@@ -35,7 +35,8 @@ tulokset ja lähdekoodin sekä paketin SHA-256-tunnisteet ovat tiedostossa
 | Aiempi tuonti-/vientimatriisi | 65 |
 | Reunatapaukset, rasterimosaiikki ja CAD-projisointi | 11 |
 | Rekisteröidyn GP-työkalun tuonti ja vienti avoimessa Prossa | 1 |
-| Yhteensä | 93 |
+| Ryhmätason BigInteger ja määrityskysely avoimessa Prossa | 1 |
+| Yhteensä | 94 |
 
 Ryhmätestit käyttivät Shapefile-, GPKG-, GeoJSON- ja TIFF-lähteitä,
 Unicode-kansionimiä, juuressa olevia tiedostoja sekä saman nimisiä
@@ -53,7 +54,7 @@ koko ryhmäpolku, samannimiset tasot, määrityskyselyt sekä erikoisnimet.
 Käyttöliittymätestissä avattiin koneen ArcGIS Pro Computer Use -työkalulla
 ja luotiin erillinen projekti `Muuntaja_kansioryhmat_20261003`. Testi
 rekisteröi työkalulaatikon `arcpy.ImportToolbox`-kutsulla ja ajoi sen
-`UniversalImportTool`-geoprocessointityökaluna kartassa `Muuntaja native GP`.
+`UniversalImportTool`-geoprocessointityökaluna kartassa `Muuntaja valmis GP`.
 Tässä ajossa `CURRENT` oli oikea avoin projekti; karttarajapintoja tai
 muunnoksia ei korvattu testikaksoisilla. Viisi vektoritasoa ja kaksi
 rasteria tuotiin, minkä jälkeen vektorit vietiin Shapefileiksi neljään
@@ -69,6 +70,16 @@ Ryhmän sisällä olevan tason `SaveToLayerFile`-tulos sisältää vanhempien
 CIM-rakenteen, jota `ApplySymbologyFromLayer` ei hyväksynyt. Vienti siirtää
 nyt tyylin suoraan lähdekarttatasosta, ja GPKG/Shapefile-tyylitiedostot
 syntyvät oikein.
+
+Avoimen Pron GPFeatureLayer-valitsin palautti tason kopion ilman ryhmäpolkua.
+Vienti säilyttää nyt alkuperäiset parametrin taso-oliot ja tunnistaa karttatason
+URI:lla tai yksikäsitteisellä aineistolähteellä. Ryhmätason kentät luetaan
+Describe-kutsulla ja kenttäkartta tehdään aineiston skeemasta, jotta ArcGISin
+lyhyisiin nimiin perustuvat ListFields/addTable-kutsut eivät ohita muunnoksia.
+Varsinainen vienti käyttää edelleen karttatasoa valintoineen ja kyselyineen.
+Aito GP-testi säilytti tunnisteen `9007199254740991` täsmälleen tekstinä ja
+määrityskysely rajasi kaksi kohdetta yhdeksi. Lopullinen kansiotuonti ja vienti
+ajettiin uudelleen avoimessa Prossa ilman kenttätarkistuksen virhevaroituksia.
 
 Testiskripteistä korjattiin rasterimosaiikin Boundary-/Footprint-alitasojen
 rajaus ja CAD-geometrialaskenta. ArcGIS näyttää suljetut CAD-entiteetit sekä
@@ -93,4 +104,10 @@ Python-ikkunassa. Aktiivisen kartan tulee olla erillinen tyhjä testikartta.
 
 Paketti käännettiin virallisella ArcGIS Pro 3.5 SDK:lla ja .NET 8:lla.
 Paketin Python-työkalulaatikon tavut verrattiin testattuun lähdekoodiin.
+Paketti asennettiin paikalliseen Prohon; edellinen paketti säilytettiin
+varmuuskopiona. Uudelleenkäynnistyksessä Muuntaja-painike löysi asennetun
+työkalulaatikon. Pro pyysi ensimmäisen käyttökerran Python-työkalulaatikon
+luottamusvahvistuksen, joka hylättiin automaatiossa. Painikkeen työkalunäkymän
+latausta tämän vahvistuksen jälkeen ei siis ole merkitty läpäisseeksi;
+varsinainen ajo testattiin rekisteröidyn GP-työkalun kautta.
 Ajot tehtiin koneen Pro 3.7:llä; Pro 3.5:llä ei tehty ajonaikaista testiä.

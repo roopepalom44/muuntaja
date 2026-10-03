@@ -90,6 +90,14 @@ class ShapefileExportTests(unittest.TestCase):
         self.source = [field("name", "String", 100), field("value", "Integer")]
         self.assertIsNone(self.mappings())
 
+    def test_grouped_layer_schema_uses_layer_identity(self):
+        self.source = [field("identifier", "BigInteger")]
+        layer = types.SimpleNamespace(longName="Ryhmä\\Sama nimi")
+        self.arcpy.Describe = lambda source: types.SimpleNamespace(fields=self.source, catalogPath="source.gdb/data") if source is layer else None
+        self.arcpy.ListFields = lambda _source: self.fail("ListFields loses CURRENT grouped layer identity")
+        mappings = self.tool._build_shapefile_field_mappings(layer, "output", None)
+        self.assertEqual(mappings.fields[0].type, "String")
+
 
 if __name__ == "__main__":
     unittest.main()

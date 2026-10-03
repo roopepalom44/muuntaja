@@ -818,7 +818,7 @@ class UniversalImportTool(object):
         is_import_mode = mode_param.startswith("Tuonti")
         selection_param = p_input if is_import_mode else p_export_layers
         raw_paths = self._input_paths_from_param(selection_param)
-        paths = raw_paths if is_import_mode else self._export_paths_from_param(p_export_layers, raw_paths)
+        paths = raw_paths if is_import_mode else self._export_paths_from_param(p_export_layers)
         if not paths:
             self.log(messages, "Syöte puuttuu (valitse vähintään yksi tiedosto tai taso).", "ERROR")
             return
@@ -917,7 +917,11 @@ class UniversalImportTool(object):
     def _export_paths_from_param(self, param, values=None):
         """Palauta ArcGIS Pron GPFeatureLayer-monivalitsimen tasot listana."""
         if values is None:
-            values = self._input_paths_from_param(param)
+            # Älä muuta GPFeatureLayer-arvoja ensin tekstiksi: ryhmäpolku,
+            # URI ja tason valinta katoavat silloin lyhyeksi nimeksi.
+            values = getattr(param, "values", None)
+            if values is None:
+                values = self._input_paths_from_param(param)
         out = []
         seen = set()
         for value in values or []:
@@ -1338,7 +1342,15 @@ class UniversalImportTool(object):
         resolved = []
         for source in sources:
             if hasattr(source, "longName"):
-                resolved.append(source)
+                # GPFeatureLayer voi olla karttatasosta tehty kopio, jonka
+                # longName ei enää sisällä vanhempia ryhmiä. Palauta kartan
+                # alkuperäinen taso URI:lla tai yksikäsitteisellä lähteellä.
+                uri = getattr(source, "URI", None)
+                matches = [layer for layer in layers if uri and getattr(layer, "URI", None) == uri]
+                if not matches:
+                    data_source = getattr(source, "dataSource", None)
+                    matches = [layer for layer in layers if data_source and getattr(layer, "dataSource", None) == data_source]
+                resolved.append(matches[0] if len(matches) == 1 else source)
                 continue
             text = str(source).strip().strip("'\"")
             # Selaimella valittu aineistopolku ei yksilöi kartalla olevaa tasoa.
@@ -1398,7 +1410,6 @@ class UniversalImportTool(object):
             input_param = parameters[12]
             input_paths = self._export_paths_from_param(
                 input_param,
-                self._input_paths_from_param(input_param),
             )  # Index shifted from 0 to 1
         else:
             input_paths = self._export_paths_from_param(None, input_paths)
@@ -1949,7 +1960,12 @@ class UniversalImportTool(object):
     ):
         """Sovita kenttätyypit ja kenttäleveydet Shapefilen dBASE-rajoihin."""
         try:
-            source_fields = list(arcpy.ListFields(fc_path) or [])
+            # CURRENT-kartan ryhmätason ListFields voi käyttää vain tason
+            # lyhyttä nimeä. Describe säilyttää Layer-olion yksilöinnin.
+            if hasattr(fc_path, "longName"):
+                source_fields = list(arcpy.Describe(fc_path).fields or [])
+            else:
+                source_fields = list(arcpy.ListFields(fc_path) or [])
         except Exception as e:
             self.log(messages, f"  > Shapefilen kenttien tarkistus epäonnistui: {e}", "WARNING")
             return None
@@ -1976,7 +1992,11 @@ class UniversalImportTool(object):
             field_mappings = arcpy.FieldMappings()
             # Tämä saa ArcGISin sovittamaan nimet Shapefilen enintään 10 merkkiin.
             field_mappings.fieldValidationWorkspace = out_dir
-            field_mappings.addTable(fc_path)
+            # Kenttäkartta lukee vain skeeman; itse muunnos saa edelleen
+            # Layer-olion valintoineen ja määrityskyselyineen. CURRENT-kartan
+            # ryhmän lyhyt tasonimi ei kelpaa addTable-kutsulle.
+            schema_source = arcpy.Describe(fc_path).catalogPath if hasattr(fc_path, "longName") else fc_path
+            field_mappings.addTable(schema_source)
         except Exception as e:
             self.log(messages, f"  > Shapefilen kenttäkartan luonti epäonnistui: {e}", "WARNING")
             return None

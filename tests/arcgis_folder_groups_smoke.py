@@ -110,7 +110,8 @@ def export_groups(matrix, active_map, fmt, separate, sources=None, label=None):
         expected_files = len(EXPECTED[parent]) if separate or fmt not in ("GPKG", "DWG", "DXF") else 1
         assert len(paths) == expected_files, (parent, paths, expected_files, messages.entries)
         actual_counts = []
-        source_geometries = {arcpy.Describe(source).shapeType for source in sources
+        geometry_sources = feature_layers(active_map)
+        source_geometries = {arcpy.Describe(source).shapeType for source in geometry_sources
                              if "/".join(source.longName.split("\\")[:-1]) == parent}
         for path in paths:
             if fmt == "Shapefile":
@@ -244,12 +245,49 @@ def run_current(output_dir):
             actual_export.setdefault("" if parent == "." else parent, []).append(count(path))
         actual_export = {parent: sorted(values) for parent, values in actual_export.items()}
         assert actual_export == EXPECTED, (actual_export, result.getMessages())
+        assert "kenttien tarkistus epäonnistui" not in result.getMessages(), result.getMessages()
     project.save()
     report = {"status": "PASS", "environment": arcpy.GetInstallInfo(), "seconds": time.perf_counter() - started,
               "imported_parents": actual, "exported_parents": actual_export, "gp_messages": result.getMessages()}
     (output / "ui_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PASS: ArcGIS Pro native GP folder import + grouped Shapefile export", actual_export)
     return report
+
+
+def run_current_fields(output_dir):
+    """Verify grouped CURRENT layer field mapping and a definition query."""
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=False)
+    with arcpy.EnvManager(addOutputsToMap=False):
+        matrix = Matrix(output)
+        fc = str(arcpy.management.CreateFeatureclass(matrix.gdb, "group_fields", "POINT", spatial_reference=3067)[0])
+        arcpy.management.AddField(fc, "large_id", "BIGINTEGER")
+        with arcpy.da.InsertCursor(fc, ["SHAPE@XY", "large_id"]) as cursor:
+            cursor.insertRow(((385000, 6672000), 9007199254740991))
+            cursor.insertRow(((385001, 6672001), 42))
+        project = arcpy.mp.ArcGISProject("CURRENT")
+        active_map = project.activeMap
+        group = active_map.createGroupLayer("Kenttätesti")
+        layer = active_map.addDataFromPath(fc)
+        layer.definitionQuery = "large_id > 42"
+        grouped = active_map.addLayerToGroup(group, layer)[0]
+        active_map.removeLayer(layer)
+        toolbox_path = str(Path(__file__).resolve().parents[1] / "Toolboxes/Muuntaja.pyt")
+        arcpy.RemoveToolbox(toolbox_path)
+        native = arcpy.ImportToolbox(toolbox_path)
+        result = native.UniversalImportTool(operation_mode=matrix.module.EXPORT_MODE_LABEL,
+                                            export_layers=[grouped.longName],
+                                            export_output_folder=str(output), export_format="Shapefile")
+        path = next((output / "Kenttätesti").glob("*.shp"))
+        actual = list(arcpy.da.SearchCursor(str(path), ["large_id"]))
+        assert actual == [("9007199254740991",)], (actual, result.getMessages())
+        assert "kenttien tarkistus epäonnistui" not in result.getMessages(), result.getMessages()
+        assert "kenttäkartan luonti epäonnistui" not in result.getMessages(), result.getMessages()
+        report = {"status": "PASS", "values": actual, "gp_messages": result.getMessages()}
+        (output / "ui_fields_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        project.save()
+        print("PASS: grouped CURRENT Shapefile BigInteger and definition query", actual)
+        return report
 
 
 def run_cad_recheck(output_dir, project_path):

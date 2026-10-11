@@ -1,11 +1,11 @@
-using ArcGIS.Desktop.Framework.Contracts;
 using ArcGIS.Desktop.Core.Geoprocessing;
+using ArcGIS.Desktop.Framework.Contracts;
 using ArcGIS.Desktop.Framework.Dialogs;
 using System;
 using System.IO;
 using System.Reflection;
 
-namespace Muuntaja // <-- KORJATTU
+namespace Muuntaja
 {
     public class OpenMuuntajaToolButton : Button
     {

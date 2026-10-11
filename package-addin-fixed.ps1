@@ -10,6 +10,12 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = (Resolve-Path -LiteralPath $PSScriptRoot).Path
 $output = Join-Path $root "bin\$Configuration\$TargetFramework"
 $stage = Join-Path $env:TEMP ('muuntaja-stage-' + [guid]::NewGuid().ToString('N'))
+$stage = [IO.Path]::GetFullPath($stage)
+$taskTempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+if (-not $stage.StartsWith($taskTempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    (Split-Path -Leaf $stage) -notmatch '^muuntaja-stage-[0-9a-f]{32}$') {
+    throw 'The package staging path must be an isolated Muuntaja directory under TEMP.'
+}
 $zip = Join-Path $env:TEMP ('muuntaja-' + [guid]::NewGuid().ToString('N') + '.zip')
 $package = Join-Path $output 'Muuntaja.esriAddInX'
 
@@ -26,7 +32,6 @@ $files = @(
     @{ Relative = 'Install\Muuntaja.dll'; Source = (Join-Path $output 'Muuntaja.dll') },
     @{ Relative = 'Install\Muuntaja.pdb'; Source = (Join-Path $output 'Muuntaja.pdb') },
     @{ Relative = 'Install\Muuntaja.deps.json'; Source = (Join-Path $output 'Muuntaja.deps.json') },
-    @{ Relative = 'Install\OpenMuuntajaToolButton.cs'; Source = (Join-Path $root 'OpenMuuntajaToolButton.cs') },
     @{ Relative = 'Install\Toolboxes\Muuntaja.pyt'; Source = (Join-Path $root 'Toolboxes\Muuntaja.pyt') },
     @{ Relative = 'Install\Toolboxes\cad_worker.py'; Source = (Join-Path $root 'Toolboxes\cad_worker.py') }
 )

@@ -1979,7 +1979,6 @@ class UniversalImportTool(object):
             self.log(messages, f"  > Shapefilen kenttien tarkistus epäonnistui: {e}", "WARNING")
             return None
 
-        field_types_without_width = {"geometry", "oid", "blob", "raster"}
         estimated_length = 1
         needs_mapping = False
         for field in source_fields:
@@ -2057,19 +2056,8 @@ class UniversalImportTool(object):
             )
 
         current_length = 1
-        removable = []
         for output_field in list(field_mappings.fields):
-            field_type = (getattr(output_field, "type", "") or "").casefold()
-            width = self._shapefile_field_width(output_field)
-            current_length += width
-            if (
-                field_type not in field_types_without_width
-                and (
-                    minimal
-                    or not getattr(output_field, "required", False)
-                )
-            ):
-                removable.append((width, str(getattr(output_field, "name", "") or "")))
+            current_length += self._shapefile_field_width(output_field)
 
         # Lyhennä tekstikenttiä ensin. Sarakkeita ei poisteta rivirajan vuoksi.
         clamped = []
@@ -2965,13 +2953,16 @@ class UniversalImportTool(object):
         staged, failures = [], []
         with tempfile.TemporaryDirectory(prefix="muuntaja_raster_layers_") as work_dir:
             for index, path in enumerate(paths):
-                layer_name = f"muuntaja_raster_{index}"
+                layer_name = f"muuntaja_raster_{index}_{datetime.datetime.now().strftime('%H%M%S%f')}"
                 layer_file = os.path.join(work_dir, f"{index}.lyrx")
                 try:
                     arcpy.management.MakeRasterLayer(path, layer_name)
                     arcpy.management.SaveToLayerFile(layer_name, layer_file, "ABSOLUTE")
                     with open(layer_file, encoding="utf-8-sig") as stream:
                         part = json.load(stream)
+                    for definition in part.get("layerDefinitions", []):
+                        if definition.get("type") == "CIMRasterLayer":
+                            definition["name"] = self._file_stem(path)
                     if document is None:
                         document = part
                     else:
@@ -4239,6 +4230,15 @@ class UniversalImportTool(object):
             arcpy.env.workspace = prev_ws  # palauta globaali workspace, ettei vuoda seuraavaan tiedostoon
 
     def process_generic(self, input_path, output_loc, is_folder, messages, input_sr=None, target_sr=None):
+        if str(input_path).lower().endswith(".shp"):
+            base = os.path.splitext(str(input_path))[0]
+            directory = os.path.dirname(base) or "."
+            with os.scandir(directory) as entries:
+                names = {entry.name.casefold() for entry in entries if entry.is_file()}
+            missing = [ext for ext in (".dbf", ".shx")
+                       if os.path.basename(base + ext).casefold() not in names]
+            if missing:
+                raise ValueError("Shapefilen sivutiedosto puuttuu: " + ", ".join(missing))
         base_name = os.path.splitext(os.path.basename(input_path))[0]
         style = self._find_source_style(input_path)
         if not style:
@@ -4483,11 +4483,9 @@ class UniversalImportTool(object):
             self.log(messages, "  > Luetaan DFSU-metatiedot...")
             dfs = mikeio.open(input_path)
             self.log(messages, "  > Luetaan DFSU-itemien arvot muistiin (vain 1. aika-askel)...")
-            try:
-                # Tuonti käyttää vain ensimmäistä aika-askelta — luetaan vain se (säästää muistia isoilla malleilla).
-                dataset = mikeio.read(input_path, time=0)
-            except Exception:
-                dataset = mikeio.read(input_path)
+            # Tuonti tarvitsee vain ensimmäisen aika-askeleen. Lukuvirhe ei saa
+            # käynnistää koko aikasarjan muistia kuluttavaa varalukua.
+            dataset = dfs.read(time=0)
             item_names = [getattr(item, "name", "") for item in getattr(dataset, "items", []) or []]
             if not item_names:
                 raise RuntimeError("DFSU-tiedostosta ei löytynyt item-kenttiä.")
@@ -4495,7 +4493,7 @@ class UniversalImportTool(object):
 
             geometry = getattr(dataset, "geometry", None) or getattr(dfs, "geometry", None)
             element_table = getattr(geometry, "element_table", None)
-            element_coordinates = getattr(geometry, "element_coordinates", None)
+            element_coordinates = getattr(geometry, "element_coordinates", None) if element_table is None else None
             if element_table is None or len(element_table) == 0:
                 if element_coordinates is None or len(element_coordinates) == 0:
                     raise RuntimeError("DFSU-geometriasta ei löytynyt elementtien topologiaa eikä koordinaatteja.")
@@ -4607,10 +4605,10 @@ class UniversalImportTool(object):
                         arr = arr.reshape(-1)
                 except Exception:
                     pass
-                # Store float64 numpy array directly; NaN→None conversion is done inline during insertion.
+                # Keep the original NumPy buffer; convert one scalar per output row.
                 try:
                     import numpy as _np
-                    values_by_item[item_name] = _np.asarray(arr, dtype="float64")
+                    values_by_item[item_name] = _np.asarray(arr)
                 except Exception:
                     converted = []
                     for v in list(arr):

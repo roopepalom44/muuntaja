@@ -1,6 +1,7 @@
 """Check that each local import format lands in Finland after conversion."""
 
 import gc
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -11,7 +12,10 @@ from qgis.core import (
     QgsFeature, QgsGeometry, QgsPointXY, QgsProject, QgsRasterLayer, QgsVectorLayer,
 )
 
-QgsApplication.setPrefixPath("C:/Program Files/QGIS 3.44.14/apps/qgis-ltr", True)
+# Windowsin OSGeo4W/QGIS-asennuksessa prefix pitää asettaa käsin; Linuxissa ei.
+QGIS_PREFIX = os.environ.get("QGIS_PREFIX_PATH", "C:/Program Files/QGIS 3.44.14/apps/qgis-ltr")
+if Path(QGIS_PREFIX).is_dir():
+    QgsApplication.setPrefixPath(QGIS_PREFIX, True)
 app = QgsApplication([], False)
 app.initQgis()
 sys.path.insert(0, str(Path(__file__).resolve().parent))

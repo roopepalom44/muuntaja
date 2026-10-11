@@ -12,3 +12,4 @@ __pycache__/
 *.suo
 qgis_plugin/dist/
 qgis_plugin/.cache/
+!tests/data/*.dwg

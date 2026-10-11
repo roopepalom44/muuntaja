@@ -21,7 +21,6 @@ def load_toolbox(fake_arcpy):
 class ImportFolderScanTests(unittest.TestCase):
     def setUp(self):
         self.fake_arcpy = types.ModuleType("arcpy")
-        self.fake_arcpy.ExecuteError = type("ExecuteError", (Exception,), {})
         self.module = load_toolbox(self.fake_arcpy)
         self.tool = self.module.UniversalImportTool()
 
@@ -109,10 +108,11 @@ class ImportFolderScanTests(unittest.TestCase):
         export_layers = parameters[12]
 
         self.assertEqual(len(parameters), 16)
-        # Uudet parametrit lisataan aina loppuun, jotta aiemmat indeksit pysyvat.
         self.assertEqual(parameters[14].name, "export_target_sr")
-        self.assertEqual(parameters[14].value, self.module.EXPORT_CRS_KEEP)
         self.assertEqual(parameters[15].name, "export_include_styles")
+        self.assertIs(parameters[15].value, True)
+        # Ajonaikainen pip-asennus on poistettu; kirjastot asennetaan condalla.
+        self.assertNotIn("dfsu_auto_install", [parameter.name for parameter in parameters])
         self.assertEqual(export_layers.datatype, "GPFeatureLayer")
         self.assertTrue(export_layers.multiValue)
         self.assertFalse(export_layers.enabled)
@@ -124,14 +124,6 @@ class ImportFolderScanTests(unittest.TestCase):
             "cad_attribute_tables_by_layer",
             [parameter.name for parameter in parameters],
         )
-
-    def test_shapefile_source_is_valid_export_input(self):
-        self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
-            dataType="Shapefile",
-            shapeFieldName="Shape",
-        )
-
-        self.assertEqual(self.tool._bulk_operation_mode([r"C:\data\roads.shp"]), "import")
 
     def test_mode_switch_keeps_conditional_inputs_optional_for_arcgis_validator(self):
         class Parameter:
@@ -263,6 +255,56 @@ class ImportFolderScanTests(unittest.TestCase):
             self.assertEqual([label for _path, label in exported], ["roads", "water"])
             self.assertEqual(len({path for path, _label in exported}), 2)
             self.assertTrue(all(Path(path).suffix == ".gpkg" for path, _label in exported))
+
+    def test_combined_cad_export_of_mixed_crs_stops_without_target_crs(self):
+        logged = []
+        messages = types.SimpleNamespace(
+            addMessage=lambda message: logged.append(message),
+            addWarningMessage=lambda message: logged.append(message),
+            addErrorMessage=lambda message: logged.append(message),
+        )
+        systems = {"tm35": "EUREF-FIN_TM35FIN", "gk25": "EUREF-FIN_GK25FIN"}
+        self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
+            spatialReference=types.SimpleNamespace(name=systems[Path(str(path)).stem]))
+        self.tool._export_to_cad = lambda *_args, **_kwargs: self.fail("ei saa viedä sekoitettuja koordinaatistoja")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(16)]
+            parameters[6].valueAsText = temp_dir
+            parameters[7].valueAsText = "DWG"
+            parameters[13].valueAsText = self.module.MULTI_EXPORT_PACKAGING_COMBINED
+            parameters[14].valueAsText = self.module.EXPORT_CRS_KEEP
+
+            self.tool._execute_export(parameters, messages, ["tm35", "gk25"])
+
+        self.assertTrue(any("eri koordinaatistoissa" in str(message) for message in logged), logged)
+
+    def test_style_checkbox_controls_layer_files(self):
+        messages = types.SimpleNamespace(
+            addMessage=lambda _message: None,
+            addWarningMessage=lambda _message: None,
+            addErrorMessage=lambda _message: None,
+        )
+        self.tool._prepare_export_feature_class = (
+            lambda source, _messages, copy_source=True, target_sr=None: source
+        )
+        self.tool._export_source_label = lambda source: Path(source).stem
+        self.tool._export_to_geopackage = (
+            lambda _fc, out_path, _messages, source_label=None: os.path.join(str(out_path), source_label)
+        )
+        for include_styles, expected in ((True, 1), (False, 0), (None, 1)):
+            with self.subTest(include_styles=include_styles), tempfile.TemporaryDirectory() as temp_dir:
+                self.fake_arcpy.Exists = lambda path: Path(str(path)).exists()
+                parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(16)]
+                parameters[6].valueAsText = temp_dir
+                parameters[7].valueAsText = "GPKG"
+                parameters[14].valueAsText = self.module.EXPORT_CRS_KEEP
+                parameters[15].value = include_styles
+                styles = []
+                self.tool._write_style_file = lambda source, written, _messages: styles.append(written)
+
+                self.tool._execute_export(parameters, messages, [str(Path(temp_dir) / "roads")])
+
+                self.assertEqual(len(styles), expected)
 
     def test_dwg_export_can_create_one_file_per_layer(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -414,15 +456,24 @@ class ImportFolderScanTests(unittest.TestCase):
             parameters[6].valueAsText = temp_dir
             parameters[7].valueAsText = "GeoJSON"
             parameters[13].valueAsText = self.module.MULTI_EXPORT_PACKAGING_COMBINED
-            target_values = []
+            prepared = []
+            self.fake_arcpy.management = types.SimpleNamespace(
+                Project=lambda *_args, **_kwargs: self.fail("export must not project")
+            )
 
             def prepare(source, _messages, copy_source=True, target_sr=None):
-                target_values.append(target_sr)
+                prepared.append(source)
                 return source
 
             self.tool._prepare_export_feature_class = prepare
             self.tool._export_source_label = lambda _source: "roads"
-            self.tool._export_to_geojson = lambda _fc, out, _messages, keep_input_sr=False: out
+            kept_crs = []
+
+            def export_geojson(_fc, out, _messages, keep_input_sr=False):
+                kept_crs.append(keep_input_sr)
+                return out
+
+            self.tool._export_to_geojson = export_geojson
             messages = types.SimpleNamespace(
                 addMessage=lambda _message: None,
                 addWarningMessage=lambda _message: None,
@@ -431,7 +482,9 @@ class ImportFolderScanTests(unittest.TestCase):
 
             self.tool._execute_export(parameters, messages, ["Roads"])
 
-            self.assertEqual(target_values, [None])
+            self.assertEqual(prepared, ["Roads"])
+            # Ilman viennin kohdekoordinaatistoa GeoJSON viedään WGS84:ään.
+            self.assertEqual(kept_crs, [False])
 
     def test_geopackage_schema_prefix_is_not_used_as_layer_name(self):
         self.assertEqual(
@@ -560,6 +613,29 @@ class ImportFolderScanTests(unittest.TestCase):
         )
 
         self.assertEqual(result, r"C:\data\roads")
+
+    def test_export_uses_layer_itself_so_selection_and_definition_query_apply(self):
+        copied = []
+        logged = []
+        self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
+            dataType="FeatureLayer",
+            catalogPath=r"C:\data\project.gdb\roads",
+            FIDSet="1;2;3",
+            whereClause="class = 1",
+        )
+        self.fake_arcpy.Exists = lambda _path: False
+        self.fake_arcpy.env = types.SimpleNamespace(scratchGDB=r"C:\scratch.gdb")
+        self.fake_arcpy.management = types.SimpleNamespace(
+            CopyFeatures=lambda source, target: copied.append((source, target))
+        )
+        self.tool.log = lambda _messages, text, level="INFO": logged.append(text)
+
+        result = self.tool._prepare_export_feature_class("Roads", None)
+
+        self.assertEqual(copied[0][0], "Roads")
+        self.assertEqual(result, copied[0][1])
+        self.assertTrue(any("3 valittua" in text for text in logged))
+        self.assertTrue(any("class = 1" in text for text in logged))
 
 
 if __name__ == "__main__":

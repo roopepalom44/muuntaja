@@ -53,19 +53,40 @@ def mock_qgis(monkeypatch):
 
     qgis = types.ModuleType("qgis")
     core = types.ModuleType("qgis.core")
-    for name in ("QgsCoordinateTransform", "QgsFeature", "QgsField", "QgsFields", "QgsGeometry",
-                 "QgsRasterLayer", "QgsVectorLayer", "QgsWkbTypes"):
+    for name in (
+        "QgsCoordinateTransform",
+        "QgsFeature",
+        "QgsField",
+        "QgsFields",
+        "QgsGeometry",
+        "QgsRasterLayer",
+        "QgsVectorLayer",
+        "QgsWkbTypes",
+    ):
         setattr(core, name, type(name, (), {}))
     core.QgsCoordinateReferenceSystem = CRS
     core.QgsProject = types.SimpleNamespace(instance=lambda: object())
-    core.QgsVectorFileWriter = type("Writer", (), {"FieldValueConverter": type("Converter", (), {})})
+    core.QgsVectorFileWriter = type(
+        "Writer", (), {"FieldValueConverter": type("Converter", (), {})}
+    )
     qt = types.ModuleType("qgis.PyQt.QtCore")
     qt.QVariant = types.SimpleNamespace(String=10, Int=2, Double=6)
     deleted = []
     pyqt = types.ModuleType("qgis.PyQt")
-    pyqt.sip = types.SimpleNamespace(isdeleted=lambda value: value in deleted, delete=deleted.append)
-    for name, value in {"qgis": qgis, "qgis.core": core, "qgis.PyQt": pyqt,
-                        "qgis.PyQt.QtCore": qt}.items():
+    pyqt.sip = types.SimpleNamespace(
+        isdeleted=lambda value: value in deleted, delete=deleted.append
+    )
+    for name, value in {
+        "qgis": qgis,
+        "qgis.core": core,
+        "qgis.PyQt": pyqt,
+        "qgis.PyQt.QtCore": qt,
+    }.items():
         monkeypatch.setitem(sys.modules, name, value)
-    module = load_module("audit_qgis_core", ROOT / "qgis_plugin/muuntaja_qgis/core.py")
+    package = types.ModuleType("audit_qgis")
+    package.__path__ = [str(ROOT / "qgis_plugin/muuntaja_qgis")]
+    monkeypatch.setitem(sys.modules, "audit_qgis", package)
+    module = load_module(
+        "audit_qgis.processing", ROOT / "qgis_plugin/muuntaja_qgis/processing.py"
+    )
     return module, deleted

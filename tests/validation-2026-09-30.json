@@ -1,0 +1,509 @@
+{
+  "date": "2026-09-30",
+  "arcgis_pro": "3.7",
+  "qgis": "3.44.14",
+  "mikeio": "3.3.0 (isolated test dependency directory)",
+  "unit_tests_passed": 134,
+  "unit_tests_skipped": 0,
+  "arcgis_cases_passed": 83,
+  "cases": [
+    {
+      "name": "export_POINT_GPKG",
+      "status": "PASS",
+      "seconds": 2.276,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POINT_DWG",
+      "status": "PASS",
+      "seconds": 1.396,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POINT_DXF",
+      "status": "PASS",
+      "seconds": 1.209,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POINT_GeoJSON",
+      "status": "PASS",
+      "seconds": 0.217,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POINT_Shapefile",
+      "status": "PASS",
+      "seconds": 0.559,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POINT_KML",
+      "status": "PASS",
+      "seconds": 0.535,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POINT_KMZ",
+      "status": "PASS",
+      "seconds": 0.41,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYLINE_GPKG",
+      "status": "PASS",
+      "seconds": 1.72,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYLINE_DWG",
+      "status": "PASS",
+      "seconds": 0.96,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYLINE_DXF",
+      "status": "PASS",
+      "seconds": 1.004,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYLINE_GeoJSON",
+      "status": "PASS",
+      "seconds": 0.222,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYLINE_Shapefile",
+      "status": "PASS",
+      "seconds": 0.536,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYLINE_KML",
+      "status": "PASS",
+      "seconds": 0.325,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYLINE_KMZ",
+      "status": "PASS",
+      "seconds": 0.323,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYGON_GPKG",
+      "status": "PASS",
+      "seconds": 1.645,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYGON_DWG",
+      "status": "PASS",
+      "seconds": 0.987,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYGON_DXF",
+      "status": "PASS",
+      "seconds": 0.98,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYGON_GeoJSON",
+      "status": "PASS",
+      "seconds": 0.19,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYGON_Shapefile",
+      "status": "PASS",
+      "seconds": 0.494,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYGON_KML",
+      "status": "PASS",
+      "seconds": 0.305,
+      "expected_rejection": false
+    },
+    {
+      "name": "export_POLYGON_KMZ",
+      "status": "PASS",
+      "seconds": 0.352,
+      "expected_rejection": false
+    },
+    {
+      "name": "projected_Shapefile",
+      "status": "PASS",
+      "seconds": 1.504,
+      "expected_rejection": false
+    },
+    {
+      "name": "projected_GeoJSON",
+      "status": "PASS",
+      "seconds": 1.167,
+      "expected_rejection": false
+    },
+    {
+      "name": "projected_GPKG",
+      "status": "PASS",
+      "seconds": 2.545,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_GPKG_False",
+      "status": "PASS",
+      "seconds": 2.737,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_GPKG_True",
+      "status": "PASS",
+      "seconds": 5.005,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_DWG_False",
+      "status": "PASS",
+      "seconds": 2.959,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_DWG_True",
+      "status": "PASS",
+      "seconds": 3.484,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_DXF_False",
+      "status": "PASS",
+      "seconds": 3.213,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_DXF_True",
+      "status": "PASS",
+      "seconds": 3.308,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_Shapefile_False",
+      "status": "PASS",
+      "seconds": 1.522,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_GeoJSON_False",
+      "status": "PASS",
+      "seconds": 0.523,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_KML_False",
+      "status": "PASS",
+      "seconds": 0.923,
+      "expected_rejection": false
+    },
+    {
+      "name": "multi_KMZ_False",
+      "status": "PASS",
+      "seconds": 1.025,
+      "expected_rejection": false
+    },
+    {
+      "name": "selection",
+      "status": "PASS",
+      "seconds": 0.416,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POINT_GPKG",
+      "status": "PASS",
+      "seconds": 2.04,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POINT_Shapefile",
+      "status": "PASS",
+      "seconds": 0.929,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POINT_GeoJSON",
+      "status": "PASS",
+      "seconds": 1.879,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POINT_KML",
+      "status": "PASS",
+      "seconds": 1.674,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POINT_KMZ",
+      "status": "PASS",
+      "seconds": 1.283,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POINT_DWG",
+      "status": "PASS",
+      "seconds": 8.743,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POINT_DXF",
+      "status": "PASS",
+      "seconds": 8.673,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYLINE_GPKG",
+      "status": "PASS",
+      "seconds": 1.601,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYLINE_Shapefile",
+      "status": "PASS",
+      "seconds": 0.551,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYLINE_GeoJSON",
+      "status": "PASS",
+      "seconds": 1.337,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYLINE_KML",
+      "status": "PASS",
+      "seconds": 1.347,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYLINE_KMZ",
+      "status": "PASS",
+      "seconds": 1.323,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYLINE_DWG",
+      "status": "PASS",
+      "seconds": 8.903,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYLINE_DXF",
+      "status": "PASS",
+      "seconds": 8.759,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYGON_GPKG",
+      "status": "PASS",
+      "seconds": 1.773,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYGON_Shapefile",
+      "status": "PASS",
+      "seconds": 0.591,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYGON_GeoJSON",
+      "status": "PASS",
+      "seconds": 1.488,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYGON_KML",
+      "status": "PASS",
+      "seconds": 1.567,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYGON_KMZ",
+      "status": "PASS",
+      "seconds": 1.538,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYGON_DWG",
+      "status": "PASS",
+      "seconds": 9.925,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_export_POLYGON_DXF",
+      "status": "PASS",
+      "seconds": 9.357,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_cad_sample.dxf",
+      "status": "PASS",
+      "seconds": 15.39,
+      "expected_rejection": false
+    },
+    {
+      "name": "invalid_only",
+      "status": "PASS",
+      "seconds": 0.413,
+      "expected_rejection": true
+    },
+    {
+      "name": "empty_only",
+      "status": "PASS",
+      "seconds": 2.438,
+      "expected_rejection": true
+    },
+    {
+      "name": "mixed_invalid_valid",
+      "status": "PASS",
+      "seconds": 3.896,
+      "expected_rejection": false
+    },
+    {
+      "name": "mixed_invalid_dfsu_valid",
+      "status": "PASS",
+      "seconds": 5.153,
+      "expected_rejection": false
+    },
+    {
+      "name": "native_cad_failure_cad_sample_r2000.dwg",
+      "status": "PASS",
+      "seconds": 7.139,
+      "expected_rejection": false
+    },
+    {
+      "name": "native_cad_failure_cad_sample_r2018.dwg",
+      "status": "PASS",
+      "seconds": 21.407,
+      "expected_rejection": false
+    },
+    {
+      "name": "folder_shapefile",
+      "status": "PASS",
+      "seconds": 1.413,
+      "expected_rejection": false
+    },
+    {
+      "name": "nested_folder",
+      "status": "PASS",
+      "seconds": 2.253,
+      "expected_rejection": false
+    },
+    {
+      "name": "real_Väylä_tiestotiedot_aidat (2).gpkg",
+      "status": "PASS",
+      "seconds": 2.65,
+      "expected_rejection": false
+    },
+    {
+      "name": "real_folder_big_integer",
+      "status": "PASS",
+      "seconds": 2.954,
+      "expected_rejection": false
+    },
+    {
+      "name": "real_Tilastokeskus_postialue_pno_tilasto_2026.gpkg",
+      "status": "PASS",
+      "seconds": 2.67,
+      "expected_rejection": false
+    },
+    {
+      "name": "real_Tasaus_Roope_Palomaa.gpkg",
+      "status": "PASS",
+      "seconds": 1.399,
+      "expected_rejection": true
+    },
+    {
+      "name": "real_gpx_kytkin-vikajärvi",
+      "status": "PASS",
+      "seconds": 5.554,
+      "expected_rejection": false
+    },
+    {
+      "name": "real_dfsu",
+      "status": "PASS",
+      "seconds": 94.157,
+      "expected_rejection": false
+    },
+    {
+      "name": "empty_export_Shapefile",
+      "status": "PASS",
+      "seconds": 0.579,
+      "expected_rejection": false
+    },
+    {
+      "name": "empty_export_GPKG",
+      "status": "PASS",
+      "seconds": 2.27,
+      "expected_rejection": false
+    },
+    {
+      "name": "empty_export_GeoJSON",
+      "status": "PASS",
+      "seconds": 0.197,
+      "expected_rejection": false
+    },
+    {
+      "name": "null_geometry_shapefile",
+      "status": "PASS",
+      "seconds": 0.567,
+      "expected_rejection": false
+    },
+    {
+      "name": "unknown_crs_projection_rejected",
+      "status": "PASS",
+      "seconds": 0.072,
+      "expected_rejection": true
+    },
+    {
+      "name": "wide_unicode_big_integer",
+      "status": "PASS",
+      "seconds": 0.67,
+      "expected_rejection": false
+    },
+    {
+      "name": "wide_folder_import",
+      "status": "PASS",
+      "seconds": 0.452,
+      "expected_rejection": false
+    },
+    {
+      "name": "locked_input_read",
+      "status": "PASS",
+      "seconds": 0.448,
+      "expected_rejection": false
+    },
+    {
+      "name": "import_name_collision",
+      "status": "PASS",
+      "seconds": 1.384,
+      "expected_rejection": false
+    },
+    {
+      "name": "raster_mosaic_duplicate_and_invalid",
+      "status": "PASS",
+      "seconds": 13.235,
+      "expected_rejection": false
+    },
+    {
+      "name": "real_cad",
+      "status": "PASS",
+      "seconds": 15.683,
+      "expected_rejection": false
+    },
+    {
+      "name": "cad_projection_and_field_mapping",
+      "status": "PASS",
+      "seconds": 25.278,
+      "expected_rejection": false
+    }
+  ]
+}

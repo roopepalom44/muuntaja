@@ -323,6 +323,17 @@ class QgisIntegrationTests(unittest.TestCase):
         self.assertTrue(task.result["canceled"])
         self.assertFalse((self.root / "out").exists())
 
+    def test_finished_export_releases_source_snapshots(self):
+        layer = self.points()
+        task = self.tasks.ConversionTask(
+            "Vienti", dict(folder=self.root / "out", format_name="GPKG"),
+            QgsProject.instance(), [layer])
+        self.assertTrue(task.sources)
+        self.assertTrue(task.run(), task.result)
+        task.finished(True)
+        self.assertFalse(task.sources)
+        self.assertFalse(task.rasters)
+
     def test_fifty_thousand_feature_export_throughput(self):
         layer = self.points(
             coordinates=((385000 + index, 6670000) for index in range(50000))

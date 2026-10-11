@@ -42,9 +42,10 @@ Korjaukset on yhdistetty GitHubin `main`-version `4f05439` päälle. Auditoinnin
 
 ## Tarkistukset
 
-- Tavallinen Python 3.14: `python -m pytest tests --tb=short` — **146 läpäisi**. 61 natiivi-/opt-in-testiä ohitetaan tässä ympäristössä tarkoituksella.
-- QGIS 3.44.14: `python-qgis-ltr.bat -m unittest discover -s tests -p "test_qgis*.py" -v` — **61 läpäisi**, yksi suuren DFSU:n opt-in-testi ohitettiin; se ajettiin erikseen alla.
+- Tavallinen Python 3.14: `python -m pytest tests --tb=short` — **146 läpäisi**. 62 natiivi-/opt-in-testiä ohitetaan tässä ympäristössä tarkoituksella.
+- QGIS 3.44.14: `python-qgis-ltr.bat -m unittest discover -s tests -p "test_qgis*.py" -v` — **62 läpäisi**, yksi suuren DFSU:n opt-in-testi ohitettiin; se ajettiin erikseen alla.
 - ArcGIS Pro 3.7: `propy.bat -m unittest discover -s tests -p test_arcgis_integration.py -v` — **9 läpäisi**, mukaan lukien oikea CAD-työprosessi, viisi vektoriformaattia, rasterien LayerFile-erä ja NumPy/NaN-DFSU-kirjoitus.
+- Windowsin GitHub-runnerin 8.3-polkujen testivertailu käyttää molempien polkujen kanonista muotoa.
 - Ruff: `ruff check --select F,E9 --extension pyt:python Toolboxes qgis_plugin tests` — läpäisi.
 - 50 000 kohteen QGIS-vienti: **0,53 s** viimeisessä koko testisarjan ajossa; tiedoston kohdemäärä ja tiedostolukkojen vapautuminen tarkistetaan.
 - 1 000 rasterin VRT: **24,38 s** viimeisessä koko testisarjan ajossa; yksi karttataso ja kaikki lähdepolut tarkistetaan.

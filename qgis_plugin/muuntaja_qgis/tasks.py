@@ -278,6 +278,10 @@ class ConversionTask(QgsTask):
             core._dispose(project)
 
     def finished(self, success):
+        # Release source snapshots even if the closed progress dialog or task
+        # manager still retains the Python task wrapper.
+        self.sources.clear()
+        self.rasters.clear()
         self.completed.emit(
             self.result or {"canceled": self.isCanceled(), "error": "Ajo keskeytyi"}
         )

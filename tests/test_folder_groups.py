@@ -38,9 +38,10 @@ class FolderGroupTests(unittest.TestCase):
             groups = [(), ("A:B",), ("A?B",), ("CON",), ("..",), ("Äänekoski", "Shared")]
             folders = self.tool._export_group_folders(directory, groups)
             self.assertEqual(len({value.casefold() for value in folders.values()}), len(groups))
+            root = Path(directory).resolve()
             for value in folders.values():
-                self.assertTrue(Path(value).is_relative_to(Path(directory)))
-            self.assertEqual(Path(folders[("Äänekoski", "Shared")]).relative_to(directory).parts, ("Äänekoski", "Shared"))
+                self.assertTrue(Path(value).resolve().is_relative_to(root))
+            self.assertEqual(Path(folders[("Äänekoski", "Shared")]).resolve().relative_to(root).parts, ("Äänekoski", "Shared"))
             self.assertEqual(Path(folders[("CON",)]).name, "_CON")
 
     def test_sibling_allocation_does_not_depend_on_selection_order(self):

@@ -378,6 +378,8 @@ class MuuntajaDialog(QDialog):
         return crs
 
     def _progress(self, index, total, label):
+        if self._task is None:
+            return
         self.progress.setMaximum(total)
         self.progress.setValue(index - 1)
         self.progress.setLabelText(label)
@@ -445,6 +447,7 @@ class MuuntajaDialog(QDialog):
 
     def _task_finished(self, result):
         self.progress.close()
+        self.progress.deleteLater()
         self._task = None
         self.import_run.setEnabled(True)
         self.export_run.setEnabled(True)

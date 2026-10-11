@@ -1,6 +1,6 @@
 # Muuntaja
 
-**QGIS-versio (esijulkaisu):** [asennus ja nykyinen toiminnallisuus](qgis_plugin/README.md). Ladattavat ZIP-paketit ovat [GitHub-julkaisussa](https://github.com/roopepalom44/muuntaja/releases/tag/qgis-v0.2.1).
+**QGIS-versio (esijulkaisu):** [asennus ja nykyinen toiminnallisuus](qgis_plugin/README.md). Uusin kehitysversio sisältää automaattisen DWG-tuontimuuntimen Windows-paketeissa.
 
 **Muuntaja** on ArcGIS Pro Add-In -laajennus, joka on suunniteltu helpottamaan erilaisten tiedostomuotojen (kuten CAD, GPX, KML jne.) tuomista ja viemistä ArcGIS Pro -ympäristössä. Se tarjoaa käyttäjäystävällisen käyttöliittymän aineistojen nopeaan kääntämiseen ja siirtämiseen.
 

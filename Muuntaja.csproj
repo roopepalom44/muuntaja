@@ -12,6 +12,7 @@
 		<None Remove="Images\muuntaja16.png" />
 		<None Remove="Images\muuntaja32.png" />
 		<None Remove="Toolboxes\Muuntaja.pyt" />
+		<None Remove="Toolboxes\cad_worker.py" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -23,6 +24,9 @@
 		<Content Include="Images\muuntaja16.png" />
 		<Content Include="Images\muuntaja32.png" />
 		<Content Include="Toolboxes\Muuntaja.pyt">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</Content>
+		<Content Include="Toolboxes\cad_worker.py">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</Content>
 	</ItemGroup>

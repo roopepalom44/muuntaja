@@ -9,7 +9,33 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest numpy
+      - run: python -m pytest tests --tb=short
+
+  qgis-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install QGIS runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-qgis python3-numpy
+      - name: Run native QGIS integration and stress tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QGIS_PREFIX_PATH: /usr
+        run: /usr/bin/python3 -m unittest discover -s tests -p test_qgis_integration.py -v
+
   build-and-release:
+    needs: [test, qgis-test]
     runs-on: windows-2025
     timeout-minutes: 60
     steps:

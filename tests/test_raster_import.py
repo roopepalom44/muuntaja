@@ -61,14 +61,18 @@ class FakeMap:
 
     def listLayers(self):
         out = []
-        for layer in self.layers:
+        def visit(layer):
             out.append(layer)
-            out.extend(layer.children)
+            for child in layer.children:
+                visit(child)
+        for layer in self.layers:
+            visit(layer)
         return out
 
-    def createGroupLayer(self, name):
+    def createGroupLayer(self, name, parent=None):
         group = FakeLayer(name, is_group=True)
-        self.layers.insert(0, group)
+        group.longName = (parent.longName + "\\" if parent else "") + name
+        (parent.children if parent else self.layers).insert(0, group)
         self.created_groups.append(name)
         return group
 
@@ -150,7 +154,7 @@ class RasterImportTests(unittest.TestCase):
     def test_epsg_is_guessed_from_world_file_then_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            tm35 = write_tile(root / "a", "tile")
+            tm35 = write_tile(root / "a", "tile", x=385000)
             gk25 = write_tile(root / "b", "tile", x=25496000.0, y=6672000.0)
             no_world_in_etrs = write_tile(root / "etrs89" / "png", "tile", world=False)
             unknown = write_tile(root / "c", "tile", world=False)
@@ -186,23 +190,22 @@ class RasterImportTests(unittest.TestCase):
 
             self.assertEqual(failures, [])
             self.assertEqual(len(ok), 4)
-            self.assertEqual(fake_map.created_groups, ["taustakartta_20k", "taustakartta_5k"])
-            # Karttaan jää vain ryhmätasot, 5k ylimpänä.
-            self.assertEqual([layer.name for layer in fake_map.layers], ["taustakartta_5k", "taustakartta_20k"])
-            by_name = {layer.name: layer for layer in fake_map.layers}
-            self.assertEqual(
-                sorted(Path(l.dataSource).name for l in by_name["taustakartta_20k"].children),
-                ["R4324.png", "R4342.png"],
-            )
-            self.assertEqual(len(by_name["taustakartta_5k"].children), 2)
+            self.assertEqual(fake_map.created_groups.count("taustakartta_20k"), 1)
+            self.assertEqual(fake_map.created_groups.count("taustakartta_5k"), 1)
+            by_path = {layer.longName: layer for layer in fake_map.listLayers() if layer.isGroupLayer}
+            group20 = by_path["\\".join(MML_20K)]
+            group5 = by_path["\\".join(MML_5K)]
+            self.assertEqual(sorted(Path(l.dataSource).name for l in group20.children), ["R4324.png", "R4342.png"])
+            self.assertEqual(len(group5.children), 2)
             self.assertEqual(sorted(code for _, code in defined), [3067] * 4)
 
             # Uudelleenajo käyttää samoja ryhmiä eikä tuplaa karttalehtiä.
             ok_again, failures_again = self.tool._import_rasters(raster_paths, [str(root)], None, None)
             self.assertEqual(failures_again, [])
             self.assertEqual(len(ok_again), 4)
-            self.assertEqual(fake_map.created_groups, ["taustakartta_20k", "taustakartta_5k"])
-            self.assertEqual(len(by_name["taustakartta_20k"].children), 2)
+            self.assertEqual(fake_map.created_groups.count("taustakartta_20k"), 1)
+            self.assertEqual(fake_map.created_groups.count("taustakartta_5k"), 1)
+            self.assertEqual(len(group20.children), 2)
 
     def test_import_rasters_without_active_map_fails_each_raster(self):
         self.fake_arcpy.mp = types.SimpleNamespace(

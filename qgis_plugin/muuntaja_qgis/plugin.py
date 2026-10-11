@@ -10,15 +10,17 @@ from qgis.PyQt.QtWidgets import (
     QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QTabWidget,
     QToolButton, QVBoxLayout, QWidget,
 )
-from qgis.core import QgsCoordinateReferenceSystem, QgsProject, QgsVectorLayer
+from qgis.core import QgsApplication, QgsCoordinateReferenceSystem, QgsProject, QgsVectorLayer
 
-from .core import DRIVERS, OperationCanceled, export_data, find_oda_converter, import_data
+from .core import DRIVERS
+from .tasks import ConversionTask, publish_layers
 
 
 class MuuntajaDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._automatic_import_destination = ""
+        self._task = None
         self.setWindowTitle("Muuntaja — QGIS")
         self.resize(760, 680)
         layout = QVBoxLayout(self)
@@ -129,14 +131,6 @@ class MuuntajaDialog(QDialog):
         self.clean_cad = QCheckBox("Ohita CADin Defpoints- ja 0-tasot")
         self.clean_cad.setEnabled(False)
         advanced_form.addRow("CAD", self.clean_cad)
-        self.import_oda_converter = QLineEdit(find_oda_converter())
-        self.import_oda_converter.setPlaceholderText("ODA File Converterin .exe uudemmille DWG-tiedostoille")
-        self.import_oda_converter.setEnabled(False)
-        self.import_oda_browse = QPushButton("Valitse…")
-        self.import_oda_browse.setEnabled(False)
-        self.import_oda_browse.clicked.connect(lambda: self._choose_oda_converter_for(self.import_oda_converter))
-        advanced_form.addRow("DWG-tuonnin muunnin", self._row_widget(
-            self._line_and_button(self.import_oda_converter, self.import_oda_browse)))
         self.dfsu_filter_enabled = QCheckBox("Rajaa DFSU-aineistoa sarakkeen arvolla")
         self.dfsu_filter_enabled.setEnabled(False)
         self.dfsu_filter_enabled.toggled.connect(self._update_dfsu_controls)
@@ -157,6 +151,7 @@ class MuuntajaDialog(QDialog):
 
         run = QPushButton("Tuo aineistot")
         run.setDefault(True)
+        self.import_run = run
         run.clicked.connect(self._run_import)
         layout.addWidget(run)
         layout.addStretch(1)
@@ -203,20 +198,14 @@ class MuuntajaDialog(QDialog):
         self.combined = QCheckBox("Vie valitut tasot samaan tiedostoon")
         self.combined.stateChanged.connect(self._update_export_controls)
         form.addRow("Useita tasoja", self.combined)
-        self.oda_converter = QLineEdit(find_oda_converter())
-        self.oda_converter.setPlaceholderText("ODA File Converterin .exe-tiedosto")
-        self.oda_browse = QPushButton("Valitse…")
-        self.oda_browse.clicked.connect(lambda: self._choose_oda_converter_for(self.oda_converter))
-        self.oda_row = self._row_widget(self._line_and_button(self.oda_converter, self.oda_browse))
-        self.oda_label = QLabel("DWG-muunnin")
-        form.addRow(self.oda_label, self.oda_row)
-        self.dwg_hint = QLabel("DWG-vienti vaatii ODA File Converterin. DXF-vienti ei vaadi lisäohjelmaa.")
+        self.dwg_hint = QLabel("DWG-vienti vaatii asennetun ODA File Converterin, joka tunnistetaan automaattisesti. DXF-vienti toimii ilman lisäohjelmaa.")
         self.dwg_hint.setWordWrap(True)
         form.addRow("", self.dwg_hint)
         layout.addLayout(form)
 
         run = QPushButton("Vie tasot")
         run.setDefault(True)
+        self.export_run = run
         run.clicked.connect(self._run_export)
         layout.addWidget(run)
         layout.addStretch(1)
@@ -249,13 +238,10 @@ class MuuntajaDialog(QDialog):
         self.input_summary.setText(f"{count} {noun} valittuna" if count else "Ei syötteitä valittuna")
         paths = [Path(self.inputs.item(index).text()) for index in range(count)]
         may_contain_cad = any(path.is_dir() or path.suffix.lower() in {".dwg", ".dxf"} for path in paths)
-        may_contain_dwg = any(path.is_dir() or path.suffix.lower() == ".dwg" for path in paths)
         may_contain_dfsu = any(path.is_dir() or path.suffix.lower() == ".dfsu" for path in paths)
         self.clean_cad.setEnabled(may_contain_cad)
         if not may_contain_cad:
             self.clean_cad.setChecked(False)
-        self.import_oda_converter.setEnabled(may_contain_dwg)
-        self.import_oda_browse.setEnabled(may_contain_dwg)
         self.dfsu_filter_enabled.setEnabled(may_contain_dfsu)
         if not may_contain_dfsu:
             self.dfsu_filter_enabled.setChecked(False)
@@ -311,11 +297,6 @@ class MuuntajaDialog(QDialog):
         if path:
             self.export_folder.setText(path)
 
-    def _choose_oda_converter_for(self, field):
-        path, _ = QFileDialog.getOpenFileName(self, "Valitse ODA File Converter", "", "Ohjelmat (*.exe)")
-        if path:
-            field.setText(path)
-
     def _update_export_controls(self, *_):
         format_name = self.format.currentText()
         supports_combined = format_name in {"GPKG", "DXF", "DWG"}
@@ -323,11 +304,6 @@ class MuuntajaDialog(QDialog):
         if not supports_combined:
             self.combined.setChecked(False)
         is_dwg = format_name == "DWG"
-        self.oda_converter.setEnabled(is_dwg)
-        self.oda_browse.setEnabled(is_dwg)
-        self.oda_row.setVisible(is_dwg)
-        label = None
-        self.oda_label.setVisible(is_dwg)
         self.dwg_hint.setVisible(is_dwg)
 
     def refresh_layers(self):
@@ -356,11 +332,6 @@ class MuuntajaDialog(QDialog):
         self.progress.setMaximum(total)
         self.progress.setValue(index - 1)
         self.progress.setLabelText(label)
-        from qgis.PyQt.QtWidgets import QApplication
-        QApplication.processEvents()
-        if self.progress.wasCanceled():
-            raise OperationCanceled("Käyttäjä keskeytti")
-
     def _run_import(self):
         paths = [self.inputs.item(i).text() for i in range(self.inputs.count())]
         destination = self.import_output.text().strip()
@@ -378,34 +349,19 @@ class MuuntajaDialog(QDialog):
         if mode == "gpkg" and Path(destination).exists() and Path(destination).is_dir():
             QMessageBox.warning(self, "Muuntaja", "Valittu GeoPackage-polku on kansio.")
             return
-        self.progress = QProgressDialog("Valmistellaan tuontia…", "Keskeytä", 0, 100, self)
-        self.progress.setWindowModality(Qt.WindowModal)
-        self.progress.setMinimumDuration(0)
-        self.progress.show()
-        project_crs_missing = not QgsProject.instance().crs().isValid()
         try:
-            successes, failures = import_data(
-                paths,
-                destination,
-                self._crs(self.source_crs.text()),
-                self._crs(self.target_crs.text()),
-                self.clean_cad.isChecked(),
-                self._progress,
-                self.dfsu_column.text().strip() if self.dfsu_filter_enabled.isChecked() else "",
-                self.dfsu_operator.currentText(),
-                self.dfsu_value.text(),
-                self.import_oda_converter.text().strip(),
+            arguments = dict(
+                paths=paths, destination=destination,
+                source_crs=self._crs(self.source_crs.text()),
+                target_crs=self._crs(self.target_crs.text()),
+                clean_cad=self.clean_cad.isChecked(),
+                dfsu_filter_column=self.dfsu_column.text().strip() if self.dfsu_filter_enabled.isChecked() else "",
+                dfsu_filter_operator=self.dfsu_operator.currentText(),
+                dfsu_filter_value=self.dfsu_value.text(),
             )
-            project_crs = QgsProject.instance().crs()
-            note = (f"Projektin koordinaattijärjestelmä asetettiin: {project_crs.authid()}."
-                    if project_crs_missing and project_crs.isValid() else "")
-            self._show_result("Tuonti", successes, failures, note)
-        except OperationCanceled:
-            QMessageBox.information(self, "Muuntaja", "Tuonti keskeytettiin.")
+            self._start_task("Tuonti", arguments)
         except Exception as exc:
             QMessageBox.critical(self, "Muuntaja", str(exc))
-        finally:
-            self.progress.close()
 
     def _run_export(self):
         layers = [
@@ -417,26 +373,53 @@ class MuuntajaDialog(QDialog):
         if not layers or not folder:
             QMessageBox.warning(self, "Muuntaja", "Valitse vietävät tasot ja vientikansio.")
             return
-        self.progress = QProgressDialog("Valmistellaan vientiä…", "Keskeytä", 0, len(layers), self)
+        self._start_task("Vienti", dict(folder=folder, format_name=self.format.currentText(),
+                                      combined=self.combined.isChecked()), layers)
+
+    def _start_task(self, operation, arguments, layers=()):
+        if self._task is not None:
+            return
+        self._task = ConversionTask(operation, arguments, QgsProject.instance(), layers)
+        self._operation = operation
+        self.import_run.setEnabled(False)
+        self.export_run.setEnabled(False)
+        self.progress = QProgressDialog("Valmistellaan…", "Keskeytä", 0, 100, self)
         self.progress.setWindowModality(Qt.WindowModal)
         self.progress.setMinimumDuration(0)
+        self.progress.canceled.connect(self._task.cancel)
+        self._task.progressUpdate.connect(self._progress)
+        self._task.completed.connect(self._task_finished)
         self.progress.show()
-        try:
-            successes, failures = export_data(
-                layers,
-                folder,
-                self.format.currentText(),
-                self.combined.isChecked(),
-                self._progress,
-                self.oda_converter.text().strip(),
-            )
-            self._show_result("Vienti", successes, failures)
-        except OperationCanceled:
-            QMessageBox.information(self, "Muuntaja", "Vienti keskeytettiin.")
-        except Exception as exc:
-            QMessageBox.critical(self, "Muuntaja", str(exc))
-        finally:
-            self.progress.close()
+        QgsApplication.taskManager().addTask(self._task)
+
+    def _task_finished(self, result):
+        self.progress.close()
+        self._task = None
+        self.import_run.setEnabled(True)
+        self.export_run.setEnabled(True)
+        if result.get("canceled"):
+            QMessageBox.information(self, "Muuntaja", "Ajo keskeytettiin.")
+        elif result.get("error"):
+            QMessageBox.critical(self, "Muuntaja", result["error"])
+        else:
+            try:
+                publish_layers(QgsProject.instance(), result["specs"], result["removed"])
+                self._show_result(self._operation, result["successes"], result["failures"])
+            except Exception as exc:
+                QMessageBox.critical(self, "Muuntaja", str(exc))
+
+    def reject(self):
+        if self._task is not None:
+            self._task.cancel()
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        if self._task is not None:
+            self._task.cancel()
+            event.ignore()
+        else:
+            super().closeEvent(event)
 
     def _show_result(self, operation, successes, failures, note=""):
         details = "\n".join(f"{path}: {error}" for path, error in failures)
@@ -465,5 +448,8 @@ class MuuntajaPlugin:
         self.iface.removeToolBarIcon(self.action)
 
     def open(self):
-        self.dialog = MuuntajaDialog(self.iface.mainWindow())
+        if self.dialog is None:
+            self.dialog = MuuntajaDialog(self.iface.mainWindow())
         self.dialog.show()
+        self.dialog.raise_()
+        self.dialog.activateWindow()

@@ -98,11 +98,12 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as folder:
     assert len(cad_imported) == 1 and not cad_import_failed, cad_import_failed
     print('CAD import passed', flush=True)
     newer_dwg = Path(__file__).parents[1] / 'Tarkekuva_pki.dwg'
-    with patch.object(muuntaja_core, 'find_oda_converter', return_value=''):
+    with patch.object(muuntaja_core, 'find_oda_converter', return_value=''), \
+         patch.object(muuntaja_core, 'find_libredwg_converter', return_value=''):
         try:
             import_data([str(newer_dwg)], str(Path(folder) / 'unsupported_dwg'))
         except RuntimeError as exc:
-            assert 'AC1032' in str(exc) and 'ODA File Converter' in str(exc)
+            assert 'AC1032' in str(exc) and 'Windows-paketti' in str(exc)
         else:
             raise AssertionError('Unsupported DWG needs a useful error')
     def fake_oda_import(command, **kwargs):
@@ -111,7 +112,8 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as folder:
         assert command[-1] == '*.DWG'
         (Path(command[2]) / 'Tarkekuva_pki.dxf').write_bytes(Path(cad_written[0]).read_bytes())
         return types.SimpleNamespace(returncode=0, stderr='', stdout='')
-    with patch.object(muuntaja_core.subprocess, 'run', side_effect=fake_oda_import):
+    with patch.object(muuntaja_core.subprocess, 'run', side_effect=fake_oda_import), \
+         patch.object(muuntaja_core, 'find_libredwg_converter', return_value=''):
         dwg_imported, dwg_import_failed = import_data(
             [str(newer_dwg)], str(Path(folder) / 'dwg_import.gpkg'),
             oda_converter=str(fake_converter))
@@ -203,7 +205,8 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as folder:
     QgsProject.instance().removeAllMapLayers()
 dialog = MuuntajaDialog()
 dialog._add_input_paths([str(newer_dwg)])
-assert dialog.import_oda_converter.isEnabled()
+assert not hasattr(dialog, 'import_oda_converter')
+assert not hasattr(dialog, 'oda_converter')
 print('dialog constructed', flush=True)
 dialog.close()
 class Interface:

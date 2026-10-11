@@ -21,6 +21,7 @@ def load_toolbox(fake_arcpy):
 class ImportFolderScanTests(unittest.TestCase):
     def setUp(self):
         self.fake_arcpy = types.ModuleType("arcpy")
+        self.fake_arcpy.ExecuteError = type("ExecuteError", (Exception,), {})
         self.module = load_toolbox(self.fake_arcpy)
         self.tool = self.module.UniversalImportTool()
 
@@ -107,10 +108,11 @@ class ImportFolderScanTests(unittest.TestCase):
         parameters = self.tool.getParameterInfo()
         export_layers = parameters[12]
 
-        self.assertEqual(len(parameters), 15)
+        self.assertEqual(len(parameters), 16)
         # Uudet parametrit lisataan aina loppuun, jotta aiemmat indeksit pysyvat.
-        self.assertEqual(parameters[14].name, "dfsu_auto_install")
-        self.assertFalse(parameters[14].value)
+        self.assertEqual(parameters[14].name, "export_target_sr")
+        self.assertEqual(parameters[14].value, self.module.EXPORT_CRS_KEEP)
+        self.assertEqual(parameters[15].name, "export_include_styles")
         self.assertEqual(export_layers.datatype, "GPFeatureLayer")
         self.assertTrue(export_layers.multiValue)
         self.assertFalse(export_layers.enabled)
@@ -129,7 +131,7 @@ class ImportFolderScanTests(unittest.TestCase):
             shapeFieldName="Shape",
         )
 
-        self.assertEqual(self.tool._bulk_export_mode([r"C:\data\roads.shp"]), "export")
+        self.assertEqual(self.tool._bulk_operation_mode([r"C:\data\roads.shp"]), "import")
 
     def test_mode_switch_keeps_conditional_inputs_optional_for_arcgis_validator(self):
         class Parameter:
@@ -245,7 +247,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
             exported = []
             self.tool._prepare_export_feature_class = (
-                lambda source, _target_sr, _messages, copy_source=True: source
+                lambda source, _messages, copy_source=True, target_sr=None: source
             )
             self.tool._export_source_label = lambda source: Path(source).stem
 
@@ -285,7 +287,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
             exported = []
             self.tool._prepare_export_feature_class = (
-                lambda source, _target_sr, _messages, copy_source=True: source
+                lambda source, _messages, copy_source=True, target_sr=None: source
             )
             self.tool._export_source_label = lambda source: Path(source).stem
             self.tool._export_to_cad = (
@@ -414,13 +416,13 @@ class ImportFolderScanTests(unittest.TestCase):
             parameters[13].valueAsText = self.module.MULTI_EXPORT_PACKAGING_COMBINED
             target_values = []
 
-            def prepare(source, target_sr, _messages, copy_source=True):
+            def prepare(source, _messages, copy_source=True, target_sr=None):
                 target_values.append(target_sr)
                 return source
 
             self.tool._prepare_export_feature_class = prepare
             self.tool._export_source_label = lambda _source: "roads"
-            self.tool._export_to_geojson = lambda _fc, out, _messages: out
+            self.tool._export_to_geojson = lambda _fc, out, _messages, keep_input_sr=False: out
             messages = types.SimpleNamespace(
                 addMessage=lambda _message: None,
                 addWarningMessage=lambda _message: None,
@@ -544,7 +546,7 @@ class ImportFolderScanTests(unittest.TestCase):
         self.assertIsNotNone(mappings)
         record_length = 1 + sum(self.tool._shapefile_field_width(field) for field in mappings.fields)
         self.assertLessEqual(record_length, self.module.SHAPEFILE_SAFE_RECORD_LENGTH)
-        self.assertLess(len(mappings.fields), len(source_fields))
+        self.assertEqual(len(mappings.fields), len(source_fields))
 
     def test_read_only_export_reuses_source_without_scratch_copy(self):
         self.fake_arcpy.Describe = lambda path: types.SimpleNamespace(
@@ -554,7 +556,7 @@ class ImportFolderScanTests(unittest.TestCase):
         )
 
         result = self.tool._prepare_export_feature_class(
-            r"C:\data\roads", None, types.SimpleNamespace(), copy_source=False
+            r"C:\data\roads", types.SimpleNamespace(), copy_source=False
         )
 
         self.assertEqual(result, r"C:\data\roads")

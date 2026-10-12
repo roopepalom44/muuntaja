@@ -4,9 +4,14 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 try:
     import arcpy
@@ -30,10 +35,14 @@ class ArcgisIntegrationTests(unittest.TestCase):
         loader.exec_module(cls.module)
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="muuntaja_arc_audit_")
-        self.root = Path(self.temp.name)
-        arcpy.management.CreateFileGDB(str(self.root), "test.gdb")
-        arcpy.management.CreateFileGDB(str(self.root), "scratch.gdb")
+        child_folder = os.environ.get("MUUNTAJA_TEST_EXPORT_FOLDER")
+        if child_folder:
+            self.temp, self.root = None, Path(child_folder)
+        else:
+            self.temp = tempfile.TemporaryDirectory(prefix="muuntaja_arc_audit_")
+            self.root = Path(self.temp.name)
+            arcpy.management.CreateFileGDB(str(self.root), "test.gdb")
+            arcpy.management.CreateFileGDB(str(self.root), "scratch.gdb")
         self.gdb = str(self.root / "test.gdb")
         self.old_scratch = arcpy.env.scratchWorkspace
         self.old_workspace = arcpy.env.workspace
@@ -64,7 +73,8 @@ class ArcgisIntegrationTests(unittest.TestCase):
         arcpy.env.workspace = self.old_workspace
         arcpy.env.scratchWorkspace = self.old_scratch
         arcpy.management.ClearWorkspaceCache()
-        self.temp.cleanup()
+        if self.temp is not None:
+            self.temp.cleanup()
 
     def points(self, code=4326):
         fc = os.path.join(self.gdb, "source")
@@ -184,6 +194,89 @@ class ArcgisIntegrationTests(unittest.TestCase):
             self.messages,
         )
         self.assert_target()
+
+    def test_grouped_dgn_shapefile_export_preserves_drawing_and_annotation(self):
+        if not os.environ.get("MUUNTAJA_TEST_EXPORT_FOLDER"):
+            # Native CAD/style readers retain .sr.lock handles until process exit.
+            # The parent owns the temporary folder and cleans it after the worker exits.
+            environment = os.environ.copy()
+            environment["MUUNTAJA_TEST_EXPORT_FOLDER"] = str(self.root)
+            completed = subprocess.run(
+                [sys.executable, str(Path(__file__)),
+                 "ArcgisIntegrationTests.test_grouped_dgn_shapefile_export_preserves_drawing_and_annotation"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                env=environment, timeout=180,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            return
+        folder = self.root / "out"
+        folder.mkdir()
+        drawing = folder / "Topeliuksenpuisto.dgn"
+        shutil.copyfile(ROOT / "tests/data/cad_annotations.dgn", drawing)
+        before = drawing.read_bytes()
+        arcpy.management.DefineProjection(str(drawing), arcpy.SpatialReference(3067))
+
+        class Source(str):
+            # Supply group metadata outside CURRENT while using real CAD classes.
+            def __new__(cls, kind):
+                value = super().__new__(cls, str(drawing) + "\\" + kind)
+                value.longName, value.name = drawing.name + "\\" + kind, kind
+                return value
+
+        kinds = ("Annotation", "MultiPatch", "Point", "Polygon", "Polyline")
+        sources = [Source(kind) for kind in kinds]
+        counts = sorted(int(arcpy.management.GetCount(source)[0]) for source in sources)
+        annotation = str(drawing) + "\\Annotation"
+        with arcpy.da.SearchCursor(annotation, ["TextString"]) as rows:
+            texts = sorted(row[0] for row in rows)
+        parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(16)]
+        parameters[6].valueAsText = str(folder)
+        parameters[7].valueAsText = "Shapefile"
+        parameters[13].valueAsText = self.module.MULTI_EXPORT_PACKAGING_SEPARATE
+        parameters[14].valueAsText = self.module.EXPORT_CRS_KEEP
+        parameters[15].value = True
+        with patch.object(self.tool, "_resolve_export_sources", side_effect=lambda values: values):
+            self.tool._execute_export(parameters, self.messages, sources)
+        destination = folder / "Topeliuksenpuisto.dgn_2"
+        outputs = list(destination.glob("*.shp"))
+        self.assertEqual(len(outputs), len(sources))
+        self.assertEqual(sorted(int(arcpy.management.GetCount(str(path))[0]) for path in outputs), counts, self.logs)
+        self.assertEqual(drawing.read_bytes(), before)
+        self.assertEqual(len(list(destination.glob("*.lyrx"))), len(sources))
+        annotation_output = next(path for path in outputs if any(
+            field.name.casefold() == "textstring" for field in arcpy.ListFields(str(path))))
+        with arcpy.da.SearchCursor(str(annotation_output), ["TextString"]) as rows:
+            self.assertEqual(sorted(row[0] for row in rows), texts)
+        self.assertFalse(any("epäonnistui" in text for _level, text in self.logs), self.logs)
+        # Let the geoprocessor release its own Shapefile locks before filesystem cleanup.
+        for path in outputs:
+            arcpy.management.Delete(str(path))
+
+    def test_annotation_geometry_copy_keeps_selected_text_and_null_geometry(self):
+        drawing = self.root / "annotations.dgn"
+        shutil.copyfile(ROOT / "tests/data/cad_annotations.dgn", drawing)
+        annotation = str(drawing) + "\\Annotation"
+        # An actual map layer exercises selection and definition query handling.
+        blank = Path(arcpy.GetInstallInfo()["InstallDir"]) / "Resources/ArcToolBox/Services/routingservices/data/Blank.aprx"
+        project = arcpy.mp.ArcGISProject(str(blank))
+        active_map = project.createMap("Selected annotations", "MAP")
+        layer = active_map.addDataFromPath(annotation)
+        try:
+            layer.definitionQuery = "TextString <> 'z'"
+            with arcpy.da.SearchCursor(layer, ["OID@", "TextString", "SHAPE@"]) as rows:
+                selected = [row for row in rows if row[1] in ("myTéxt", "0")]
+            self.assertEqual(len(selected), 2)
+            layer.setSelectionSet([row[0] for row in selected], "NEW")
+            output = self.tool._annotation_geometry_source(layer, self.messages)
+            self.assertEqual(arcpy.Describe(output).featureType, "Simple")
+            with arcpy.da.SearchCursor(output, ["TextString", "SHAPE@"]) as rows:
+                copied = list(rows)
+            self.assertEqual(sorted(row[0] for row in copied), ["0", "myTéxt"])
+            self.assertEqual(sum(row[1] is None for row in copied), 1)
+            self.assertEqual(int(arcpy.management.GetCount(annotation)[0]), 5)
+        finally:
+            active_map.removeLayer(layer)
+            del layer, active_map, project
 
     def test_dgn_roundtrip_points_lines_polygons_and_projection(self):
         sr = arcpy.SpatialReference(3067)

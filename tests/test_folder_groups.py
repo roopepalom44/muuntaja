@@ -50,6 +50,44 @@ class FolderGroupTests(unittest.TestCase):
             self.assertEqual(self.tool._export_group_folders(directory, groups),
                              self.tool._export_group_folders(directory, reversed(groups)))
 
+    def test_existing_cad_file_is_preserved_and_export_gets_a_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "Topeliuksenpuisto.dgn"
+            source.write_bytes(b"original CAD drawing")
+            folders = self.tool._export_group_folders(directory, [(), (source.name,)])
+            destination = Path(folders[(source.name,)])
+            self.assertEqual(destination.name, "Topeliuksenpuisto.dgn_2")
+            destination.mkdir(parents=True, exist_ok=True)
+            self.assertEqual(source.read_bytes(), b"original CAD drawing")
+            self.assertEqual(Path(folders[()]), Path(directory).resolve())
+
+    def test_nested_conflicts_use_the_allocated_parent_and_reuse_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Outer.dgn").write_bytes(b"outer")
+            parent = root / "Outer.dgn_2"
+            parent.mkdir()
+            (parent / "Inner.dgn").write_bytes(b"inner")
+            (parent / "keep.shp").write_bytes(b"previous export")
+            parts = ("Outer.dgn", "Inner.dgn")
+            destination = Path(self.tool._export_group_folders(directory, [parts])[parts])
+            self.assertEqual(destination, parent / "Inner.dgn_2")
+            destination.mkdir(parents=True, exist_ok=True)
+            self.assertEqual((parent / "Inner.dgn").read_bytes(), b"inner")
+            self.assertEqual((parent / "keep.shp").read_bytes(), b"previous export")
+            self.assertEqual(Path(self.tool._export_group_folders(directory, [parts])[parts]), destination)
+
+    def test_file_fallback_does_not_take_another_selected_groups_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("drawing.dgn", "drawing.dgn_2"):
+                (root / name).write_bytes(b"keep")
+            groups = [("drawing.dgn",), ("drawing.dgn_3",)]
+            folders = self.tool._export_group_folders(directory, groups)
+            self.assertEqual(Path(folders[groups[0]]).name, "drawing.dgn_4")
+            self.assertEqual(Path(folders[groups[1]]).name, "drawing.dgn_3")
+            self.assertEqual(folders, self.tool._export_group_folders(directory, reversed(groups)))
+
     def test_export_resolution_preserves_layer_identity(self):
         active_map = FakeMap()
         group = active_map.createGroupLayer("A")

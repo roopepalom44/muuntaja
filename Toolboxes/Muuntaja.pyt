@@ -1356,6 +1356,11 @@ class UniversalImportTool(object):
             label = " / ".join(parts) or "kartan juuri"
             try:
                 destination = folders[parts]
+                expected = os.path.join(os.path.realpath(folder), *(
+                    self._export_folder_component(name) for name in parts
+                ))
+                if os.path.normcase(destination) != os.path.normcase(expected):
+                    self.log(messages, f"  > Ryhmän kansiolle valittiin vapaa nimi: {destination}", "WARNING")
                 os.makedirs(destination, exist_ok=True)
                 self.log(messages, f"Vienti — ryhmä: {label} → {destination}")
                 self._execute_export_batch(parameters, messages, layers, destination)
@@ -1408,7 +1413,7 @@ class UniversalImportTool(object):
         return value
 
     def _export_group_folders(self, folder, groups):
-        """Estä nimien siivouksesta syntyvät törmäykset ja kohdekansiosta poistuminen."""
+        """Estä ryhmänimien ja olemassa olevien tiedostojen törmäykset."""
         groups = list(groups)
         root = os.path.realpath(folder)
         children = {}
@@ -1416,16 +1421,33 @@ class UniversalImportTool(object):
             for index, name in enumerate(parts):
                 children.setdefault(parts[:index], set()).add(name)
         names = {}
-        for parent, siblings in children.items():
+        # Vanhemman varattu polku voi vaihtua tiedostotörmäyksen vuoksi.
+        # Tarkista lapsen nimet juuri tästä polusta, alkuperäisen nimen sijaan.
+        for parent in sorted(children, key=lambda parts: (len(parts), parts)):
+            siblings = children[parent]
+            directory = os.path.join(root, *(names[parent[:i + 1]] for i in range(len(parent))))
             used = set()
+            reserved = {self._export_folder_component(name).casefold() for name in siblings}
             for name in sorted(siblings):
                 base = self._export_folder_component(name)
                 candidate = base
                 if candidate.casefold() in used:
                     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
                     candidate = base + "_" + digest
-                    while candidate.casefold() in used:
+                    while candidate.casefold() in used or candidate.casefold() in reserved:
                         candidate += "_"
+                path = os.path.join(directory, candidate)
+                if os.path.lexists(path) and not os.path.isdir(path):
+                    # Esimerkiksi Topeliuksenpuisto.dgn on lähdetiedosto,
+                    # jota ei saa poistaa eikä käyttää vientikansiona.
+                    original, suffix = candidate, 2
+                    while True:
+                        candidate = f"{original}_{suffix}"
+                        path = os.path.join(directory, candidate)
+                        if (candidate.casefold() not in used and candidate.casefold() not in reserved
+                                and (not os.path.lexists(path) or os.path.isdir(path))):
+                            break
+                        suffix += 1
                 used.add(candidate.casefold())
                 names[parent + (name,)] = candidate
         destinations = {}
@@ -1571,8 +1593,9 @@ class UniversalImportTool(object):
 
             elif len(input_paths) == 1:
                 in_src = input_paths[0]
+                geometry_source = self._annotation_geometry_source(in_src, messages) if fmt == "Shapefile" else in_src
                 fc_work = self._prepare_export_feature_class(
-                    in_src, messages, copy_source=False, target_sr=export_sr
+                    geometry_source, messages, copy_source=False, target_sr=export_sr
                 )
                 src_one = self._export_source_label(in_src)
                 if fmt == "GeoJSON":
@@ -1613,8 +1636,9 @@ class UniversalImportTool(object):
                     sub_src = self._export_source_label(in_src)
                     try:
                         self.log(messages, f"  > Viedään tasoa '{sub_src}'...")
+                        geometry_source = self._annotation_geometry_source(in_src, messages) if fmt == "Shapefile" else in_src
                         fc_work = self._prepare_export_feature_class(
-                            in_src, messages, copy_source=False, target_sr=export_sr
+                            geometry_source, messages, copy_source=False, target_sr=export_sr
                         )
                         if fmt == "GPKG":
                             gpkg_target = out_path
@@ -1784,6 +1808,38 @@ class UniversalImportTool(object):
             return int(sr.factoryCode)
         except Exception:
             return None
+
+    def _annotation_geometry_source(self, in_src, messages):
+        """Säilytä annotaation geometria ja tekstikentät tavallisessa feature classissa.
+
+        Shapefile ei tue annotation-tyyppiä. ArcGISin suora muunnos tai
+        CopyFeatures voi jättää CAD-tekstikohteita pois ilman virhettä.
+        Cursorit kunnioittavat lähdetason valintaa ja määrityskyselyä.
+        """
+        desc = arcpy.Describe(in_src)
+        if getattr(desc, "featureType", "") != "Annotation":
+            return in_src
+        self._log_layer_subset(in_src, desc, messages)
+        out_fc = self._new_export_scratch_path()
+        arcpy.management.CreateFeatureclass(
+            os.path.dirname(out_fc), os.path.basename(out_fc), desc.shapeType,
+            template=in_src, spatial_reference=desc.spatialReference,
+            has_z="ENABLED" if getattr(desc, "hasZ", False) else "DISABLED",
+            has_m="ENABLED" if getattr(desc, "hasM", False) else "DISABLED",
+        )
+        self._queue_deferred_cleanup(out_fc)
+        fields = ["SHAPE@"] + [
+            field.name for field in arcpy.ListFields(out_fc)
+            if not field.required and field.type not in ("OID", "Geometry")
+        ]
+        count = 0
+        with arcpy.da.SearchCursor(in_src, fields) as rows, arcpy.da.InsertCursor(out_fc, fields) as output:
+            for row in rows:
+                output.insertRow(row)
+                count += 1
+        self.log(messages, f"  > Annotaatio: {count} kohteen geometriat ja tekstikentät "
+                           "valmisteltiin Shapefile-vientiin.")
+        return out_fc
 
     def _prepare_export_feature_class(self, in_src, messages, copy_source=True, target_sr=None):
         """Valmistele vientitaso; tarvittaessa scratchGDB-kopio.
@@ -2199,6 +2255,60 @@ class UniversalImportTool(object):
             raise ValueError("Shapefilen riviraja ylittyy; vie aineisto GeoPackageen sarakkeiden säilyttämiseksi.")
         return field_mappings
 
+    def _write_shapefile_rows(self, fc_path, shp_path, field_mappings, messages):
+        """Varmistusreitti ArcGIS-muunnoksen hiljaisesti pudottamille riveille."""
+        desc = arcpy.Describe(fc_path)
+        if field_mappings is None:
+            field_mappings = self._build_shapefile_field_mappings(
+                fc_path, os.path.dirname(shp_path), messages, force=True
+            )
+        if field_mappings is None:
+            raise RuntimeError("Shapefile-viennin varmennukseen tarvittavaa kenttäkarttaa ei voitu luoda.")
+        arcpy.management.CreateFeatureclass(
+            os.path.dirname(shp_path), os.path.basename(shp_path), desc.shapeType,
+            spatial_reference=desc.spatialReference,
+            has_z="ENABLED" if getattr(desc, "hasZ", False) else "DISABLED",
+            has_m="ENABLED" if getattr(desc, "hasM", False) else "DISABLED",
+        )
+        field_types = {"string": "TEXT", "smallinteger": "SHORT", "integer": "LONG",
+                       "single": "FLOAT", "double": "DOUBLE", "date": "DATE"}
+        source_names, output_names, kinds = ["SHAPE@"], ["SHAPE@"], ["geometry"]
+        widths = [0]
+        for index in range(field_mappings.fieldCount):
+            mapping = field_mappings.getFieldMap(index)
+            field = mapping.outputField
+            kind = str(field.type).casefold()
+            if kind in ("oid", "geometry"):
+                continue
+            if kind not in field_types:
+                raise RuntimeError(f"Shapefilen varmennus ei tue kenttätyyppiä: {field.name} ({field.type}).")
+            arcpy.management.AddField(shp_path, field.name, field_types[kind],
+                                      field_length=field.length if kind == "string" else None)
+            source_names.append(mapping.getInputFieldName(0))
+            output_names.append(field.name)
+            kinds.append(kind)
+            widths.append(field.length if kind == "string" else 0)
+        null_fields = set()
+        with arcpy.da.SearchCursor(fc_path, source_names) as rows, arcpy.da.InsertCursor(shp_path, output_names) as output:
+            for row in rows:
+                values = []
+                for name, kind, width, value in zip(output_names, kinds, widths, row):
+                    # Shapefile sallii NULL-geometrian ja NULL-päivämäärän,
+                    # mutta numero- ja tekstikentät tarvitsevat muodon oletusarvot.
+                    if value is None and kind not in ("geometry", "date"):
+                        value = "" if kind == "string" else 0
+                        null_fields.add(name)
+                    elif kind == "string" and value is not None:
+                        # dBASE-kentän rajattu leveys koskee myös pitkiä DocPath-
+                        # arvoja. Älä katkaise UTF-8-merkkiä tavun keskeltä.
+                        value = str(value).encode("utf-8")[:width].decode("utf-8", errors="ignore")
+                    values.append(value)
+                output.insertRow(values)
+        if null_fields:
+            self.log(messages, "  > Shapefile: NULL-lukuarvot korvattiin nollalla ja NULL-tekstit tyhjällä "
+                               "merkkijonolla (muodon rajoitus): " + ", ".join(sorted(null_fields)) +
+                               ". GeoPackage säilyttää NULL-arvot.", "WARNING")
+
     def _export_to_shapefile(self, fc_path, out_path, messages):
         out_dir = os.path.dirname(out_path) or "."
         base = os.path.splitext(os.path.basename(out_path))[0]
@@ -2273,6 +2383,21 @@ class UniversalImportTool(object):
                 )
                 convert(minimal_mappings)
         final_shp = os.path.join(out_dir, base + ".shp")
+        expected = int(arcpy.management.GetCount(fc_path)[0])
+        actual = int(arcpy.management.GetCount(final_shp)[0])
+        if actual != expected:
+            self.log(messages, f"  > Shapefile-muunnos tallensi vain {actual}/{expected} kohdetta; "
+                               "uusitaan geometriat ja attribuutit rivikohtaisesti.", "WARNING")
+            remove_partial_output()
+            try:
+                self._write_shapefile_rows(fc_path, final_shp, field_mappings, messages)
+            except Exception:
+                remove_partial_output()
+                raise
+            actual = int(arcpy.management.GetCount(final_shp)[0])
+            if actual != expected:
+                remove_partial_output()
+                raise RuntimeError(f"Shapefile-vienti ei säilyttänyt kaikkia kohteita: {actual}/{expected}.")
         self.log(messages, f"Shapefile-vienti valmis: {final_shp}")
         return final_shp
 

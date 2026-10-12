@@ -119,6 +119,18 @@ yhteensopivuuden rajat on kuvattu [QGIS-ohjeessa](qgis_plugin/README.md).
 
 ## Suorituskyky ja virheensieto
 
+- **Ryhmän vientikansio ei törmää lähdetiedostoon.** Jos esimerkiksi
+  `Topeliuksenpuisto.dgn` on jo tiedosto vientikansiossa, saman ryhmän
+  vienti tallennetaan vapaaseen alikansioon `Topeliuksenpuisto.dgn_2`
+  (tai seuraavaan vapaaseen numeroon). Alkuperäinen tiedosto säilyy.
+  Myös sisäkkäisten ryhmien tiedostotörmäykset käsitellään.
+- **Annotaation Shapefile-vienti säilyttää kohteet.** Annotation-kohteiden
+  sijaintigeometriat ja tekstikentät muunnetaan ensin tavalliseksi
+  feature classiksi, myös tason valintaa ja määrityskyselyä kunnioittaen.
+  Shapefile-vienti tarkistaa kohdemäärän ja uusii viennin rivikohtaisesti,
+  jos ArcGISin muunnos pudottaa rivejä. Shapefilen muotorajoitusten vuoksi
+  pitkät tekstiarvot voivat lyhentyä ja numeroiden NULL-arvot muuttua
+  nolliksi; nämä muutokset kerrotaan lokissa. GeoPackage säilyttää NULL-arvot.
 - **CAD-vienti käsittelee Layer/Level-kenttätörmäyksen.** Jos Export To CAD
   antaa virheen `000520` ja tavallisen ominaisuuskentän nimi tai alias
   tulkitaan CAD-tason ohjaukseksi (esimerkiksi OSM:n `layer`), vienti

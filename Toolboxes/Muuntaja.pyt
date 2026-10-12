@@ -1877,6 +1877,60 @@ class UniversalImportTool(object):
         except Exception as exc:
             self.log(messages, f"  > CadType-täyttö epäonnistui: {exc}", "WARNING")
 
+    def _cad_copy_without_layer_field_collision(self, fc_path, messages):
+        """Säilytä Layer/Level-attribuutit ilman ExportCADin varattua ohjausnimeä.
+
+        Tavallisen aineiston (esim. OSM) layer ei välttämättä kuvaa CAD-tasoa.
+        ExportCAD voi tällöin epäonnistua virheellä 000520 myös ehjällä
+        geometrialla. Uusi scratch-kopio säilyttää arvot ja geometrian;
+        nimi ja alias saavat _value-päätteen. Pelkkä etuliite ei riitä,
+        koska ExportCAD tunnistaa myös esimerkiksi osm_layer-kentän.
+        Tätä varamenettelyä käytetään vasta epäonnistuneen viennin jälkeen.
+        """
+        fields = arcpy.ListFields(fc_path)
+        reserved = ("layer", "level")
+        collisions = [
+            field for field in fields
+            if not field.required and (
+                str(field.name).lower().split("_")[-1] in reserved
+                or str(field.aliasName or "").lower().split("_")[-1] in reserved
+            )
+        ]
+        if not collisions:
+            return None
+
+        used_names = {field.name.lower() for field in fields}
+        mapping = arcpy.FieldMappings()
+        mapping.addTable(fc_path)
+        renamed = []
+        for field in collisions:
+            base = field.name[:50] + "_value"
+            name = base
+            sequence = 2
+            while name.lower() in used_names:
+                name = f"{base}_{sequence}"
+                sequence += 1
+            used_names.add(name.lower())
+            index = mapping.findFieldMapIndex(field.name)
+            field_map = mapping.getFieldMap(index)
+            output_field = field_map.outputField
+            output_field.name = name
+            output_field.aliasName = name
+            field_map.outputField = output_field
+            mapping.replaceFieldMap(index, field_map)
+            renamed.append(f"{field.name} -> {name}")
+
+        out_fc = self._new_export_scratch_path()
+        self._queue_deferred_cleanup(out_fc)
+        arcpy.conversion.ExportFeatures(fc_path, out_fc, field_mapping=mapping)
+        self.log(
+            messages,
+            "  > CAD-kenttätörmäys: " + "; ".join(renamed)
+            + ". Arvot säilytetään vientikopiossa; CAD käyttää tason oletusnimeä.",
+            "WARNING",
+        )
+        return out_fc
+
     def _export_to_cad(
         self,
         fc_source_pairs,
@@ -1899,13 +1953,31 @@ class UniversalImportTool(object):
             self._cad_force_point_entity_type(fc_path, messages)
             cad_inputs.append(fc_path)
 
-        arcpy.conversion.ExportCAD(
-            cad_inputs,
-            out_type,
-            out_path,
-            "Ignore_Filenames_in_Tables",
-            "Overwrite_Existing_Files",
-        )
+        try:
+            arcpy.conversion.ExportCAD(
+                cad_inputs, out_type, out_path,
+                "Ignore_Filenames_in_Tables", "Overwrite_Existing_Files",
+            )
+        except arcpy.ExecuteError as exc:
+            if "000520" not in str(exc):
+                raise
+            retry_inputs = []
+            changed = False
+            for fc_path in cad_inputs:
+                replacement = self._cad_copy_without_layer_field_collision(fc_path, messages)
+                retry_inputs.append(replacement or fc_path)
+                changed = changed or replacement is not None
+            if not changed:
+                raise
+            self.log(messages, "  > Uusitaan CAD-vienti ilman Layer/Level-kenttätörmäystä.", "WARNING")
+            # Epäonnistunut ExportCAD voi jättää tyhjän DWG/DXF-rungon.
+            # Overwrite_Existing_Files ei ohita overwriteOutput=False-validointia.
+            if arcpy.Exists(out_path) or os.path.isfile(out_path):
+                arcpy.management.Delete(out_path)
+            arcpy.conversion.ExportCAD(
+                retry_inputs, out_type, out_path,
+                "Ignore_Filenames_in_Tables", "Overwrite_Existing_Files",
+            )
 
         self.log(messages, f"CAD-vienti valmis: {out_path} ({len(fc_source_pairs)} lähdettä).")
         return out_path

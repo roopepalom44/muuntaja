@@ -55,3 +55,31 @@ Korjaukset on yhdistetty GitHubin `main`-version `4f05439` päälle. Auditoinnin
 DFSU-muistitestin uusiminen: asenna `mikeio` ja `psutil` erilliseen testikäyttöiseen Python-ympäristöön ja aseta `MUUNTAJA_DFSU_STRESS_FILE` aineiston poluksi. `MUUNTAJA_AUDIT_DEPENDENCIES` voi osoittaa erilliseen testikirjastohakemistoon. Testi ei sisälly CI:n vakiopakettiin, koska suuri paikallinen aineisto ei ole Gitissä.
 
 Algoritmi käyttää QGISin [taustatehtävien säierajoja](https://docs.qgis.org/3.44/en/docs/pyqgis_developer_cookbook/tasks.html) ja GDALin [OpenFileGDB-transaktioita](https://gdal.org/en/stable/drivers/vector/openfilegdb.html#transaction-support). GitHubin CI:n toteutunut tulos on erillinen paikallisista testituloksista.
+
+## CAD-viennin jatkokorjaus 2026-10-12 (ArcGIS 1.5.5)
+
+`Polut_viivat`-aineiston DWG-vienti epäonnistui ArcGIS Pro 3.7:ssä virheeseen
+`000520: Unexpected TopoEngine Error`. Virhe toistettiin alkuperäisen aineiston
+scratch-kopiolla. Check Geometry ei löytänyt ongelmia; Repair Geometry,
+2D-kopio ja pienempi kohdevalinta eivät auttaneet. Virhe rajattiin OSM:n
+`layer`-attribuuttiin, joka tulkittiin CADin varatuksi `Layer`-kentäksi.
+Myös etuliitteellä nimetty `osm_layer` toisti virheen; `layer_value` toimi.
+
+Muuntaja yrittää kenttätörmäyksestä palautumista vain virheen 000520 jälkeen.
+Uuden scratch-kopion Layer/Level-nimille ja aliaksille annetaan yksilöllinen
+`_value`-pääte. Kaikki attribuutit ja geometria säilytetään, lähteeseen ei
+kirjoiteta, ja käyttäjälle kerrotaan kenttänimien muutoksesta. Jos vienti
+onnistuu alun perin, CAD-ohjauskenttiä ei muuteta. Muut virheet ja
+epäonnistunut uusinta välitetään eräajon tavalliseen virheraportointiin.
+
+Todellisella 27 019 kohteen aineistolla sekä DWG että DXF onnistuivat.
+Vientikopion kaikkien ominaisuuksien ja WKB-geometrian SHA-256 vastasi
+lähdettä; myös lähteen muuttumattomuus, Z-ulottuvuus ja EPSG:3067 tarkistettiin.
+Molempien CAD-tiedostojen Polyline-kohdemäärä oli 27 019. Tarkistus tehtiin
+myös `overwriteOutput=False`-asetuksella: epäonnistuneen ensimmäisen yrityksen
+CAD-runko poistetaan ennen uusintaa, jotta ArcGISin validointi ei pysäytä sitä.
+
+Paikalliset testit: 153 Python-testiä läpäisi (63 ympäristökohtaista testiä
+ohitettiin), 10 natiivia ArcGIS-testiä läpäisi. Natiivi regressio varmistaa
+valinnan ja määrityskyselyn, attribuuttien ja kenttänimitörmäysten säilymisen,
+suomalaiset merkit, emoji-tekstin, Z-arvot sekä oikean DWG/DXF-tuloksen.

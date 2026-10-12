@@ -199,6 +199,54 @@ class ArcgisIntegrationTests(unittest.TestCase):
         self.assertEqual(len(attrs), 20)
         self.assertTrue(all(field.length <= 80 for field in attrs))
 
+    def test_cad_field_collision_preserves_selection_attributes_and_z(self):
+        source = os.path.join(self.gdb, "osm_paths")
+        sr = arcpy.SpatialReference(3067)
+        arcpy.management.CreateFeatureclass(
+            self.gdb, "osm_paths", "POLYLINE", has_z="ENABLED", spatial_reference=sr
+        )
+        for name in ("layer", "level", "layer_value", "label"):
+            arcpy.management.AddField(source, name, "TEXT", field_length=255)
+        arcpy.management.AddField(source, "code", "LONG")
+        with arcpy.da.InsertCursor(
+            source, ["SHAPE@", "layer", "level", "layer_value", "label", "code"]
+        ) as cursor:
+            for code in (1, 2, 3):
+                geometry = arcpy.Polyline(
+                    arcpy.Array([
+                        arcpy.Point(385000 + code, 6670000, 7),
+                        arcpy.Point(385010 + code, 6670010, 9),
+                    ]), sr, True,
+                )
+                cursor.insertRow((geometry, "0", "1", "existing", "polku ä😀", code))
+        layer = arcpy.management.MakeFeatureLayer(
+            source, "selected_paths", "code >= 2"
+        ).getOutput(0)
+        arcpy.management.SelectLayerByAttribute(layer, "NEW_SELECTION", "code = 2")
+        prepared = self.tool._cad_copy_without_layer_field_collision(layer, self.messages)
+        self.assertEqual(int(arcpy.management.GetCount(prepared)[0]), 1)
+        fields = {field.name: field.aliasName for field in arcpy.ListFields(prepared)}
+        self.assertNotIn("layer", fields)
+        self.assertNotIn("level", fields)
+        self.assertEqual(fields["layer_value_2"], "layer_value_2")
+        with arcpy.da.SearchCursor(
+            prepared, ["layer_value_2", "level_value", "layer_value", "label", "code", "SHAPE@"]
+        ) as cursor:
+            row = next(cursor)
+            self.assertEqual(row[:5], ("0", "1", "existing", "polku ä😀", 2))
+            self.assertEqual((row[5].firstPoint.Z, row[5].lastPoint.Z), (7, 9))
+            self.assertEqual(row[5].spatialReference.factoryCode, 3067)
+        self.assertEqual(int(arcpy.management.GetCount(source)[0]), 3)
+        self.assertIn("layer", [field.name for field in arcpy.ListFields(source)])
+        for extension in ("dwg", "dxf"):
+            with self.subTest(extension=extension):
+                output = str(self.root / ("paths." + extension))
+                self.tool._export_to_cad([(prepared, layer)], output, self.messages)
+                self.assertEqual(
+                    int(arcpy.management.GetCount(os.path.join(output, "Polyline"))[0]), 1
+                )
+        arcpy.management.Delete(layer)
+
     def test_raster_batch_builds_valid_layers_without_root_insertion(self):
         import numpy as np
 

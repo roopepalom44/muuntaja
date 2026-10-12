@@ -97,6 +97,14 @@ paikkaan ennen tuontia.
 
 ## Suorituskyky ja virheensieto
 
+- **CAD-vienti käsittelee Layer/Level-kenttätörmäyksen.** Jos Export To CAD
+  antaa virheen `000520` ja tavallisen ominaisuuskentän nimi tai alias
+  tulkitaan CAD-tason ohjaukseksi (esimerkiksi OSM:n `layer`), vienti
+  uusitaan scratch-kopiosta. Kentät nimetään esimerkiksi `layer_value` ja
+  `level_value`; kaikki arvot ja geometria säilytetään. Muutos ilmoitetaan
+  varoituksena. Onnistuvaan CAD-vientiin ja alkuperäiseen aineistoon ei
+  puututa. Epäonnistuneen yrityksen jättämä tyhjä CAD-tiedosto poistetaan
+  ennen uusintaa, joten myös `overwriteOutput=False` toimii.
 - **Shapefile-vienti sovittaa kenttätyypit dBASEen.** BigInteger-tunnisteet
   viedään tekstinä, jotta pitkät tunnisteet eivät pyöristy eikä vienti kaadu
   virheeseen `ERROR 000308: Invalid field type`. Myös DateOnly-, TimeOnly-,

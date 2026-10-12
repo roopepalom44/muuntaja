@@ -71,7 +71,7 @@ class FolderGroupTests(unittest.TestCase):
             (parent / "keep.shp").write_bytes(b"previous export")
             parts = ("Outer.dgn", "Inner.dgn")
             destination = Path(self.tool._export_group_folders(directory, [parts])[parts])
-            self.assertEqual(destination, parent / "Inner.dgn_2")
+            self.assertEqual(destination, (parent / "Inner.dgn_2").resolve())
             destination.mkdir(parents=True, exist_ok=True)
             self.assertEqual((parent / "Inner.dgn").read_bytes(), b"inner")
             self.assertEqual((parent / "keep.shp").read_bytes(), b"previous export")

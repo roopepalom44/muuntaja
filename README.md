@@ -4,19 +4,19 @@
 
 **QGIS-versio (esijulkaisu):** [asennus ja nykyinen toiminnallisuus](qgis_plugin/README.md). Uusimmat asennuspaketit: [Muuntaja-QGIS-Windows.zip](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja-QGIS-Windows.zip) ja [Muuntaja-QGIS.zip](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja-QGIS.zip).
 
-**Muuntaja** on ArcGIS Pro Add-In -laajennus, joka on suunniteltu helpottamaan erilaisten tiedostomuotojen (kuten CAD, GPX, KML jne.) tuomista ja viemistä ArcGIS Pro -ympäristössä. Se tarjoaa käyttäjäystävällisen käyttöliittymän aineistojen nopeaan kääntämiseen ja siirtämiseen.
+**Muuntaja** on ArcGIS Pro Add-In -laajennus, joka on suunniteltu helpottamaan erilaisten tiedostomuotojen (kuten CAD (DWG/DXF/DGN), GPX, KML jne.) tuomista ja viemistä ArcGIS Pro -ympäristössä. Se tarjoaa käyttäjäystävällisen käyttöliittymän aineistojen nopeaan kääntämiseen ja siirtämiseen.
 
 ## Ominaisuudet
-- **Tiedostojen muuntaminen:** Tuo CAD-, GPKG-, Shapefile-, GeoJSON-, GPX-, KML/KMZ- ja DFSU-aineistoja suoraan projektiin.
+- **Tiedostojen muuntaminen:** Tuo CAD- (DWG/DXF/DGN), GPKG-, Shapefile-, GeoJSON-, GPX-, KML/KMZ- ja DFSU-aineistoja suoraan projektiin.
 - **Kansiotuonti:** Muuntaja käy valitun kansion alikansioineen läpi ja säilyttää alikansioiden nimet ja hierarkian kartan ryhmätasoina. Esimerkiksi `aineistot/Kaupunki/Tiet/tiet.shp` tulee ryhmään `Kaupunki → Tiet`. Valitun kansion juuressa olevat tiedostot ja erikseen valitut vektorit tulevat kartan juureen. Muunnettu data tallennetaan edelleen valittuun GDB:hen tai kohdekansioon.
 - **Rasterituonti ryhmiteltynä:** Tuonti tunnistaa myös rasterit (TIFF, JP2, IMG sekä PNG/JPG, joiden vieressä on world-tiedosto kuten `.pgw`). Kansiotuonnissa rasterit käyttävät samaa ryhmärakennetta kuin vektorit; saman nimiset aliryhmät eri vanhempien alla pysyvät erillisinä.
 - **Tasovalinta viennissä:** Vientitilassa tasot valitaan ArcGIS Pron omalla monitasovalitsimella aktiivisesta kartasta tai selaamalla. Vienti noudattaa tason valintaa ja määrityskyselyä (definition query) kuten ArcGISin omat työkalut: vain kartalla näkyvät tai valitut kohteet viedään, ja loki kertoo rajauksesta.
-- **Kohdekoordinaatisto viennissä:** Vientiin voi valita koordinaatiston, johon aineisto muunnetaan: ETRS-TM35FIN, ETRS-GK19–GK31 (esim. EUREF-FIN / ETRS-GK23), KKJ-kaistat, WGS 84 tai Web Mercator. Muunnos koskee GPKG-, Shapefile-, GeoJSON-, DWG- ja DXF-vientiä; KML/KMZ on standardin mukaan aina WGS84. Oletus on **Tason oma**, ja GeoJSON viedään ilman valintaa WGS84:ään kuten ennenkin. Usean tason viennissä jokainen taso säilyttää oman koordinaatistonsa ("Tason oma"), eikä tasoja projisoida ensimmäisen tason koordinaatistoon. Yhteen DWG/DXF-tiedostoon mahtuu vain yksi koordinaatisto, joten eri koordinaatistoissa olevat tasot vaativat joko kohdekoordinaatiston tai oman tiedoston jokaiselle tasolle; muuten vienti pysähtyy ja kertoo tämän.
-- **Tyyli mukaan:** Valinta **Pakkaa tasojen tyylit mukaan** (oletuksena päällä). GeoPackage- ja Shapefile-viennin viereen kirjoitetaan tason symbologia `.lyrx`-tasotiedostona (GeoPackagessa `<tiedosto>_<taso>.lyrx`), joka viittaa viedyn tiedoston dataan suhteellisella polulla. KML/KMZ saa tyylin ArcGISin KML-viennistä. GeoJSONille ei ole tyylistandardia, eikä DWG/DXF-vienti kirjoita symbologiaa.
+- **Kohdekoordinaatisto viennissä:** Vientiin voi valita koordinaatiston, johon aineisto muunnetaan: ETRS-TM35FIN, ETRS-GK19–GK31 (esim. EUREF-FIN / ETRS-GK23), KKJ-kaistat, WGS 84 tai Web Mercator. Muunnos koskee GPKG-, Shapefile-, GeoJSON-, DWG-, DXF- ja DGN-vientiä; KML/KMZ on standardin mukaan aina WGS84. Oletus on **Tason oma**, ja GeoJSON viedään ilman valintaa WGS84:ään kuten ennenkin. Usean tason viennissä jokainen taso säilyttää oman koordinaatistonsa ("Tason oma"), eikä tasoja projisoida ensimmäisen tason koordinaatistoon. Yhteen DWG/DXF/DGN-tiedostoon mahtuu vain yksi koordinaatisto, joten eri koordinaatistoissa olevat tasot vaativat joko kohdekoordinaatiston tai oman tiedoston jokaiselle tasolle; muuten vienti pysähtyy ja kertoo tämän.
+- **Tyyli mukaan:** Valinta **Pakkaa tasojen tyylit mukaan** (oletuksena päällä). GeoPackage- ja Shapefile-viennin viereen kirjoitetaan tason symbologia `.lyrx`-tasotiedostona (GeoPackagessa `<tiedosto>_<taso>.lyrx`), joka viittaa viedyn tiedoston dataan suhteellisella polulla. KML/KMZ saa tyylin ArcGISin KML-viennistä. GeoJSONille ei ole tyylistandardia, eikä DWG/DXF/DGN-vienti kirjoita symbologiaa.
 - **Tyyli tuonnissa:** Kun tuotavan Shapefilen tai GeoPackagen vieressä on sen tyylitiedosto (`<tiedosto>.lyrx` tai GeoPackagessa `<gpkg>_<taso>.lyrx`, kuten Muuntajan vienti ne nimeää), tuotu taso saa kartalle saman symbologian automaattisesti. ArcGIS Pro ei itse etsi tyylitiedostoa aineiston vierestä; ilman Muuntajaa lisää kartalle `.lyrx`-tiedosto, joka tuo aineiston tyyleineen.
 - **Vienti ryhmien alikansioihin:** Valitut karttatasot viedään ryhmähierarkiaa vastaaviin alikansioihin: `Kaupunki → Tiet → tiet` kirjoitetaan `<vientikansio>/Kaupunki/Tiet/`. Ryhmättömät tasot ja selaamalla valitut aineistopolut viedään vientikansion juureen. Windowsille kelpaamattomat kansiomerkit korvataan; nimien siivouksesta syntyvät törmäykset erotetaan nimipäätteellä.
-- **Monitasoviennin paketointi:** Shapefile-, GeoJSON- ja KML/KMZ-viennit tehdään aina omiksi tiedostoiksi tasoittain. GPKG-, DWG- ja DXF-vienneissä voi valita yhteisen tiedoston **kullekin ryhmälle erikseen** tai oman tiedoston jokaiselle tasolle. Eri ryhmien tasoja ei yhdistetä samaan tiedostoon.
-- **Selkeä CAD-vienti:** DWG/DXF-vientiin kirjoitetaan vain valittujen tasojen geometriat. Labeltekstejä tai erillisiä attribuuttitaulukoita ei muodosteta.
+- **Monitasoviennin paketointi:** Shapefile-, GeoJSON- ja KML/KMZ-viennit tehdään aina omiksi tiedostoiksi tasoittain. GPKG-, DWG-, DXF- ja DGN-vienneissä voi valita yhteisen tiedoston **kullekin ryhmälle erikseen** tai oman tiedoston jokaiselle tasolle. Eri ryhmien tasoja ei yhdistetä samaan tiedostoon.
+- **Selkeä CAD-vienti:** DWG/DXF/DGN-vientiin kirjoitetaan vain valittujen tasojen geometriat. Labeltekstejä tai erillisiä attribuuttitaulukoita ei muodosteta.
 - **Hallittu karttasisältö:** Vienti kirjoittaa vain tiedostot eikä lisää vientituloksia aktiiviselle kartalle. Tuonti lisää muunnetut aineistot normaalisti työtilaan.
 - **Integrointi ArcGIS Prohon:** Laajennus lisää ArcGIS Pron käyttöliittymään oman välilehden / painikkeen (Muuntaja), josta työkalun saa nopeasti auki.
 - **Python-työkalulaatikko:** Sisältää `Muuntaja.pyt`-työkalulaatikon geokäsittelytehtäviä varten.
@@ -64,8 +64,8 @@ QGIS-testit ajetaan, kun Python löytää QGISin kirjastot (muuten ne ohitetaan)
 2. Siirry Add-In (tai Muuntaja) -välilehdelle.
 3. Klikkaa **Muuntaja**-painiketta avataksesi työkalun.
 4. Valitse tuonnissa joko tiedostoja tai kansio. Kansiota käytettäessä kansioon voi kerätä eri muotoja sekaisin; Muuntaja skannaa myös alikansiot, ohittaa Shapefilen sivutiedostot (DBF/SHX/PRJ) ja tuo jokaisen varsinaisen aineiston erikseen.
-5. Valitse viennissä tasot ArcGIS Pron monitasovalitsimella ja määritä vientiformaatti, vientikansio ja tarvittaessa kohdekoordinaatisto. Usean tason GPKG-, DWG- tai DXF-viennissä valitse lisäksi yhteinen tai tasokohtainen tiedosto.
-6. CAD-vienti vie valitut tasot DWG/DXF-tiedostoon geometrioina ilman labeltekstejä tai erillisiä attribuuttitaulukoita.
+5. Valitse viennissä tasot ArcGIS Pron monitasovalitsimella ja määritä vientiformaatti, vientikansio ja tarvittaessa kohdekoordinaatisto. Usean tason GPKG-, DWG-, DXF- tai DGN-viennissä valitse lisäksi yhteinen tai tasokohtainen tiedosto.
+6. CAD-vienti vie valitut tasot DWG/DXF/DGN-tiedostoon geometrioina ilman labeltekstejä tai erillisiä attribuuttitaulukoita.
 
 ## Rasterit (esim. MML:n taustakarttasarja)
 
@@ -95,6 +95,28 @@ Rasterit lisätään **viittauksina alkuperäisiin tiedostoihin** eikä niitä
 kopioida tallennuspaikkaan, joten latauskansio kannattaa siirtää pysyvään
 paikkaan ennen tuontia.
 
+## DGN-tuonti ja -vienti
+
+ArcGIS Pro -Muuntaja lukee MicroStation DGN -tiedostoja (myös vanhat V5/V7-versiot)
+CAD-tuonnilla. DGN-vienti kirjoittaa MicroStation V8 -muodon. Tiedoston voi valita
+yksittäin tai tuoda kansiosta alikansioineen. Lähtö- ja kohdekoordinaatiston
+valinnat toimivat kuten muussa CAD-tuonnissa. Viennissä DGN tukee ryhmäkohtaista
+yhteistä tiedostoa ja omaa tiedostoa kullekin tasolle sekä kohdekoordinaatiston
+muunnosta. Pisteet, viivat, alueet ja korkeustiedot viedään ArcGISin
+MicroStation-esityksellä. Muuntaja valitsee ArcGIS Pro -asennuksen 2D- tai
+3D-pohjan automaattisesti sekä metri-, kansainvälinen jalka- tai US survey foot
+-mittayksikön koordinaatiston mukaan. Myös 2D-aineiston `Elevation`-/`Contour`-
+ohjauskenttä ottaa käyttöön 3D-pohjan, jotta korkeus säilyy. DGN-ohjauskentät
+ja CAD-mallien arvot välitetään ArcGISin Export To CAD -työkalulle.
+
+Formaattiversiot vastaavat Esrin [DGN-tukea](https://doc.esri.com/en/arcgis-pro/latest/help/data/cad/supported-cad-formats-in-arcgis.html).
+
+QGIS-lisäosa lukee DGN V7/V8:aa ja vie DGN V8:aan ilman ArcGISia tai
+lisäasennuksia: cadkit-kirjasto ja metrinen 3D-pohja tulevat lisäosan ZIPissä.
+Vienti tukee pisteitä, viivoja, tasomaisia alueita reikineen ja CAD-tekstikohteita.
+Korkeudet ja kohdekoordinaatiston muunnos säilyvät. Tuetut alustat ja
+yhteensopivuuden rajat on kuvattu [QGIS-ohjeessa](qgis_plugin/README.md).
+
 ## Suorituskyky ja virheensieto
 
 - **CAD-vienti käsittelee Layer/Level-kenttätörmäyksen.** Jos Export To CAD
@@ -114,7 +136,7 @@ paikkaan ennen tuontia.
   4 000 tavun rivirajan vuoksi; poistetut kentät ilmoitetaan ajon viesteissä.
   Samat sovitukset tehdään myös kansioon tuotaessa, koska kansiotuonnin
   tulos on Shapefile.
-- **CAD-lukijan kaatuminen on eristetty.** DWG/DXF luetaan erillisessä
+- **CAD-lukijan kaatuminen on eristetty.** DWG/DXF/DGN luetaan erillisessä
   ArcGIS-Python-prosessissa väliaikaiseen geodatabaseen. Vain onnistuneet
   tulokset kopioidaan lopulliseen kohteeseen. Jos ArcGISin native-lukija
   kaatuu tai 60 minuutin aikaraja ylittyy, tiedosto ilmoitetaan

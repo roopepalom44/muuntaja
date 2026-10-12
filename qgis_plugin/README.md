@@ -1,4 +1,4 @@
-# Muuntaja QGIS (esijulkaisu 0.4.1)
+# Muuntaja QGIS (esijulkaisu 0.4.3)
 
 QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus pysyy samassa projektissa.
 
@@ -10,14 +10,17 @@ QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus py
 
 ## Toimii tässä versiossa
 
-- Kansion ja alikansioiden sekä yksittäisten tiedostojen tuonti: GPKG, GeoJSON, KML/KMZ, GPX, SHP, DXF, DWG ja georeferoidut rasterit.
+- Kansion ja alikansioiden sekä yksittäisten tiedostojen tuonti: GPKG, GeoJSON, KML/KMZ, GPX, SHP, DXF, DWG, DGN ja georeferoidut rasterit.
+- **DGN V7/V8 ilman lisäasennuksia:** lukija ja DGN V8 -kirjoittaja tulevat Muuntajan ZIPissä. ArcGISia, ODA/Bentley-SDK:ta, Python-kirjastojen asentamista tai QGISin GDAL-ajurien vaihtamista ei tarvita. Mukana on avoin [cadkit 0.3.0](https://github.com/TNYCL/cadkit) (MIT/Apache-2.0) Windows x64:lle, Linux x64/ARM64:lle ja macOS Intel/Apple Siliconille. Tuonti käyttää samaa CAD-ryhmittelyä kuin DWG/DXF.
+- **DGN-vienti:** valitse vientimuodoksi **DGN**. Erillinen tai yhdistetty vienti kirjoittaa V8-tiedoston; pisteet, viivat, tasomaiset alueet reikineen, Z-korkeudet ja CAD-tekstikohteet säilyvät. Vain valitut kohteet viedään, jos tasolla on valinta. Valitse metrinen kohdekoordinaatisto, esimerkiksi EPSG:3067 tai ETRS-GK23. Koordinaatisto tallennetaan viereisiin `.prj`- ja `.dgn.muuntaja.json`-tiedostoihin: säilytä ne DGN:n kanssa.
+- DGN-kirjoittaja on rajattu GIS-geometrioiden vientiin: QGISin koko symbologiaa, tavallisia nimiöintisääntöjä, GIS-attribuutteja, M-arvoja, rasteriviitteitä tai MicroStationin koko mallirakennetta ei viedä. Tuonnissa lukijan huomautukset näkyvät lokissa; kaikkia DGN-elementtityyppejä ei tueta. Reiälliset alueet tallennetaan CAD-soluina, joten muut CAD-lukijat voivat näyttää myös solun sijoituspisteen. ArcGIS Pro tunnistaa geometriat ja reiät, mutta cadkitin lisäämien CAD-tasojen nimet eivät välity ArcGISin Layer-kenttään nykyisessä yhteensopivuustestissä; Muuntajan QGIS-lukija säilyttää nimet. MicroStation-yhteensopivuutta ei ole vielä varmennettu MicroStationilla.
 - **DWG/DXF kuin QGISin oma taso:** piirustus tuodaan ryhmäksi (tekstit, pisteet, viivat, alueet), CAD-värit säilyvät, CAD-tasot ovat sisällysluettelossa päälle/pois kytkettäviä sääntöjä ja tekstit nimiöitä CAD-korkeudella ja -kulmalla. DWG:n voi raahata QGIS-ikkunaan tai lisätä valikosta **Taso → Lisää taso → Lisää DWG/DXF-taso (Muuntaja)**; tulos tallentuu projektikansion `muuntaja_tuonti.gpkg`:hen (tallentamattomassa projektissa DWG:n viereen). Kentät `cad_layer`, `cad_color`, `entity`, `handle`, `linetype` ja tekstitiedot säilyvät ominaisuustietoina.
 - **DWG toimii Windowsissa ilman asennuksia:** lisäosan mukana tulee avoimen lähdekoodin [LibreDWG 0.14](https://github.com/LibreDWG/libredwg) (GPL-3, kansio `muuntaja_qgis/libredwg`), joka lukee DWG-versiot AutoCAD 2000–2018. Testattu ArcGIS Pron kirjoittamilla DWG 2000-, 2004-, 2007-, 2010-, 2013- ja 2018-tiedostoilla: tekstit, CAD-tasot, värit ja täytöt säilyvät. Linuxissa ja macOS:ssä käytetään järjestelmään asennettua LibreDWG:tä (`dwg2dxf`); ilman sitä avautuu vain AutoCAD 2000 -DWG GDAL:n CAD-ajurilla, joka jättää täytöt (HATCH) ja lohkoviittaukset (INSERT) pois.
 - Vektorien tuonti GeoPackageen, FileGDB:hen tai kohdekansion erillisiin GeoPackage-tiedostoihin.
 - Rasterien ryhmittely `taustakartta_`-kansion mukaan, yhden VRT-mosaiikin rakentaminen ryhmää kohti, viittaus alkuperäisiin rastereihin ja duplikaattien ohitus.
 - Suomen koordinaatiston tunnistus koordinaateista sekä valinnainen lähtö- ja kohde-CRS. Jos aineisto on merkitty väärään koordinaatistoon, valitse **Lisäasetukset → Lähtö-CRS (pakota)** ja anna aineiston todellinen järjestelmä, esimerkiksi `EPSG:3067`. Epäselvästä tai ristiriitaisesta CRS:stä näytetään virhe ennen tason lisäämistä. Jos itse aineiston CRS-merkintä oli väärä, aiemmin väärään paikkaan tallennetut tasot pitää tuoda uudelleen alkuperäisestä aineistosta.
 - DFSU-tuonti ensimmäisestä aika-askeleesta ja sarakesuodatus. Tämä vaatii erikseen `mikeio`-kirjaston QGISin Python-ympäristöön.
-- Projektin vektoritasojen vienti GPKG-, GeoJSON-, Shapefile-, KML-, KMZ- ja DXF-muotoon. Yhdistetty GPKG- ja DXF-vienti.
+- Projektin vektoritasojen vienti GPKG-, GeoJSON-, Shapefile-, KML-, KMZ-, DXF- ja DGN-muotoon. Yhdistetty GPKG-, DXF- ja DGN-vienti.
 - DXF-vienti käyttää QGISin omaa DXF-vientiä: tasojen symbologia (kartan nykyisessä mittakaavassa), nimiöt tekstikohteina ja tuotujen CAD-tasojen alkuperäiset nimet säilyvät, ja kaikki tasot muunnetaan projektin koordinaatistoon. Vienti on myös valikossa **Projekti → Tuo/Vie**.
 - **DWG-vientiä ei ole.** QGIS ei kirjoita DWG:tä, eikä LibreDWG kirjoita siihen viivoja, pisteitä eikä tekstejä (testattu LibreDWG 0.14:llä). Vie CAD-aineisto DXF-muotoon: AutoCAD, ArcGIS ja QGIS avaavat sen sellaisenaan.
 - **Kohdekoordinaatisto viennissä:** vientiin voi valita koordinaatiston, johon aineisto muunnetaan: ETRS-TM35FIN, ETRS-GK19–GK31 (esim. EUREF-FIN / ETRS-GK23), KKJ-kaistat, WGS 84, Web Mercator tai **Muu koordinaatisto…** QGISin omasta valitsimesta. Muunnos koskee GPKG-, Shapefile-, GeoJSON- ja DXF-vientiä; KML/KMZ on standardin mukaan aina WGS84. Oletus on **Tason oma**; GeoJSON viedään ilman valintaa WGS84:ään, kuten ArcGIS Pro -versio. Usean tason viennissä jokainen taso säilyttää oman koordinaatistonsa ("Tason oma"), eikä tasoja projisoida ensimmäisen tason koordinaatistoon. Yhteen DXF-tiedostoon mahtuu vain yksi koordinaatisto, joten eri koordinaatistoissa olevat tasot vaativat joko kohdekoordinaatiston tai oman tiedoston jokaiselle tasolle; muuten vienti pysähtyy ja kertoo tämän.
@@ -28,7 +31,7 @@ QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus py
 ## Erot ArcGIS Pro -versioon
 
 - DWG luetaan LibreDWG:llä, koska QGIS ei tarjoa DWG-lukua lisäosille: GDAL lukee vain AutoCAD 2000 -DWG:n, ja QGISin oma **Projekti → Tuo/Vie → Tuo tasot DWG/DXF:stä** ei ole Python-rajapinnassa eikä lue AutoCAD 2018 -muotoa (testattu QGIS 3.44:llä: tyhjä tulos). ODA File Converteria ei käytetä: se on suljettu ohjelma, jota ei saa jakaa lisäosan mukana.
-- ArcGIS Pro -versio vie myös DWG-muotoon; QGIS-lisäosa vie CAD-aineiston DXF-muotoon.
+- ArcGIS Pro -versio vie myös DWG-muotoon; QGIS-lisäosa vie CAD-aineiston DXF- ja DGN V8 -muotoon.
 - QGISin VRT-mosaiikki on eri tallennusmuoto kuin ArcGIS Pron FileGDB-mosaiikkiaineisto. Se viittaa alkuperäisiin rasteritiedostoihin.
 - DFSU-tuontia on testattu jäljitellyllä `mikeio`-aineistolla, ei oikealla DFSU-tiedostolla.
 - QGISin ja ArcGIS Pron vientiajurien erot voivat muuttaa joidenkin attribuuttien nimiä ja tyyppejä.

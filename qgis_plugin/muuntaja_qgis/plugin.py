@@ -256,7 +256,7 @@ class MuuntajaDialog(QDialog):
         noun = "syöte" if count == 1 else "syötettä"
         self.input_summary.setText(f"{count} {noun} valittuna" if count else "Ei syötteitä valittuna")
         paths = [Path(self.inputs.item(index).text()) for index in range(count)]
-        may_contain_cad = any(path.is_dir() or path.suffix.lower() in {".dwg", ".dxf"} for path in paths)
+        may_contain_cad = any(path.is_dir() or path.suffix.lower() in {".dwg", ".dxf", ".dgn"} for path in paths)
         may_contain_dfsu = any(path.is_dir() or path.suffix.lower() == ".dfsu" for path in paths)
         self.clean_cad.setEnabled(may_contain_cad)
         if not may_contain_cad:
@@ -276,7 +276,7 @@ class MuuntajaDialog(QDialog):
             self,
             "Valitse tuotavat aineistot",
             "",
-            "Paikkatietoaineistot (*.gpkg *.geojson *.json *.kml *.kmz *.gpx *.shp *.dxf *.dwg *.dfsu *.tif *.tiff *.png *.jpg *.jpeg *.jp2 *.img);;Kaikki tiedostot (*)",
+            "Paikkatietoaineistot (*.gpkg *.geojson *.json *.kml *.kmz *.gpx *.shp *.dxf *.dwg *.dgn *.dfsu *.tif *.tiff *.png *.jpg *.jpeg *.jp2 *.img);;Kaikki tiedostot (*)",
         )
         self._add_input_paths(files)
 
@@ -343,11 +343,18 @@ class MuuntajaDialog(QDialog):
 
     def _update_export_controls(self, *_):
         format_name = self.format.currentText()
-        supports_combined = format_name in {"GPKG", "DXF"}
+        supports_combined = format_name in {"GPKG", "DXF", "DGN"}
         self.combined.setEnabled(supports_combined)
         if not supports_combined:
             self.combined.setChecked(False)
-        self.cad_hint.setVisible(format_name == "DXF")
+        self.cad_hint.setVisible(format_name in {"DXF", "DGN"})
+        self.cad_hint.setText(
+            "DGN V8 tallentaa geometriat, korkeudet ja CAD-tasot metriseen koordinaatistoon. "
+            "Tarvittava kirjasto tulee lisäosan mukana; erillisiä asennuksia ei tarvita."
+            if format_name == "DGN" else
+            "DXF tehdään QGISin omalla DXF-viennillä: tasojen symbologia, nimiöt ja "
+            "tuotujen CAD-tasojen nimet säilyvät. DXF avautuu AutoCADissa ja ArcGISissä."
+        )
         self.include_styles.setEnabled(format_name in STYLE_EXPORT_FORMATS)
         wgs84_only = format_name in {"KML", "KMZ"}
         self.export_crs.setEnabled(not wgs84_only)
@@ -518,7 +525,7 @@ class CadDropHandler(QgsCustomDropHandler):
         return "muuntaja_dwg"
 
     def handleFileDrop(self, file):
-        if Path(file).suffix.lower() != ".dwg":
+        if Path(file).suffix.lower() not in {".dwg", ".dgn"}:
             return False
         self.plugin.import_cad_files([file])
         return True
@@ -530,6 +537,7 @@ class MuuntajaPlugin:
         self.action = None
         self.add_cad_action = None
         self.export_cad_action = None
+        self.export_dgn_action = None
         self.drop_handler = None
         self.dialog = None
         self._cad_queue = []
@@ -544,7 +552,7 @@ class MuuntajaPlugin:
         self.iface.addToolBarIcon(self.action)
 
         # DWG/DXF samoihin paikkoihin kuin QGISin omat tuonti- ja vientitoiminnot.
-        self.add_cad_action = QAction(icon, "Lisää DWG/DXF-taso (Muuntaja)…", self.iface.mainWindow())
+        self.add_cad_action = QAction(icon, "Lisää DWG/DXF/DGN-taso (Muuntaja)…", self.iface.mainWindow())
         self.add_cad_action.triggered.connect(self.choose_cad_files)
         if hasattr(self.iface, "insertAddLayerAction"):
             self.iface.insertAddLayerAction(self.add_cad_action)
@@ -552,11 +560,15 @@ class MuuntajaPlugin:
             self.iface.addPluginToMenu("Muuntaja", self.add_cad_action)
         self.export_cad_action = QAction(icon, "Vie tasot DXF-muotoon (Muuntaja)…", self.iface.mainWindow())
         self.export_cad_action.triggered.connect(lambda: self._dialog().show_export("DXF"))
+        self.export_dgn_action = QAction(icon, "Vie tasot DGN-muotoon (Muuntaja)…", self.iface.mainWindow())
+        self.export_dgn_action.triggered.connect(lambda: self._dialog().show_export("DGN"))
         menu = self.iface.projectImportExportMenu() if hasattr(self.iface, "projectImportExportMenu") else None
         if menu is not None:
             menu.addAction(self.export_cad_action)
+            menu.addAction(self.export_dgn_action)
         else:
             self.iface.addPluginToMenu("Muuntaja", self.export_cad_action)
+            self.iface.addPluginToMenu("Muuntaja", self.export_dgn_action)
         if hasattr(self.iface, "registerCustomDropHandler"):
             self.drop_handler = CadDropHandler(self)
             self.iface.registerCustomDropHandler(self.drop_handler)
@@ -573,11 +585,12 @@ class MuuntajaPlugin:
             if hasattr(self.iface, "removeAddLayerAction"):
                 self.iface.removeAddLayerAction(self.add_cad_action)
             self.iface.removePluginMenu("Muuntaja", self.add_cad_action)
-        if self.export_cad_action is not None:
-            menu = self.iface.projectImportExportMenu() if hasattr(self.iface, "projectImportExportMenu") else None
-            if menu is not None:
-                menu.removeAction(self.export_cad_action)
-            self.iface.removePluginMenu("Muuntaja", self.export_cad_action)
+        menu = self.iface.projectImportExportMenu() if hasattr(self.iface, "projectImportExportMenu") else None
+        for action in (self.export_cad_action, self.export_dgn_action):
+            if action is not None:
+                if menu is not None:
+                    menu.removeAction(action)
+                self.iface.removePluginMenu("Muuntaja", action)
         self.iface.removePluginMenu("Muuntaja", self.action)
         self.iface.removeToolBarIcon(self.action)
         if self.dialog is not None:
@@ -606,7 +619,7 @@ class MuuntajaPlugin:
 
     def choose_cad_files(self):
         files, _ = QFileDialog.getOpenFileNames(
-            self.iface.mainWindow(), "Lisää DWG/DXF-taso", "", "CAD-piirustukset (*.dwg *.dxf *.DWG *.DXF)")
+            self.iface.mainWindow(), "Lisää DWG/DXF/DGN-taso", "", "CAD-piirustukset (*.dwg *.dxf *.dgn *.DWG *.DXF *.DGN)")
         if files:
             self.import_cad_files(files)
 
@@ -653,6 +666,9 @@ class MuuntajaPlugin:
                 publish_layers(QgsProject.instance(), result["specs"], result["removed"])
                 self.iface.messageBar().pushMessage("Muuntaja", f"{Path(file).name}: {len(result['specs'])} tasoa lisätty "
                     f"({destination.name}).", level=Qgis.MessageLevel.Success, duration=6)
+                if result.get("notes"):
+                    self.iface.messageBar().pushMessage("Muuntaja", "\n".join(result["notes"]),
+                                                       level=Qgis.MessageLevel.Warning, duration=0)
             except Exception as exc:
                 self.iface.messageBar().pushMessage("Muuntaja", str(exc), level=Qgis.MessageLevel.Critical, duration=0)
         self._next_cad_import()

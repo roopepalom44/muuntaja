@@ -631,13 +631,17 @@ class PluginTests(unittest.TestCase):
         plugin = classFactory(iface)
         plugin.initGui()
 
-        self.assertIn(("insertAddLayerAction", "Lisää DWG/DXF-taso (Muuntaja)…"), calls)
+        self.assertIn(("insertAddLayerAction", "Lisää DWG/DXF/DGN-taso (Muuntaja)…"), calls)
         self.assertIn("Vie tasot DXF-muotoon (Muuntaja)…", [action.text() for action in menu.actions()])
+        self.assertIn("Vie tasot DGN-muotoon (Muuntaja)…", [action.text() for action in menu.actions()])
         handler = next(call[1] for call in calls if call[0] == "register")
         with mock.patch.object(plugin, "import_cad_files") as imported:
             self.assertFalse(handler.handleFileDrop("/data/tiet.shp"))
             self.assertTrue(handler.handleFileDrop("/data/piirustus.DWG"))
             imported.assert_called_once_with(["/data/piirustus.DWG"])
+            imported.reset_mock()
+            self.assertTrue(handler.handleFileDrop("/data/piirustus.DGN"))
+            imported.assert_called_once_with(["/data/piirustus.DGN"])
 
         first = plugin._dialog()
         self.assertIs(plugin._dialog(), first)
@@ -684,15 +688,18 @@ class PluginTests(unittest.TestCase):
                 self.wait_for_cad(plugin)
             QgsProject.instance().clear()
 
-    def test_export_dialog_offers_dxf_but_not_dwg(self):
+    def test_export_dialog_offers_dxf_and_dgn_but_not_dwg(self):
         from muuntaja_qgis.plugin import MuuntajaDialog
         dialog = MuuntajaDialog()
         formats_in_dialog = [dialog.format.itemText(i) for i in range(dialog.format.count())]
-        self.assertEqual(formats_in_dialog[-1], "DXF")
+        self.assertEqual(formats_in_dialog[-2:], ["DXF", "DGN"])
         self.assertNotIn("DWG", formats_in_dialog)
         dialog.format.setCurrentText("DXF")
         self.assertTrue(dialog.combined.isEnabled())
         self.assertIn("symbologia", dialog.cad_hint.text())
+        dialog.format.setCurrentText("DGN")
+        self.assertTrue(dialog.combined.isEnabled())
+        self.assertIn("V8", dialog.cad_hint.text())
         dialog.close()
 
     def test_export_dialog_offers_common_crs_and_locks_kml_to_wgs84(self):

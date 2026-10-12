@@ -150,12 +150,17 @@ def _bucket(geometry, has_text):
     return None
 
 
-def read_cad(path, clean_cad=False):
+def read_cad(path, clean_cad=False, notes=None, encoding=None):
     """Read model-space CAD entities; returns {bucket: [record]} and sample points."""
-    from osgeo import gdal
+    from osgeo import gdal, ogr
+    if Path(path).suffix.lower() == ".dgn":
+        from .dgn import readable_source
+        with tempfile.TemporaryDirectory(prefix="muuntaja_dgn_") as folder:
+            return read_cad(readable_source(path, folder, notes), clean_cad, notes, "UTF-8")
     buckets = {name: [] for name, _flat, _z in BUCKETS}
     samples = []
-    with _gdal_config(DXF_MERGE_BLOCK_GEOMETRIES="FALSE", DXF_INLINE_BLOCKS="TRUE"):
+    with _gdal_config(DXF_MERGE_BLOCK_GEOMETRIES="FALSE", DXF_INLINE_BLOCKS="TRUE",
+                      DXF_ENCODING=encoding):
         try:
             dataset = gdal.OpenEx(str(path), gdal.OF_VECTOR)
         except RuntimeError as exc:
@@ -166,7 +171,8 @@ def read_cad(path, clean_cad=False):
                 for feature in source_layer:
                     if _field(feature, "PaperSpace"):
                         continue
-                    cad_layer = str(_field(feature, "Layer", "layer") or source_layer.GetName())
+                    level = _field(feature, "Layer", "layer", "Level")
+                    cad_layer = str(level) if level is not None else source_layer.GetName()
                     if clean_cad and cad_layer.casefold() in SKIPPED_CAD_LAYERS:
                         continue
                     style = formats.parse_ogr_style(feature.GetStyleString())
@@ -175,10 +181,19 @@ def read_cad(path, clean_cad=False):
                     if color == "#ffffff":
                         # ACI 7 on "valkoinen/musta": musta näkyy vaalealla kartalla.
                         color = DEFAULT_COLOR
-                    subclasses = str(_field(feature, "SubClasses", "cadgeom_type") or "")
+                    subclasses = str(_field(feature, "SubClasses", "cadgeom_type", "Entity", "Type") or "")
                     entity = subclasses.split(":")[-1] if subclasses else ""
-                    text = style["text"] or str(_field(feature, "Text", "text") or "")
+                    text = style["text"] or str(_field(feature, "Text", "text", "TextString") or "")
                     for part in _flatten(feature.GetGeometryRef()):
+                        # GDAL V7 represents an unlabelled point as a zero-length line.
+                        if _field(feature, "Type") == 3 and ogr.GT_Flatten(part.GetGeometryType()) == ogr.wkbLineString and part.GetPointCount() >= 2:
+                            if all(part.GetPoint(i) == part.GetPoint(0) for i in range(1, part.GetPointCount())):
+                                point = ogr.Geometry(ogr.wkbPoint25D if part.GetCoordinateDimension() == 3 else ogr.wkbPoint)
+                                if part.GetCoordinateDimension() == 3:
+                                    point.AddPoint(*part.GetPoint(0))
+                                else:
+                                    point.AddPoint_2D(*part.GetPoint(0)[:2])
+                                part = point
                         bucket = _bucket(part, bool(text))
                         if bucket is None:
                             continue
@@ -209,12 +224,21 @@ def read_cad(path, clean_cad=False):
 def cad_source_crs(samples, path, source_crs=None):
     if source_crs and source_crs.isValid():
         return source_crs
+    if Path(path).suffix.lower() == ".dgn":
+        from .dgn import metadata
+        wkt = metadata(path).get("crs", "")
+        if not wkt and Path(path).with_suffix(".prj").is_file():
+            wkt = Path(path).with_suffix(".prj").read_text(encoding="utf-8-sig")
+        if wkt:
+            crs = QgsCoordinateReferenceSystem.fromWkt(wkt)
+            if crs.isValid():
+                return crs
     code = formats.vote_finnish_epsg(samples[::max(1, len(samples) // 2000)])
     if code:
         return QgsCoordinateReferenceSystem(f"EPSG:{code}")
     if "etrs89" in str(path).casefold():
         return QgsCoordinateReferenceSystem("EPSG:3067")
-    raise CrsNotDetected("CAD-tiedoston koordinaatistoa ei tunnistettu (DWG/DXF ei sisällä sitä). "
+    raise CrsNotDetected("CAD-tiedoston koordinaatistoa ei tunnistettu. "
                          "Aseta lähtö-CRS lisäasetuksissa.")
 
 
@@ -363,6 +387,8 @@ def style_layer(layer, bucket, records):
 
 def _open_source(path, work_folder):
     path = Path(path)
+    if path.suffix.lower() == ".dgn":
+        return path
     if path.suffix.lower() == ".dxf":
         return path
     version = formats.dwg_version(path)
@@ -374,14 +400,14 @@ def _open_source(path, work_folder):
 
 
 def import_cad(path, destination, source_crs=None, target_crs=None, clean_cad=False,
-               project=None, add_to_project=True):
-    """Import one DWG/DXF; returns the created QGIS layers."""
+               project=None, add_to_project=True, notes=None):
+    """Import one DWG/DXF/DGN; returns the created QGIS layers."""
     project = project or processing._project()
     path = Path(path)
     destination = Path(destination)
     with tempfile.TemporaryDirectory(prefix="muuntaja_cad_") as work_folder:
         source = _open_source(path, work_folder)
-        buckets, samples = read_cad(source, clean_cad)
+        buckets, samples = read_cad(source, clean_cad, notes)
     if not any(buckets.values()):
         raise RuntimeError("CAD-tiedostossa ei ollut tuotavia mallitilan kohteita.")
     crs = cad_source_crs(samples, path, source_crs)
@@ -480,7 +506,7 @@ def write_dxf(layers, path, crs=None, symbology_scale=None, project=None):
 
 
 def export_cad(layers, folder, combined=False, progress=None, symbology_scale=None, project=None,
-               target_crs=None):
+                target_crs=None, format_name="DXF", writer=None, notes=None):
     """Export vector layers to DXF. Returns (written paths per layer, failures).
 
     Ilman ``target_crs``:ää jokainen tasokohtainen DXF säilyttää tason oman
@@ -499,7 +525,7 @@ def export_cad(layers, folder, combined=False, progress=None, symbology_scale=No
         if len(systems) > 1:
             raise RuntimeError(
                 "Tasot ovat eri koordinaatistoissa (" + ", ".join(sorted(systems)) + "), eikä yhteen "
-                "DXF-tiedostoon mahdu kuin yksi koordinaatisto. Valitse kohdekoordinaatisto tai vie tasot "
+                f"{format_name}-tiedostoon mahdu kuin yksi koordinaatisto. Valitse kohdekoordinaatisto tai vie tasot "
                 "omiin tiedostoihinsa, jolloin jokainen taso säilyttää omansa.")
     groups = ([(list(layers), "muuntaja_vienti")] if combined
               else [([layer], formats.safe_name(layer.name())) for layer in layers])
@@ -511,7 +537,8 @@ def export_cad(layers, folder, combined=False, progress=None, symbology_scale=No
             # Tason oma koordinaatisto; tuntemattomalle tasolle projektin koordinaatisto.
             own = group[0].crs()
             crs = target or (own if own.isValid() else _destination_crs(group, project))
-            written = write_dxf(group, formats.unique_path(folder / f"{name}.dxf"), crs, symbology_scale, project)
+            path = formats.unique_path(folder / f"{name}.{format_name.lower()}")
+            written = writer(group, path, crs, project, notes) if writer else write_dxf(group, path, crs, symbology_scale, project)
             successes.extend(str(written) for _layer in group)
         except Exception as exc:
             if combined:

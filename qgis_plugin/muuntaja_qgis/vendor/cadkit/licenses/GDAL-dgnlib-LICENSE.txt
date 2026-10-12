@@ -1,0 +1,11 @@
+/******************************************************************************
+ *
+ * Project:  Microstation DGN Access Library
+ * Purpose:  Application visible helper functions for parsing DGN information.
+ * Author:   Frank Warmerdam, warmerdam@pobox.com
+ *
+ ******************************************************************************
+ * Copyright (c) 2002, Avenza Systems Inc, http://www.avenza.com/
+ *
+ * SPDX-License-Identifier: MIT
+ ****************************************************************************/

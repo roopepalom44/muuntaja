@@ -1,0 +1,43 @@
+{
+  "version": "0.3.0",
+  "source": "https://github.com/TNYCL/cadkit",
+  "binaries": {
+    "macos-x86_64": {
+      "path": "macos-x86_64/_cadkit.abi3.so",
+      "sha256": "75277ae247c7f9316215d0f07695ae09b523c3b6af2513b789309c1d2e7b2d18",
+      "wheel": "https://files.pythonhosted.org/packages/6a/13/d47b221b306db8a0ceb6d287fa0543dc09a9f87c8d9426f0662a27f32ad7/pycadkit-0.3.0-cp39-abi3-macosx_10_12_x86_64.whl",
+      "wheel_sha256": "b0e9e38f16cd1dba89d32f8ed289f15441fe49f869438843f50b94a669be292a"
+    },
+    "macos-aarch64": {
+      "path": "macos-aarch64/_cadkit.abi3.so",
+      "sha256": "50b0559b8f5df28a64a06008f889207bb64bf2bfd8f63c43737bfce569d5d7d5",
+      "wheel": "https://files.pythonhosted.org/packages/37/89/573f212e9bdfe6d01f41d74ff0a5d9ef5087ac5cd9e956b6b88ddde9faf2/pycadkit-0.3.0-cp39-abi3-macosx_11_0_arm64.whl",
+      "wheel_sha256": "7090f03201c540454f7bfedde09821eecb74f0133041814c5751c44dd040a42c"
+    },
+    "linux-aarch64": {
+      "path": "linux-aarch64/_cadkit.abi3.so",
+      "sha256": "dc3df5e69c1252124745cfe7a4073377e21528d64155cc2a4ee5a05366a478a8",
+      "wheel": "https://files.pythonhosted.org/packages/4a/d2/7ce1afed36be1859a8d8aee980c48fd40c59f08096adb91257d75ce1a8f5/pycadkit-0.3.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+      "wheel_sha256": "bab277700c8591d4f025ece1d7db5978f43c78aa7db9e7b0166b7429a327da07"
+    },
+    "linux-x86_64": {
+      "path": "linux-x86_64/_cadkit.abi3.so",
+      "sha256": "5e32d9790ed06f61ec243b51a0f57ff64c2e66f70c6e503c48a90804c88038ff",
+      "wheel": "https://files.pythonhosted.org/packages/ee/85/6269968da8312093c814c282dc7282dc44fddd97c5e5e48a6ae283b3536d/pycadkit-0.3.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "wheel_sha256": "f0681a6a741fb5c6eeb7c75b72425a066d26faee21c5568e57be672c3061a511"
+    },
+    "windows-x86_64": {
+      "path": "windows-x86_64/_cadkit.pyd",
+      "sha256": "4bf9bd4f00eabfe8fd76f059eb933f9b33c69e3c1b9f8cff86adec90cdcbaf70",
+      "wheel": "https://files.pythonhosted.org/packages/5f/1f/eb762e1c26f08d3bf469d87ac9bb63ff91b0a241017dbfca094adaeb3789/pycadkit-0.3.0-cp39-abi3-win_amd64.whl",
+      "wheel_sha256": "b2a330bef9eb9331f060c822af2bdc5350bf6b0d3b156d00d7a2712a25deb8c8"
+    }
+  },
+  "seed": {
+    "path": "seed3d-metric.dgn",
+    "sha256": "1e4bde0dfca84bb8416182091ed7847de62c36271168f415aa44059ee8d1417e",
+    "source": "https://raw.githubusercontent.com/OSGeo/gdal/master/autotest/ogr/data/dgnv8/test_dgnv8.dgn",
+    "source_sha256": "8f32f87ce4b16881aa64f5cb9f75c98851833f96fef37ca0ad31aa6bb18d1df0"
+  },
+  "upstream_revision": "960ae5c6ac23ff390b45e2e611e16f37d0683787"
+}

@@ -6,7 +6,7 @@ from qgis.core import (
     QgsCoordinateReferenceSystem, QgsVectorLayer,
 )
 
-from . import cad, processing
+from . import cad, dgn, processing
 
 from .processing import (  # noqa: F401
     _operation_project, _project, _dispose, _workspace_names, _write_vector,
@@ -28,7 +28,7 @@ DRIVERS = {"GPKG": ("GPKG", ".gpkg"), "GeoJSON": ("GeoJSON", ".geojson"),
            "KMZ": ("LIBKML", ".kmz")}
 # DWG-vientiä ei tarjota: LibreDWG ei kirjoita DWG:hen viivoja, pisteitä eikä
 # tekstejä. DXF avautuu AutoCADissa, ArcGISissa ja QGISissä sellaisenaan.
-CAD_FORMATS = ("DXF",)
+CAD_FORMATS = ("DXF", "DGN")
 EXPORT_FORMATS = list(DRIVERS) + list(CAD_FORMATS)
 MANAGED_PROPERTY = "muuntaja/managed"
 SOURCE_PATHS_PROPERTY = "muuntaja/source_paths"
@@ -130,7 +130,7 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
                              dfsu_filter_column, dfsu_filter_operator, dfsu_filter_value, project, taken_names, progress)
             elif suffix in CAD_EXTENSIONS:
                 layers = cad.import_cad(path, destination, source_crs, target_crs, clean_cad,
-                                        project=project)
+                                        project=project, notes=notes)
                 taken_names.update(layer.name() for layer in layers)
             else:
                 _import_vector(path, destination, workspace, file_gdb, source_crs, target_crs,
@@ -180,7 +180,10 @@ def export_data(layers, folder, format_name, combined=False, progress=None,
         # RFC 7946: GeoJSON on oletuksena WGS84.
         target_crs = QgsCoordinateReferenceSystem("EPSG:4326")
     if format_name in CAD_FORMATS:
-        return cad.export_cad(layers, folder, combined, progress, symbology_scale, project=_project(), target_crs=target_crs)
+        writer = dgn.write_dgn if format_name == "DGN" else None
+        return cad.export_cad(layers, folder, combined, progress, symbology_scale,
+                              project=_project(), target_crs=target_crs,
+                              format_name=format_name, writer=writer, notes=notes)
     driver, extension = DRIVERS[format_name]
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)

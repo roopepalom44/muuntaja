@@ -224,7 +224,7 @@ class ConversionTask(QgsTask):
                     successes=successes, failures=failures, specs=specs, removed=removed
                 )
             elif self.operation == "CAD-tuonti":
-                core.cad.import_cad(project=project, **self.arguments)
+                core.cad.import_cad(project=project, notes=notes, **self.arguments)
                 specs = [
                     layer_spec(node.layer(), node.parent().name())
                     for node in project.layerTreeRoot().findLayers()

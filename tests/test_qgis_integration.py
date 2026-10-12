@@ -71,6 +71,147 @@ class QgisIntegrationTests(unittest.TestCase):
         layer.updateExtents()
         return layer
 
+    def test_dgn_v8_roundtrip_keeps_selected_point_z_and_level_name(self):
+        from muuntaja_qgis import cad
+        layer = QgsVectorLayer("PointZ?crs=EPSG:3067", "polku ä", "memory")
+        self.layers.append(layer)
+        for wkt in ("POINT Z (385000 6670000 5)", "POINT Z (385100 6670100 9)"):
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromWkt(wkt))
+            self.assertTrue(layer.dataProvider().addFeatures([feature])[0])
+        layer.updateExtents()
+        layer.selectByIds([next(layer.getFeatures()).id()])
+        notes = []
+        written, failures = self.core.export_data([layer], self.root, "DGN", notes=notes)
+        self.assertFalse(failures)
+        path = Path(written[0])
+        self.assertTrue(path.with_suffix(".prj").is_file())
+        buckets, _samples = cad.read_cad(path)
+        self.assertEqual(len(buckets["pisteet"]), 1)
+        geometry = QgsGeometry()
+        geometry.fromWkb(buckets["pisteet"][0]["wkb"])
+        self.assertEqual(geometry.constGet().z(), 5)
+        self.assertEqual(buckets["pisteet"][0]["attributes"]["cad_layer"], "polku ä")
+        self.assertTrue(any("V8" in note for note in notes))
+        successes, failures = self.core.import_data([path], self.root / "imported.gpkg")
+        self.assertFalse(failures)
+        self.assertEqual(successes, [str(path)])
+
+    def test_dgn_failure_does_not_remove_existing_sidecars(self):
+        from muuntaja_qgis import dgn
+        layer = QgsVectorLayer("Polygon?crs=EPSG:3067", "hole", "memory")
+        self.layers.append(layer)
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromWkt(
+            "POLYGON ((385000 6670000,385010 6670000,385010 6670010,385000 6670010,385000 6670000),"
+            "(385001 6670001,385001 6670002,385002 6670002,385002 6670001,385001 6670001))"
+        ))
+        layer.dataProvider().addFeatures([feature])
+        layer.updateExtents()
+        sidecar = self.root / "hole.prj"
+        sidecar.write_text("existing file", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "oheistiedosto on jo olemassa"):
+            dgn.write_dgn([layer], self.root / "hole.dgn", layer.crs(), QgsProject.instance())
+        self.assertEqual(sidecar.read_text(encoding="utf-8"), "existing file")
+        self.assertFalse(list(self.root.glob("*.dgn")))
+        self.assertAlmostEqual(next(layer.getFeatures()).geometry().area(), 99)
+
+    def test_dgn_v8_bundled_writer_preserves_z_and_holes(self):
+        layer = QgsVectorLayer("PointZ?crs=EPSG:3067", "points", "memory")
+        self.layers.append(layer)
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromWkt("POINT Z (385000 6670000 7)"))
+        layer.dataProvider().addFeatures([feature])
+        layer.updateExtents()
+        area = QgsVectorLayer("Polygon?crs=EPSG:3067", "hole", "memory")
+        self.layers.append(area)
+        polygon = QgsFeature()
+        polygon.setGeometry(QgsGeometry.fromWkt(
+            "POLYGON ((385000 6670000,385010 6670000,385010 6670010,385000 6670010,385000 6670000),"
+            "(385001 6670001,385001 6670002,385002 6670002,385002 6670001,385001 6670001))"
+        ))
+        area.dataProvider().addFeatures([polygon])
+        area.updateExtents()
+        notes = []
+        written, failures = self.core.export_data([layer, area], self.root, "DGN", combined=True, notes=notes)
+        self.assertFalse(failures)
+        self.assertTrue(any("V8" in note for note in notes))
+        successes, failures = self.core.import_data([written[0]], self.root / "v8.gpkg")
+        self.assertFalse(failures)
+        self.assertTrue(successes)
+        imported = list(QgsProject.instance().mapLayers().values())
+        self.assertTrue(imported)
+        points = next(item for item in imported if item.name().endswith("pisteet"))
+        geometry = next(points.getFeatures()).geometry()
+        point = geometry.constGet()
+        self.assertAlmostEqual(point.x(), 385000, places=3)
+        self.assertAlmostEqual(point.y(), 6670000, places=3)
+        self.assertAlmostEqual(point.z(), 7, places=3)
+        areas = next(item for item in imported if item.name().endswith("alueet"))
+        self.assertAlmostEqual(sum(f.geometry().area() for f in areas.getFeatures()), 99, places=3)
+
+    def test_dgn_v7_input_reads_without_extra_dependencies(self):
+        from muuntaja_qgis import cad
+        path = self.root / "old.dgn"
+        dataset = ogr.GetDriverByName("DGN").CreateDataSource(str(path), options=[
+            "3D=YES", "MASTER_UNIT_NAME=m", "SUB_UNIT_NAME=mm", "SUB_UNITS_PER_MASTER_UNIT=1000",
+            "UOR_PER_SUB_UNIT=1", "ORIGIN=385000,6670000,0"])
+        output = dataset.CreateLayer("elements", geom_type=ogr.wkbUnknown)
+        feature = ogr.Feature(output.GetLayerDefn())
+        feature.SetField("Level", 7)
+        feature.SetGeometry(ogr.CreateGeometryFromWkt("POINT Z (385000 6670000 12.5)"))
+        self.assertEqual(output.CreateFeature(feature), 0)
+        feature = output = dataset = None
+        buckets, _ = cad.read_cad(path)
+        self.assertEqual(len(buckets["pisteet"]), 1)
+        geometry = QgsGeometry()
+        geometry.fromWkb(buckets["pisteet"][0]["wkb"])
+        self.assertEqual(geometry.constGet().z(), 12.5)
+
+    def test_dgn_v8_text_and_line_z_with_reprojection(self):
+        from muuntaja_qgis import cad
+        layer = QgsVectorLayer("PointZ?crs=EPSG:3067", "tekstit ä", "memory")
+        self.layers.append(layer)
+        layer.dataProvider().addAttributes([QgsField("text", QVariant.String)])
+        layer.updateFields()
+        feature = QgsFeature(layer.fields())
+        feature.setAttributes(["Korkeus äö 7"])
+        feature.setGeometry(QgsGeometry.fromWkt("POINT Z (385000 6670000 7)"))
+        layer.dataProvider().addFeatures([feature])
+        line = QgsVectorLayer("LineStringZ?crs=EPSG:3067", "viiva", "memory")
+        self.layers.append(line)
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromWkt("LINESTRING Z (385000 6670000 5,385010 6670010 9)"))
+        line.dataProvider().addFeatures([feature])
+        written, failures = self.core.export_data([layer, line], self.root, "DGN", combined=True,
+                                                 target_crs=QgsCoordinateReferenceSystem("EPSG:3857"))
+        self.assertFalse(failures)
+        buckets, _ = cad.read_cad(written[0])
+        self.assertEqual(buckets["tekstit"][0]["attributes"]["text"], "Korkeus äö 7")
+        self.assertEqual(buckets["tekstit"][0]["attributes"]["cad_layer"], "tekstit ä")
+        geometry = QgsGeometry()
+        geometry.fromWkb(buckets["viivat"][0]["wkb"])
+        self.assertEqual([p.z() for p in geometry.vertices()], [5, 9])
+        successes, failures = self.core.import_data([written[0]], self.root / "back.gpkg",
+                                                   target_crs=QgsCoordinateReferenceSystem("EPSG:3067"))
+        self.assertFalse(failures)
+        self.assertTrue(successes)
+        points = next(l for l in QgsProject.instance().mapLayers().values() if l.name().endswith("tekstit"))
+        geometry = next(points.getFeatures()).geometry()
+        self.assertAlmostEqual(geometry.constGet().x(), 385000, places=3)
+        self.assertAlmostEqual(geometry.constGet().y(), 6670000, places=3)
+
+    def test_dgn_v8_nonplanar_polygon_fails_and_cleans_output(self):
+        layer = QgsVectorLayer("PolygonZ?crs=EPSG:3067", "nonplanar", "memory")
+        self.layers.append(layer)
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromWkt(
+            "POLYGON Z ((385000 6670000 0,385010 6670000 0,385010 6670010 5,385000 6670010 0,385000 6670000 0))"))
+        layer.dataProvider().addFeatures([feature])
+        with self.assertRaisesRegex(RuntimeError, "planar|planarity"):
+            self.core.export_data([layer], self.root, "DGN")
+        self.assertFalse(list(self.root.glob("*.dgn*")))
+
     def source_file(self, name="50v flood.gpkg", layer=None):
         layer = layer or self.points()
         path = self.root / name

@@ -36,6 +36,7 @@ class ImportFolderScanTests(unittest.TestCase):
                 nested / "roads.SHP",
                 deeper / "model.DFSU",
                 deeper / "track.GpX",
+                deeper / "design.DGN",
             ]
             for path in supported:
                 path.write_text("test", encoding="utf-8")
@@ -116,6 +117,7 @@ class ImportFolderScanTests(unittest.TestCase):
         self.assertEqual(export_layers.datatype, "GPFeatureLayer")
         self.assertTrue(export_layers.multiValue)
         self.assertFalse(export_layers.enabled)
+        self.assertIn("DGN", parameters[7].filter.list)
         self.assertNotIn(
             "cad_label_fields_by_layer",
             [parameter.name for parameter in parameters],
@@ -270,11 +272,13 @@ class ImportFolderScanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(16)]
             parameters[6].valueAsText = temp_dir
-            parameters[7].valueAsText = "DWG"
             parameters[13].valueAsText = self.module.MULTI_EXPORT_PACKAGING_COMBINED
             parameters[14].valueAsText = self.module.EXPORT_CRS_KEEP
 
-            self.tool._execute_export(parameters, messages, ["tm35", "gk25"])
+            for fmt in ("DWG", "DXF", "DGN"):
+                with self.subTest(format=fmt):
+                    parameters[7].valueAsText = fmt
+                    self.tool._execute_export(parameters, messages, ["tm35", "gk25"])
 
         self.assertTrue(any("eri koordinaatistoissa" in str(message) for message in logged), logged)
 
@@ -306,7 +310,7 @@ class ImportFolderScanTests(unittest.TestCase):
 
                 self.assertEqual(len(styles), expected)
 
-    def test_dwg_export_can_create_one_file_per_layer(self):
+    def test_cad_export_can_create_one_file_per_layer(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir)
             self.fake_arcpy.Exists = lambda path: Path(str(path)).exists()
@@ -324,7 +328,6 @@ class ImportFolderScanTests(unittest.TestCase):
             parameters = [types.SimpleNamespace(value=None, valueAsText=None) for _ in range(14)]
             parameters[5].value = None
             parameters[6].valueAsText = str(folder)
-            parameters[7].valueAsText = "DWG"
             parameters[13].valueAsText = self.module.MULTI_EXPORT_PACKAGING_SEPARATE
 
             exported = []
@@ -339,11 +342,14 @@ class ImportFolderScanTests(unittest.TestCase):
             )
 
             input_paths = [str(folder / "roads"), str(folder / "water")]
-            self.tool._execute_export(parameters, Messages(), input_paths)
-
-            self.assertEqual(len(exported), 2)
-            self.assertTrue(all(Path(path).suffix == ".dwg" for path, _pairs in exported))
-            self.assertTrue(all(len(pairs) == 1 for _path, pairs in exported))
+            for fmt in ("DWG", "DXF", "DGN"):
+                with self.subTest(format=fmt):
+                    exported.clear()
+                    parameters[7].valueAsText = fmt
+                    self.tool._execute_export(parameters, Messages(), input_paths)
+                    self.assertEqual(len(exported), 2)
+                    self.assertTrue(all(Path(path).suffix == "." + fmt.lower() for path, _pairs in exported))
+                    self.assertTrue(all(len(pairs) == 1 for _path, pairs in exported))
 
     def test_gpkg_export_defaults_to_one_shared_file(self):
         param = types.SimpleNamespace(valueAsText=None)

@@ -6,6 +6,7 @@ obj/
 logger/
 __pycache__/
 *.py[cod]
+!qgis_plugin/muuntaja_qgis/vendor/cadkit/windows-x86_64/*.pyd
 *.dfsu
 *.dwg
 *.user

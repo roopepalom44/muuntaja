@@ -39,8 +39,11 @@ class Toolbox(object):
 
 # Tuonti: nämä tiedostopäätteet → syöte tulkitaan tiedostoksi (tuonti)
 VECTOR_IMPORT_FILE_EXTENSIONS = (
-    ".gpkg", ".geojson", ".json", ".kml", ".kmz", ".gpx", ".dwg", ".dxf", ".dfsu", ".shp"
+    ".gpkg", ".geojson", ".json", ".kml", ".kmz", ".gpx", ".dwg", ".dxf", ".dgn", ".dfsu", ".shp"
 )
+CAD_IMPORT_FILE_EXTENSIONS = (".dwg", ".dxf", ".dgn")
+CAD_EXPORT_TYPES = {".dwg": "DWG_R2018", ".dxf": "DXF_R2018", ".dgn": "DGN_V8"}
+CAD_EXPORT_FORMATS = ("DWG", "DXF", "DGN")
 # Rasterit lisätään työtilaan viittauksina alkuperäisiin tiedostoihin ja
 # ryhmitellään ryhmätasoihin (esim. MML:n taustakartta_20k / taustakartta_5k).
 RASTER_IMPORT_FILE_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg", ".jp2", ".img")
@@ -58,13 +61,14 @@ EXPORT_FORMAT_TO_EXT = {
     "GPKG": ".gpkg",
     "DWG": ".dwg",
     "DXF": ".dxf",
+    "DGN": ".dgn",
     "GeoJSON": ".geojson",
     "Shapefile": ".shp",
     "KML": ".kml",
     "KMZ": ".kmz",
 }
 EXPORT_FORMAT_LIST = list(EXPORT_FORMAT_TO_EXT.keys())
-# Usean tason GPKG-/DWG-/DXF-viennin paketointitavat. Yhteinen tiedosto
+# Usean tason GPKG-/CAD-viennin paketointitavat. Yhteinen tiedosto
 # säilyttää nykyisen oletustoiminnan.
 MULTI_EXPORT_PACKAGING_COMBINED = "Kaikki tasot yhteen tiedostoon"
 MULTI_EXPORT_PACKAGING_SEPARATE = "Oma tiedosto jokaiselle tasolle"
@@ -72,7 +76,7 @@ MULTI_EXPORT_PACKAGING_OPTIONS = [
     MULTI_EXPORT_PACKAGING_COMBINED,
     MULTI_EXPORT_PACKAGING_SEPARATE,
 ]
-MULTI_EXPORT_PACKAGING_FORMATS = ("GPKG", "DWG", "DXF")
+MULTI_EXPORT_PACKAGING_FORMATS = ("GPKG",) + CAD_EXPORT_FORMATS
 # Shapefilen dBASE-attribuuttitaulun rajoitus on 4 000 tavua/rivi. Jätetään
 # pieni varmuusvara ArcGISin omille kenttämäärittelyille.
 SHAPEFILE_MAX_RECORD_LENGTH = 4000
@@ -88,8 +92,8 @@ SHAPEFILE_TEXT_FIELD_LENGTHS = {
     "guid": 38,
     "globalid": 38,
 }
-IMPORT_MODE_LABEL = "Tuonti (gpkg, geojson, json, kml, kmz, gpx, dwg, dxf, dfsu, shp, rasterit)"
-EXPORT_MODE_LABEL = "Vienti (gpkg, shapefile, geojson, dwg, dxf, kml, kmz)"
+IMPORT_MODE_LABEL = "Tuonti (gpkg, geojson, json, kml, kmz, gpx, dwg, dxf, dgn, dfsu, shp, rasterit)"
+EXPORT_MODE_LABEL = "Vienti (gpkg, shapefile, geojson, dwg, dxf, dgn, kml, kmz)"
 # Viennin kohdekoordinaatisto. KML/KMZ on standardin mukaan aina WGS84.
 EXPORT_CRS_KEEP = "Tason oma"
 EXPORT_CRS_LIST = [EXPORT_CRS_KEEP, "ETRS-TM35FIN (3067)"] + [
@@ -195,8 +199,8 @@ class UniversalImportTool(object):
             "myös sisäkkäiset kansiot säilyvät sisäkkäisinä ryhminä. "
             "DFSU-tuontiin voi lisätä suodattimen sarake-arvo-operaattorilla. "
             "Vienti: feature-tasot valitaan ArcGIS Pron omalla monitasovalitsimella. "
-            "CAD-vienti vie DWG/DXF-tiedostoihin vain valittujen tasojen geometriat. "
-            "Muut viennit: GeoJSON, Shapefile ja KML taso kerrallaan; GPKG/DWG/DXF-viennissä "
+            "CAD-vienti vie DWG/DXF/DGN-tiedostoihin vain valittujen tasojen geometriat. "
+            "Muut viennit: GeoJSON, Shapefile ja KML taso kerrallaan; GPKG/DWG/DXF/DGN-viennissä "
             "usealle tasolle voi valita ryhmäkohtaisen yhteisen tai oman tiedoston. "
             "Vienti muodostaa alikansiot kartan ryhmärakenteen mukaan."
         )
@@ -295,7 +299,7 @@ class UniversalImportTool(object):
         ]
         param4.value = "Automaattinen"
 
-        # 5. Target SR (vain DWG-tuonnissa näkyvissä)
+        # 5. Target SR (CAD- ja DFSU-tuonnissa näkyvissä)
         param5 = arcpy.Parameter(
             displayName="[Valinnainen] Kohde-CRS (CAD- ja DFSU-tuonti, tyhjä = alkuperäinen CRS)",
             name="target_sr",
@@ -386,9 +390,9 @@ class UniversalImportTool(object):
         param12.multiValue = True
         param12.enabled = False
 
-        # 13. Usean tason GPKG-/DWG-/DXF-viennin paketointitapa.
+        # 13. Usean tason GPKG-/CAD-viennin paketointitapa.
         param13 = arcpy.Parameter(
-            displayName="Vienti: monitasoviennin paketointi (GPKG/DWG/DXF)",
+            displayName="Vienti: monitasoviennin paketointi (GPKG/DWG/DXF/DGN)",
             name="multi_export_packaging",
             datatype="GPString",
             parameterType="Optional",
@@ -440,7 +444,7 @@ class UniversalImportTool(object):
         p_dfsu_filter_op = parameters[10]  # DFSU: operator
         p_dfsu_filter_val = parameters[11] # DFSU: value
         p_export_layers = parameters[12]  # Vienti: ArcGISin monitasovalitsin
-        p_multi_packaging = parameters[13]  # Vienti: GPKG/DWG/DXF-paketointi
+        p_multi_packaging = parameters[13]  # Vienti: GPKG/CAD-paketointi
         p_export_sr = parameters[14] if len(parameters) > 14 else None  # Vienti: kohdekoordinaatisto
         p_export_styles = parameters[15] if len(parameters) > 15 else None  # Vienti: tyylit mukaan
 
@@ -477,8 +481,8 @@ class UniversalImportTool(object):
             # tasot suoraan. Karttaa ei avata validaatiokierroksella.
             paths = self._export_paths_from_param(p_export_layers, raw_paths)
         has_dfsu = any(str(p).lower().endswith(".dfsu") for p in paths) if paths else False
-        has_dwg = (
-            any(self._path_contains_extension(p, (".dwg", ".dxf")) for p in paths)
+        has_cad = (
+            any(self._path_contains_extension(p, CAD_IMPORT_FILE_EXTENSIONS) for p in paths)
             if is_import
             else bool(paths)
         )
@@ -491,12 +495,12 @@ class UniversalImportTool(object):
 
             p_output_loc.enabled = True
             self._ensure_project_default_output_location(p_output_loc)
-            # DWG-parametrit näkyvät vain jos on DWG-tiedostoja
-            p_mapper.enabled = has_dwg
+            # CAD-parametrit näkyvät DWG-, DXF- ja DGN-tiedostoille.
+            p_mapper.enabled = has_cad
             # Lähtökoordinaatistolla voi myös määrätä rasterien CRS:n, jos
             # tiedostossa ei ole sitä eikä sitä voi päätellä world-tiedostosta.
-            p_input_sr.enabled = has_dwg or has_raster or has_dfsu
-            p_target_sr.enabled = has_dwg or has_dfsu
+            p_input_sr.enabled = has_cad or has_raster or has_dfsu
+            p_target_sr.enabled = has_cad or has_dfsu
             
             p_export_folder.enabled = False
             p_export_fmt.enabled = False
@@ -1082,13 +1086,13 @@ class UniversalImportTool(object):
         ext = os.path.splitext(p)[1].lower()
         if ext in IMPORT_FILE_EXTENSIONS:
             return True
-        if self._path_contains_extension(p, (".gpkg", ".shp", ".dwg", ".dxf")):
+        if self._path_contains_extension(p, (".gpkg", ".shp") + CAD_IMPORT_FILE_EXTENSIONS):
             return True
         try:
             d = arcpy.Describe(p)
             dt = (getattr(d, "dataType", "") or "").upper()
             catalog_path = getattr(d, "catalogPath", "") or p
-            if self._path_contains_extension(catalog_path, (".gpkg", ".shp", ".dwg", ".dxf")):
+            if self._path_contains_extension(catalog_path, (".gpkg", ".shp") + CAD_IMPORT_FILE_EXTENSIONS):
                 return True
             if "CAD" in dt:
                 return True
@@ -1129,7 +1133,7 @@ class UniversalImportTool(object):
         return "mixed"
 
     def _multi_export_packaging_from_param(self, param, input_count, fmt=None):
-        """Palauta usean tason GPKG/DWG/DXF-viennin paketointitapa.
+        """Palauta usean tason GPKG/CAD-viennin paketointitapa.
 
         Yhden tason viennissä valinta ei vaikuta toimintaan. Puuttuva arvo
         käyttää nykyistä oletusta eli kaikkien tasojen yhteistä tiedostoa.
@@ -1293,7 +1297,7 @@ class UniversalImportTool(object):
                                         filter_value=dfsu_filter_value,
                                         target_sr=target_sr,
                                         input_sr=input_sr)
-                    elif ext in [".dwg", ".dxf"]:
+                    elif ext in CAD_IMPORT_FILE_EXTENSIONS:
                         self.process_cad(input_path, output_loc, is_folder, use_mapper, input_sr, target_sr, item_messages)
                     else:
                         self.process_generic(input_path, output_loc, is_folder, item_messages, input_sr=input_sr, target_sr=target_sr)
@@ -1486,7 +1490,7 @@ class UniversalImportTool(object):
                 or multi_packaging == MULTI_EXPORT_PACKAGING_SEPARATE
             )
         )
-        if fmt in ("DWG", "DXF") and not separate_outputs and len(input_paths) > 1 and export_sr is None:
+        if fmt in CAD_EXPORT_FORMATS and not separate_outputs and len(input_paths) > 1 and export_sr is None:
             # Yhdessä CAD-tiedostossa voi olla vain yksi koordinaatisto. ExportCAD
             # projisoisi hiljaa kaikki tasot ensimmäisen tason koordinaatistoon,
             # mikä ei ole "Tason oma" -valinnan mukaista.
@@ -1527,7 +1531,7 @@ class UniversalImportTool(object):
             written_paths = []
             fc_pairs = []
 
-            if fmt in ("DWG", "DXF"):
+            if fmt in CAD_EXPORT_FORMATS:
                 if separate_outputs:
                     for in_src in input_paths:
                         sub_src = self._export_source_label(in_src)
@@ -1931,32 +1935,69 @@ class UniversalImportTool(object):
         )
         return out_fc
 
+    def _dgn_seed_file(self, cad_inputs, messages):
+        """Valitse ArcGISin DGN V8 -pohja, joka säilyttää Z-arvot ja yksiköt."""
+        descriptions = [arcpy.Describe(path) for path in cad_inputs]
+        has_z = any(getattr(desc, "hasZ", False) for desc in descriptions)
+        if not has_z:
+            # Myös 2D-geometrian CAD-ohjauskenttä voi antaa korkeuden.
+            has_z = any(
+                str(value or "").lower().split("_")[-1] in ("elevation", "contour")
+                for path in cad_inputs for field in arcpy.ListFields(path)
+                for value in (field.name, field.aliasName)
+            )
+        sr = descriptions[0].spatialReference
+        meters_per_unit = float(getattr(sr, "metersPerUnit", 0) or 0)
+        units = "Metric"
+        if abs(meters_per_unit - 1200.0 / 3937.0) < 1e-9:
+            units = "US_Feet"
+        elif abs(meters_per_unit - 0.3048) < 1e-9:
+            units = "Intl_Feet"
+        dimension = "3d" if has_z else "2d"
+        install_dir = arcpy.GetInstallInfo().get("InstallDir", "")
+        seed = os.path.join(
+            install_dir, "Resources", "ArcToolBox", "Templates", "CAD",
+            f"template{dimension}_{units}.dgn",
+        )
+        if not install_dir or not os.path.isfile(seed):
+            raise RuntimeError(
+                f"ArcGIS Pron DGN-pohjaa ei löytynyt: {seed}. "
+                "Tarkista ArcGIS Pro -asennuksen CAD-pohjat."
+            )
+        self.log(messages, f"  > DGN V8 -pohja: {dimension.upper()}, {units}.")
+        return seed
+
     def _export_to_cad(
         self,
         fc_source_pairs,
         out_path,
         messages,
     ):
-        """Vie yksi tai useampi geometriataso samaan DWG/DXF-tiedostoon."""
+        """Vie yksi tai useampi geometriataso samaan DWG/DXF/DGN-tiedostoon."""
         if arcpy.Exists(out_path):
             try:
                 arcpy.management.Delete(out_path)
             except Exception:
                 pass
         ext = os.path.splitext(out_path)[1].lower()
-        out_type = "DWG_R2018" if ext == ".dwg" else "DXF_R2018"
+        if ext not in CAD_EXPORT_TYPES:
+            raise ValueError(f"Tuntematon CAD-vientimuoto: {ext}")
+        out_type = CAD_EXPORT_TYPES[ext]
 
         cad_inputs = []
         for fc_path, _in_src in fc_source_pairs:
-            # Pisteet viedään CADin POINT-entiteetteinä. Muiden tasojen
-            # geometriaan tai esitystapaan ei tehdä muutoksia.
-            self._cad_force_point_entity_type(fc_path, messages)
+            # POINT on AutoCADin entiteetti. DGN käyttää MicroStationin
+            # omaa oletusesitystä myös pisteille.
+            if ext in (".dwg", ".dxf"):
+                self._cad_force_point_entity_type(fc_path, messages)
             cad_inputs.append(fc_path)
 
+        seed_args = (self._dgn_seed_file(cad_inputs, messages),) if ext == ".dgn" else ()
         try:
             arcpy.conversion.ExportCAD(
                 cad_inputs, out_type, out_path,
                 "Ignore_Filenames_in_Tables", "Overwrite_Existing_Files",
+                *seed_args,
             )
         except arcpy.ExecuteError as exc:
             if "000520" not in str(exc):
@@ -1970,13 +2011,14 @@ class UniversalImportTool(object):
             if not changed:
                 raise
             self.log(messages, "  > Uusitaan CAD-vienti ilman Layer/Level-kenttätörmäystä.", "WARNING")
-            # Epäonnistunut ExportCAD voi jättää tyhjän DWG/DXF-rungon.
+            # Epäonnistunut ExportCAD voi jättää tyhjän CAD-rungon.
             # Overwrite_Existing_Files ei ohita overwriteOutput=False-validointia.
             if arcpy.Exists(out_path) or os.path.isfile(out_path):
                 arcpy.management.Delete(out_path)
             arcpy.conversion.ExportCAD(
                 retry_inputs, out_type, out_path,
                 "Ignore_Filenames_in_Tables", "Overwrite_Existing_Files",
+                *seed_args,
             )
 
         self.log(messages, f"CAD-vienti valmis: {out_path} ({len(fc_source_pairs)} lähdettä).")
@@ -3581,7 +3623,7 @@ class UniversalImportTool(object):
 
         saved_paths = []
 
-        # Yritetään ensin lukea DWG/DXF suoraan workspacena (nopea polku).
+        # Yritetään ensin lukea DWG/DXF/DGN suoraan workspacena (nopea polku).
         # Tämä ohittaa raskaan CADToGeodatabase + annotaatioiden generoinnin.
         prev_ws = arcpy.env.workspace  # palautetaan lopuksi, ettei globaali tila vuoda seuraavaan tiedostoon
         dataset_path = None
@@ -3595,11 +3637,11 @@ class UniversalImportTool(object):
             arcpy.env.workspace = input_path
             fcs_direct = arcpy.ListFeatureClasses() or []
         except Exception as e:
-            self.log(messages, f"Suora DWG-luku ei onnistunut ({e}), kokeillaan CADToGeodatabase-reittiä.", "WARNING")
+            self.log(messages, f"Suora CAD-luku ei onnistunut ({e}), kokeillaan CADToGeodatabase-reittiä.", "WARNING")
             fcs_direct = []
 
         # Suorituskyky: jos useita CAD-tasoja projisoidaan, tehdään yksi CADToGeodatabase
-        # scratchGDB:hen ja projisoidaan siitä. Tämä vähentää toistuvaa DWG-lukua.
+        # scratchGDB:hen ja projisoidaan siitä. Tämä vähentää toistuvaa CAD-lukua.
         use_bulk_scratch = len(fcs_direct) >= 2 and (remote_output or target_sr is not None)
 
         # Cache rivimäärille: vältetään saman tason GetCount-kutsu useaan kertaan.
@@ -3624,12 +3666,12 @@ class UniversalImportTool(object):
             if remote_output:
                 self.log(
                     messages,
-                    f"Verkkokohde: konvertoidaan DWG kerran scratchGDB:hen ({len(fcs_direct)} tasoa)...",
+                    f"Verkkokohde: konvertoidaan CAD kerran scratchGDB:hen ({len(fcs_direct)} tasoa)...",
                 )
             else:
                 self.log(
                     messages,
-                    f"Projisointioptimoitu reitti: konvertoidaan DWG kerran scratchGDB:hen ({len(fcs_direct)} tasoa)...",
+                    f"Projisointioptimoitu reitti: konvertoidaan CAD kerran scratchGDB:hen ({len(fcs_direct)} tasoa)...",
                 )
             try:
                 t0 = time.perf_counter()
@@ -3646,7 +3688,7 @@ class UniversalImportTool(object):
                 self.log(messages, f"CADToGeodatabase epäonnistui: {e}", "ERROR")
                 raise
         elif fcs_direct:
-            self.log(messages, f"Luetaan DWG suoraan ({len(fcs_direct)} tasoa) - ohitetaan CADToGeodatabase.")
+            self.log(messages, f"Luetaan CAD suoraan ({len(fcs_direct)} tasoa) - ohitetaan CADToGeodatabase.")
             dataset_path = input_path
             fcs = fcs_direct
             used_fast_path = True

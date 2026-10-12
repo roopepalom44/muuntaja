@@ -9,9 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-VECTOR_EXTENSIONS = {".gpkg", ".geojson", ".json", ".kml", ".kmz", ".gpx", ".dwg", ".dxf", ".shp"}
+VECTOR_EXTENSIONS = {".gpkg", ".geojson", ".json", ".kml", ".kmz", ".gpx", ".dwg", ".dxf", ".dgn", ".shp"}
 RASTER_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg", ".jp2", ".img"}
-CAD_EXTENSIONS = {".dwg", ".dxf"}
+CAD_EXTENSIONS = {".dwg", ".dxf", ".dgn"}
 WORLD_FILES = {".pgw", ".pngw", ".jgw", ".jpgw", ".jpegw", ".wld"}
 CONVERTER_TIMEOUT_SECONDS = 600
 

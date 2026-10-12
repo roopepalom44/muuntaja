@@ -185,6 +185,87 @@ class ArcgisIntegrationTests(unittest.TestCase):
         )
         self.assert_target()
 
+    def test_dgn_roundtrip_points_lines_polygons_and_projection(self):
+        sr = arcpy.SpatialReference(3067)
+        point = arcpy.PointGeometry(arcpy.Point(385000, 6670000, 5), sr, True)
+        line = arcpy.Polyline(arcpy.Array([
+            arcpy.Point(385000, 6670000, 5), arcpy.Point(385010, 6670010, 9)
+        ]), sr, True)
+        area = arcpy.Polygon(arcpy.Array([
+            arcpy.Point(385000, 6670000), arcpy.Point(385010, 6670000),
+            arcpy.Point(385010, 6670010), arcpy.Point(385000, 6670000),
+        ]), sr)
+        sources = []
+        for name, shape_type, geometry in (
+            ("dgn_points", "POINT", point),
+            ("dgn_lines", "POLYLINE", line),
+            ("dgn_areas", "POLYGON", area),
+        ):
+            arcpy.management.CreateFeatureclass(
+                self.gdb, name, shape_type, has_z="ENABLED", spatial_reference=sr
+            )
+            fc = os.path.join(self.gdb, name)
+            with arcpy.da.InsertCursor(fc, ["SHAPE@"]) as cursor:
+                cursor.insertRow((geometry,))
+            sources.append((fc, name))
+        output = str(self.root / "piirustus.dgn")
+        self.tool._export_to_cad(sources, output, self.messages)
+        self.assertEqual(arcpy.Describe(output).spatialReference.factoryCode, 3067)
+        for shape_type in ("Point", "Polyline", "Polygon"):
+            self.assertGreater(
+                int(arcpy.management.GetCount(os.path.join(output, shape_type))[0]), 0
+            )
+        with arcpy.da.SearchCursor(os.path.join(output, "Point"), ["SHAPE@"]) as cursor:
+            exported_point = next(cursor)[0]
+            self.assertAlmostEqual(exported_point.firstPoint.X, 385000, places=3)
+            self.assertAlmostEqual(exported_point.firstPoint.Z, 5, places=3)
+        target = arcpy.SpatialReference(3857)
+        self.tool.process_cad(
+            output, self.gdb, False, False, None, target, self.messages
+        )
+        self.assertTrue(self.paths)
+        imported_types = set()
+        projected_point = point.projectAs(target).firstPoint
+        for path in self.paths:
+            desc = arcpy.Describe(path)
+            self.assertEqual(desc.spatialReference.factoryCode, 3857)
+            imported_types.add(desc.shapeType)
+            if desc.shapeType == "Point":
+                with arcpy.da.SearchCursor(path, ["SHAPE@"]) as cursor:
+                    imported_point = next(cursor)[0].firstPoint
+                    self.assertAlmostEqual(imported_point.X, projected_point.X, places=3)
+                    self.assertAlmostEqual(imported_point.Y, projected_point.Y, places=3)
+                    self.assertAlmostEqual(imported_point.Z, 5, places=3)
+        self.assertTrue({"Point", "Polyline", "Polygon"}.issubset(imported_types))
+        for fc, _name in sources:
+            self.assertEqual(int(arcpy.management.GetCount(fc)[0]), 1)
+
+    def test_dgn_2d_export_respects_layer_selection(self):
+        source = self.points(3067)
+        with arcpy.da.InsertCursor(source, ["SHAPE@XY"]) as cursor:
+            cursor.insertRow(((385100, 6670100),))
+        layer = "dgn_selected_points"
+        arcpy.management.MakeFeatureLayer(source, layer, "OBJECTID > 1")
+        prepared = self.tool._prepare_export_feature_class(layer, self.messages)
+        output = str(self.root / "selected.dgn")
+        self.tool._export_to_cad([(prepared, layer)], output, self.messages)
+        cad_points = os.path.join(output, "Point")
+        self.assertEqual(int(arcpy.management.GetCount(cad_points)[0]), 1)
+        with arcpy.da.SearchCursor(cad_points, ["SHAPE@XY"]) as cursor:
+            self.assertEqual(next(cursor)[0], (385100, 6670100))
+        self.assertEqual(int(arcpy.management.GetCount(source)[0]), 2)
+        arcpy.management.Delete(layer)
+
+    def test_dgn_elevation_field_preserves_height_on_2d_source(self):
+        source = self.points(3067)
+        self.assertFalse(arcpy.Describe(source).hasZ)
+        arcpy.management.AddField(source, "Elevation", "DOUBLE")
+        arcpy.management.CalculateField(source, "Elevation", "12.5", "PYTHON3")
+        output = str(self.root / "elevated.dgn")
+        self.tool._export_to_cad([(source, "Points")], output, self.messages)
+        with arcpy.da.SearchCursor(os.path.join(output, "Point"), ["SHAPE@"]) as cursor:
+            self.assertAlmostEqual(next(cursor)[0].firstPoint.Z, 12.5, places=3)
+
     def test_shapefile_wide_table_preserves_all_attribute_columns(self):
         source = self.points(3067)
         for index in range(20):

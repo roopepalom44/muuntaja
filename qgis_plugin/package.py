@@ -2,6 +2,8 @@
 
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
+import hashlib
+import json
 
 ROOT = Path(__file__).resolve().parent
 PLUGIN = ROOT / "muuntaja_qgis"
@@ -10,7 +12,16 @@ VERSION = next(line.split("=", 1)[1].strip() for line in (PLUGIN / "metadata.txt
 OUTPUT = ROOT / "dist" / f"Muuntaja-QGIS-{VERSION}.zip"
 OUTPUT.parent.mkdir(exist_ok=True)
 # .exe/.dll: lisäosan mukana jaettava LibreDWG (muuntaja_qgis/libredwg).
-ALLOWED = {".py", ".txt", ".png", ".json", ".gpkg", ".exe", ".dll"}
+ALLOWED = {".py", ".txt", ".png", ".json", ".gpkg", ".exe", ".dll", ".pyd", ".so", ".dgn"}
+VENDOR = PLUGIN / "vendor/cadkit"
+manifest = json.loads((VENDOR / "manifest.json").read_text(encoding="utf-8"))
+for entry in manifest["binaries"].values():
+    path = VENDOR / entry["path"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["sha256"], path
+seed = manifest["seed"]
+assert hashlib.sha256((VENDOR / seed["path"]).read_bytes()).hexdigest() == seed["sha256"]
+for license_name in ("LICENSE-MIT.txt", "LICENSE-APACHE.txt", "NOTICE.txt", "GDAL-LICENSE.txt"):
+    assert (VENDOR / license_name).is_file(), license_name
 with ZipFile(OUTPUT, "w", ZIP_DEFLATED, compresslevel=9) as archive:
     for path in sorted(PLUGIN.rglob("*")):
         if path.is_file() and path.suffix.lower() in ALLOWED:
@@ -18,6 +29,9 @@ with ZipFile(OUTPUT, "w", ZIP_DEFLATED, compresslevel=9) as archive:
 with ZipFile(OUTPUT) as archive:
     assert f"{PLUGIN.name}/metadata.txt" in archive.namelist()
     assert f"{PLUGIN.name}/__init__.py" in archive.namelist()
+    for entry in manifest["binaries"].values():
+        assert f"{PLUGIN.name}/vendor/cadkit/{entry['path']}" in archive.namelist()
+    assert f"{PLUGIN.name}/vendor/cadkit/seed3d-metric.dgn" in archive.namelist()
     for tool in ("dwg2dxf.exe", "libredwg-0.dll", "libiconv-2.dll"):
         assert f"{PLUGIN.name}/libredwg/{tool}" in archive.namelist(), tool
 print(OUTPUT)

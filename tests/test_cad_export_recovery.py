@@ -6,10 +6,13 @@ from unittest.mock import Mock
 import pytest
 
 
-@pytest.mark.parametrize("extension,cad_type", [("dwg", "DWG_R2018"), ("dxf", "DXF_R2018")])
+@pytest.mark.parametrize("extension,cad_type", [
+    ("dwg", "DWG_R2018"), ("dxf", "DXF_R2018"), ("dgn", "DGN_V8"),
+])
 def test_topoengine_retry_replaces_only_colliding_inputs(arc_tool, extension, cad_type):
     tool, arcpy, _module = arc_tool
     tool._cad_force_point_entity_type = Mock()
+    tool._dgn_seed_file = Mock(return_value="seed3d.dgn")
     tool._cad_copy_without_layer_field_collision = Mock(side_effect=["safe_paths", None])
     arcpy.conversion.ExportCAD = Mock(
         side_effect=[arcpy.ExecuteError("ERROR 000520: Unexpected TopoEngine Error"), None]
@@ -24,7 +27,7 @@ def test_topoengine_retry_replaces_only_colliding_inputs(arc_tool, extension, ca
     assert calls[1].args == (
         ["safe_paths", "points"], cad_type, output,
         "Ignore_Filenames_in_Tables", "Overwrite_Existing_Files",
-    )
+    ) + (("seed3d.dgn",) if extension == "dgn" else ())
     arcpy.management.Delete.assert_called_once_with(output)
 
 

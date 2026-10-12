@@ -90,7 +90,7 @@ def inferred_crs(layer, path=None):
             return QgsCoordinateReferenceSystem(f"EPSG:{code}")
     except Exception:
         pass
-    if path and Path(path).suffix.lower() in {".dwg", ".dxf"}:
+    if path and Path(path).suffix.lower() in {".dwg", ".dxf", ".dgn"}:
         observed = Counter()
         for index, feature in enumerate(layer.getFeatures()):
             if index >= 256:
@@ -356,7 +356,7 @@ def _open_vector_layers(path):
     if not sublayers:
         return [probe]
     layers = []
-    cad = path.suffix.lower() in {".dwg", ".dxf"}
+    cad = path.suffix.lower() in {".dwg", ".dxf", ".dgn"}
     for item in sublayers:
         parts = item.split("!!::!!")
         if len(parts) < 2:

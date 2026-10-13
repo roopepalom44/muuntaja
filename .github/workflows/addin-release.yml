@@ -35,6 +35,14 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             python3-qgis qgis-providers python3-gdal python3-pytest python3-numpy
 
+      - name: Set up .NET 8 for the DWG writer
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build the ACadSharp DWG writer
+        run: /usr/bin/python3 qgis_plugin/build_dwgwriter.py --rid linux-x64
+
       - name: Lint
         run: |
           pipx run ruff check --select F,E9 --extension pyt:python \
@@ -45,8 +53,31 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: /usr/bin/python3 -m pytest tests --tb=short
 
+  dwg-writer-macos:
+    # macOS binaries must be (ad-hoc) code signed to run on Apple Silicon,
+    # which the .NET SDK only does when publishing on macOS.
+    if: github.event_name == 'push'
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+      - name: Build and smoke-test the macOS DWG writers
+        run: |
+          python3 qgis_plugin/build_dwgwriter.py --rid osx-arm64 --rid osx-x64
+          qgis_plugin/muuntaja_qgis/acadsharp/osx-arm64/muuntaja-dwg tests/data/cad_sample.dxf "$RUNNER_TEMP/smoke.dwg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dwg-writer-macos
+          path: qgis_plugin/muuntaja_qgis/acadsharp/osx-*/muuntaja-dwg
+          if-no-files-found: error
+
   build-and-release:
-    needs: [test, unit]
+    needs: [test, unit, dwg-writer-macos]
     if: github.event_name == 'push'
     runs-on: windows-2025
     permissions:
@@ -140,8 +171,25 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Download the macOS DWG writers
+        uses: actions/download-artifact@v4
+        with:
+          name: dwg-writer-macos
+          path: qgis_plugin/muuntaja_qgis/acadsharp
+
+      - name: Build the Windows and Linux DWG writers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python qgis_plugin/build_dwgwriter.py --rid win-x64 --rid linux-x64 --rid linux-arm64
+          if ($LASTEXITCODE -ne 0) { throw 'DWG writer build failed.' }
+          & qgis_plugin/muuntaja_qgis/acadsharp/win-x64/muuntaja-dwg.exe tests/data/cad_sample.dxf (Join-Path $env:RUNNER_TEMP 'smoke.dwg')
+          if ($LASTEXITCODE -ne 0) { throw 'DWG writer smoke test failed.' }
+
       - name: Package QGIS plugin
         shell: pwsh
+        env:
+          MUUNTAJA_REQUIRE_DWG_WRITER: '1'
         run: |
           $ErrorActionPreference = 'Stop'
           python qgis_plugin/package.py

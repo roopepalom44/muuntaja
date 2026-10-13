@@ -94,6 +94,33 @@ class FormatHelperTests(unittest.TestCase):
             self.assertEqual(names, ["tiet.json"])
             self.assertEqual(len(formats.scan_inputs([str(root / "asetukset.json")])), 1)
 
+    def test_mtext_formatting_is_removed_from_imported_text(self):
+        self.assertEqual(formats.strip_mtext(r"\fDejaVu Sans|i0|b0;\H3.57;Kauppakatu"), "Kauppakatu")
+        self.assertEqual(formats.strip_mtext(r"{\C1;Talo}\~A\Privi 2"), "Talo A\nrivi 2")
+        self.assertEqual(formats.strip_mtext("5.17"), "5.17")
+
+    def test_dwg_writer_platform_names(self):
+        self.assertEqual(formats.dwg_writer_platform("win32", "AMD64"), "win-x64")
+        self.assertEqual(formats.dwg_writer_platform("linux", "x86_64"), "linux-x64")
+        self.assertEqual(formats.dwg_writer_platform("linux", "aarch64"), "linux-arm64")
+        self.assertEqual(formats.dwg_writer_platform("darwin", "arm64"), "osx-arm64")
+        self.assertEqual(formats.dwg_writer_platform("darwin", "x86_64"), "osx-x64")
+        self.assertEqual(formats.dwg_writer_platform("sunos5", "sparc"), "")
+
+    def test_bundled_dwg_writer_gets_its_execute_bit_back(self):
+        with tempfile.TemporaryDirectory() as temp:
+            rid = formats.dwg_writer_platform()
+            name = "muuntaja-dwg.exe" if sys.platform == "win32" else "muuntaja-dwg"
+            tool = Path(temp) / rid / name
+            tool.parent.mkdir()
+            tool.write_bytes(b"")
+            tool.chmod(0o644)
+            with mock.patch.object(formats, "BUNDLED_DWG_WRITER", Path(temp)), \
+                    mock.patch.dict(os.environ, {"MUUNTAJA_DWG_WRITER": ""}):
+                self.assertEqual(formats.find_dwg_writer(), str(tool))
+            if sys.platform != "win32":
+                self.assertTrue(os.access(tool, os.X_OK))
+
     def test_converter_timeout_is_reported_in_finnish(self):
         import subprocess
         with mock.patch.object(formats.subprocess, "run", side_effect=subprocess.TimeoutExpired("x", 1)):
@@ -351,11 +378,68 @@ class CadExportTests(QgisTestCase):
         self.assertTrue({"Tiet", "Rakennukset", "Tekstit", "Puut"} <= cad_layers)
         self.assertTrue({"Kauppakatu", "Talo A"} <= texts)
 
-    def test_dwg_is_not_an_export_format(self):
+    def fake_dwg_writer(self, body=None):
+        """Stand-in for the bundled ACadSharp writer: records its arguments."""
+        record = self.folder / "writer_args.txt"
+        body = body or f"""
+            import json, sys
+            from pathlib import Path
+            source, target = sys.argv[1], sys.argv[2]
+            Path({str(record)!r}).write_text("\\n".join(sys.argv[1:]), encoding="utf-8")
+            assert Path(source).read_text(encoding="utf-8", errors="ignore").count("ENTITIES") == 1
+            Path(target).write_bytes(b"AC1032" + b"\\0" * 1000)
+            print(json.dumps({{"version": "AC1032", "entities": 2, "layers": 3, "warnings": []}}))
+        """
+        writer = write_script(self.folder, "muuntaja-dwg", body)
+        return writer, record
+
+    def test_dwg_export_uses_the_bundled_writer_on_qgis_dxf(self):
+        layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
+        writer, record = self.fake_dwg_writer()
+        notes = []
+        with mock.patch.dict(os.environ, {"MUUNTAJA_DWG_WRITER": str(writer)}):
+            written, failures = self.core.export_data([layer], self.folder / "dwg", "DWG", notes=notes,
+                                                      dwg_version="2013")
+
+        self.assertEqual(failures, [])
+        output = Path(written[0])
+        self.assertEqual(output.name, "pisteet.dwg")
+        self.assertEqual(formats.dwg_version(output), "AC1032")
+        arguments = record.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(arguments[0].endswith(".dxf"))
+        self.assertEqual(arguments[1:], [str(output), "--version", "2013"])
+        self.assertIn("EPSG:3067", output.with_suffix(".prj").read_text(encoding="utf-8") + notes[0])
+        self.assertIn("2 CAD-kohdetta", notes[0])
+        self.assertFalse(Path(arguments[0]).exists())
+
+    def test_dwg_export_rejects_broken_writer_output(self):
+        layer = self.point_layer("EPSG:3067", [(385000, 6672000), (385010, 6672010)])
+        writer, _record = self.fake_dwg_writer("""
+            import sys
+            from pathlib import Path
+            Path(sys.argv[2]).write_bytes(b"not a dwg")
+        """)
+        with mock.patch.dict(os.environ, {"MUUNTAJA_DWG_WRITER": str(writer)}):
+            with self.assertRaisesRegex(RuntimeError, "kelvollista DWG"):
+                self.core.export_data([layer], self.folder / "dwg", "DWG")
+        self.assertEqual(list((self.folder / "dwg").glob("*.dwg")), [])
+
+    def test_dwg_writer_failure_is_reported(self):
         layer = self.point_layer("EPSG:3067", [(385000, 6672000)])
-        self.assertNotIn("DWG", self.core.EXPORT_FORMATS)
-        with self.assertRaisesRegex(ValueError, "Tuntematon vientimuoto"):
-            self.core.export_data([layer], self.folder, "DWG")
+        writer, _record = self.fake_dwg_writer("""
+            import sys
+            sys.stderr.write("Kirjoitetusta DWG:stä puuttuu kohteita: Insert 0/1")
+            sys.exit(2)
+        """)
+        with mock.patch.dict(os.environ, {"MUUNTAJA_DWG_WRITER": str(writer)}):
+            with self.assertRaisesRegex(RuntimeError, "puuttuu kohteita"):
+                self.core.export_data([layer], self.folder / "dwg", "DWG")
+
+    def test_missing_dwg_writer_explains_what_to_do(self):
+        layer = self.point_layer("EPSG:3067", [(385000, 6672000)])
+        with mock.patch.object(formats_module(), "find_dwg_writer", return_value=""):
+            with self.assertRaisesRegex(RuntimeError, "DWG-kirjoitin puuttuu"):
+                self.core.export_data([layer], self.folder, "DWG")
 
     def test_removed_layers_are_ignored(self):
         layer = self.point_layer("EPSG:3067", [(385000, 6672000)])
@@ -368,6 +452,43 @@ class CadExportTests(QgisTestCase):
         written, _failures = self.core.export_data([layer], self.folder, "GeoJSON")
         x, y = json.loads(Path(written[0]).read_text(encoding="utf-8"))["features"][0]["geometry"]["coordinates"]
         self.assertTrue(19 < x < 32 and 59 < y < 71)
+
+
+@unittest.skipUnless(formats.find_dwg_writer(), "ACadSharp-kirjoitin puuttuu (python qgis_plugin/build_dwgwriter.py)")
+class RealDwgWriterTests(QgisTestCase):
+    """The bundled ACadSharp writer itself, checked with independent readers."""
+
+    def export(self, version, combined=True):
+        layers = self.cad.import_cad(DATA / "cad_sample.dxf", self.folder / "lahde.gpkg", clean_cad=False)
+        notes = []
+        written, failures = self.core.export_data(layers, self.folder / f"dwg{version}", "DWG", combined=combined,
+                                                  notes=notes, dwg_version=version)
+        self.assertEqual(failures, [])
+        self.project.clear()
+        return [Path(path) for path in dict.fromkeys(written)], notes
+
+    def test_autocad_2018_dwg_is_written_and_reported(self):
+        written, notes = self.export("2018")
+        self.assertEqual(formats.dwg_version(written[0]), "AC1032")
+        self.assertTrue(written[0].with_suffix(".prj").is_file())
+        self.assertRegex(notes[0], r"DWG AutoCAD 2018 \(AC1032\): muuntaja_vienti\.dwg, \d+ CAD-kohdetta")
+
+    def test_autocad_2000_dwg_round_trips_through_gdal_cad_driver(self):
+        written, _notes = self.export("2000")
+        self.assertEqual(formats.dwg_version(written[0]), "AC1015")
+        # GDAL:n CAD-ajuri lukee AutoCAD 2000 -DWG:n ilman ACadSharpia tai LibreDWG:tä.
+        layers = self.cad.import_cad(written[0], self.folder / "takaisin.gpkg",
+                                     source_crs=QgsCoordinateReferenceSystem("EPSG:3067"))
+        cad_layers = {feature["cad_layer"] for layer in layers for feature in layer.getFeatures()}
+        self.assertTrue({"Tiet", "Rakennukset", "Puut"} <= cad_layers, cad_layers)
+        texts = {feature["text"] for layer in layers for feature in layer.getFeatures() if feature["text"]}
+        self.assertIn("Kauppakatu", texts)
+
+    def test_every_supported_version_is_written(self):
+        for version, _label in formats.DWG_EXPORT_VERSIONS:
+            with self.subTest(version=version):
+                written, _notes = self.export(version, combined=False)
+                self.assertTrue(all(formats.dwg_version(path) for path in written))
 
 
 class ExportCrsAndStyleTests(QgisTestCase):
@@ -634,6 +755,7 @@ class PluginTests(unittest.TestCase):
         self.assertIn(("insertAddLayerAction", "Lisää DWG/DXF/DGN-taso (Muuntaja)…"), calls)
         self.assertIn("Vie tasot DXF-muotoon (Muuntaja)…", [action.text() for action in menu.actions()])
         self.assertIn("Vie tasot DGN-muotoon (Muuntaja)…", [action.text() for action in menu.actions()])
+        self.assertIn("Vie tasot DWG-muotoon (Muuntaja)…", [action.text() for action in menu.actions()])
         handler = next(call[1] for call in calls if call[0] == "register")
         with mock.patch.object(plugin, "import_cad_files") as imported:
             self.assertFalse(handler.handleFileDrop("/data/tiet.shp"))
@@ -688,13 +810,18 @@ class PluginTests(unittest.TestCase):
                 self.wait_for_cad(plugin)
             QgsProject.instance().clear()
 
-    def test_export_dialog_offers_dxf_and_dgn_but_not_dwg(self):
+    def test_export_dialog_offers_dxf_dwg_and_dgn(self):
         from muuntaja_qgis.plugin import MuuntajaDialog
         dialog = MuuntajaDialog()
         formats_in_dialog = [dialog.format.itemText(i) for i in range(dialog.format.count())]
-        self.assertEqual(formats_in_dialog[-2:], ["DXF", "DGN"])
-        self.assertNotIn("DWG", formats_in_dialog)
+        self.assertEqual(formats_in_dialog[-3:], ["DXF", "DWG", "DGN"])
+        dialog.format.setCurrentText("DWG")
+        self.assertTrue(dialog.combined.isEnabled())
+        self.assertFalse(dialog.dwg_version.isHidden())
+        self.assertEqual(dialog.dwg_version.currentData(), "2018")
+        self.assertIn("ACadSharp", dialog.cad_hint.text())
         dialog.format.setCurrentText("DXF")
+        self.assertTrue(dialog.dwg_version.isHidden())
         self.assertTrue(dialog.combined.isEnabled())
         self.assertIn("symbologia", dialog.cad_hint.text())
         dialog.format.setCurrentText("DGN")

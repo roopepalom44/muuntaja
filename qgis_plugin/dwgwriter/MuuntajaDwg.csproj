@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- DXF → DWG for the Muuntaja QGIS plugin, built on ACadSharp (MIT).
+       Published as a self-contained single-file program per platform by
+       qgis_plugin/build_dwgwriter.py; QGIS users need no .NET installation. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>muuntaja-dwg</AssemblyName>
+    <RootNamespace>Muuntaja.Dwg</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Self-contained single file; only the .NET runtime is trimmed. -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <DebugType>none</DebugType>
+    <!-- ACadSharp is rooted below, so its trim-analysis warnings do not apply. -->
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- ACadSharp maps DXF/DWG codes through reflection: never trim it. -->
+    <TrimmerRootAssembly Include="ACadSharp" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ACadSharp" Version="3.8.0" />
+  </ItemGroup>
+</Project>

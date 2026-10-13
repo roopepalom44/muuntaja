@@ -298,6 +298,64 @@ def find_libredwg_tool(name):
     return next((str(path) for path in candidates if path and Path(path).is_file()), "")
 
 
+_MTEXT_CODES = re.compile(r"\\[ACcFfHQTW][^;\\]*;|\\[LlOoKk]|\\p[^;]*;|\\S([^;]*);")
+
+
+def strip_mtext(text):
+    """Plain text of an MTEXT value: drop font, height and colour codes.
+
+    GDAL:n DXF-ajuri tekee tämän itse, mutta DWG:n CAD-ajuri palauttaa
+    esimerkiksi ``\\fArial|b0;\\H2.5;Kauppakatu``.
+    """
+    if not text or "\\" not in text and "{" not in text:
+        return text
+    text = text.replace("\\\\", "\x00")
+    text = _MTEXT_CODES.sub(lambda match: (match.group(1) or "").replace("^", "/").replace("#", "/"), text)
+    text = text.replace("\\P", "\n").replace("\\~", " ").replace("{", "").replace("}", "")
+    return text.replace("\x00", "\\").strip()
+
+
+# --- DWG writer (ACadSharp) ------------------------------------------------------
+
+# Lisäosan mukana tuleva ACadSharp-pohjainen DXF → DWG -kirjoitin, yksi
+# itsenäinen ohjelma alustaa kohden (qgis_plugin/dwgwriter).
+BUNDLED_DWG_WRITER = Path(__file__).resolve().parent / "acadsharp"
+DWG_EXPORT_VERSIONS = (
+    ("2018", "AutoCAD 2018 (AC1032)"), ("2013", "AutoCAD 2013 (AC1027)"),
+    ("2010", "AutoCAD 2010 (AC1024)"), ("2004", "AutoCAD 2004 (AC1018)"),
+    ("2000", "AutoCAD 2000 (AC1015)"),
+)
+
+
+def dwg_writer_platform(system=None, machine=None):
+    """.NET runtime identifier of this computer, e.g. ``win-x64``; ``""`` if unsupported."""
+    import platform
+    system = system or sys.platform
+    machine = (machine or platform.machine()).lower()
+    os_name = "win" if system == "win32" else "osx" if system == "darwin" else "linux" if system.startswith("linux") else ""
+    arch = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(machine, "")
+    return f"{os_name}-{arch}" if os_name and arch else ""
+
+
+def find_dwg_writer():
+    """Path of the DWG writer program: environment override, bundled, or on PATH."""
+    override = os.environ.get("MUUNTAJA_DWG_WRITER", "")
+    name = "muuntaja-dwg.exe" if sys.platform == "win32" else "muuntaja-dwg"
+    rid = dwg_writer_platform()
+    candidates = [override] + ([BUNDLED_DWG_WRITER / rid / name] if rid else []) + [shutil.which("muuntaja-dwg")]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            path = Path(candidate)
+            if sys.platform != "win32" and not os.access(path, os.X_OK):
+                # QGISin ZIP-asennus ei säilytä suoritusoikeutta.
+                try:
+                    path.chmod(path.stat().st_mode | 0o111)
+                except OSError:
+                    continue
+            return str(path)
+    return ""
+
+
 def run_converter(command, description):
     """Run an external converter without a console window and with a timeout."""
     # Muuntimien tuloste ei aina ole UTF-8:aa (esim. ääkköset polussa):

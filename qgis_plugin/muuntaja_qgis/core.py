@@ -26,9 +26,9 @@ from .qgisutil import (  # noqa: F401
 DRIVERS = {"GPKG": ("GPKG", ".gpkg"), "GeoJSON": ("GeoJSON", ".geojson"),
            "Shapefile": ("ESRI Shapefile", ".shp"), "KML": ("LIBKML", ".kml"),
            "KMZ": ("LIBKML", ".kmz")}
-# DWG-vientiä ei tarjota: LibreDWG ei kirjoita DWG:hen viivoja, pisteitä eikä
-# tekstejä. DXF avautuu AutoCADissa, ArcGISissa ja QGISissä sellaisenaan.
-CAD_FORMATS = ("DXF", "DGN")
+# DWG kirjoitetaan QGISin DXF-viennistä lisäosan mukana tulevalla
+# ACadSharp-ohjelmalla (LibreDWG:n DWG-kirjoitus kadottaa viivat ja tekstit).
+CAD_FORMATS = ("DXF", "DWG", "DGN")
 EXPORT_FORMATS = list(DRIVERS) + list(CAD_FORMATS)
 MANAGED_PROPERTY = "muuntaja/managed"
 SOURCE_PATHS_PROPERTY = "muuntaja/source_paths"
@@ -166,7 +166,7 @@ def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=
 
 
 def export_data(layers, folder, format_name, combined=False, progress=None,
-                symbology_scale=None, target_crs=None, notes=None, include_styles=True):
+                symbology_scale=None, target_crs=None, notes=None, include_styles=True, dwg_version="2018"):
     """Export layers; ``target_crs`` reprojects every format except KML/KMZ (always WGS84).
 
     Kun ``include_styles`` on päällä, tason tyyli tallennetaan vientiin
@@ -188,7 +188,12 @@ def export_data(layers, folder, format_name, combined=False, progress=None,
         # RFC 7946: GeoJSON on oletuksena WGS84.
         target_crs = QgsCoordinateReferenceSystem("EPSG:4326")
     if format_name in CAD_FORMATS:
-        writer = dgn.write_dgn if format_name == "DGN" else None
+        writer = None
+        if format_name == "DGN":
+            writer = dgn.write_dgn
+        elif format_name == "DWG":
+            def writer(group, path, crs, project, notes):
+                return cad.write_dwg(group, path, crs, project, notes, symbology_scale, dwg_version)
         return cad.export_cad(layers, folder, combined, progress, symbology_scale,
                               project=_project(), target_crs=target_crs,
                               format_name=format_name, writer=writer, notes=notes)

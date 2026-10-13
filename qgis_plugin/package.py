@@ -4,6 +4,7 @@ from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 import hashlib
 import json
+import os
 
 ROOT = Path(__file__).resolve().parent
 PLUGIN = ROOT / "muuntaja_qgis"
@@ -22,10 +23,40 @@ seed = manifest["seed"]
 assert hashlib.sha256((VENDOR / seed["path"]).read_bytes()).hexdigest() == seed["sha256"]
 for license_name in ("LICENSE-MIT.txt", "LICENSE-APACHE.txt", "NOTICE.txt", "GDAL-LICENSE.txt"):
     assert (VENDOR / license_name).is_file(), license_name
-with ZipFile(OUTPUT, "w", ZIP_DEFLATED, compresslevel=9) as archive:
+
+# ACadSharp-pohjainen DWG-kirjoitin (build_dwgwriter.py); julkaisussa kaikki alustat.
+DWG_WRITER = PLUGIN / "acadsharp"
+DWG_RIDS = ("win-x64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")
+for license_name in ("LICENSE-ACadSharp.txt", "LICENSE-dotnet.txt", "ThirdPartyNotices-dotnet.txt", "README.txt"):
+    assert (DWG_WRITER / license_name).is_file(), license_name
+
+
+def dwg_writer_program(rid):
+    return DWG_WRITER / rid / ("muuntaja-dwg.exe" if rid.startswith("win") else "muuntaja-dwg")
+
+
+available = [rid for rid in DWG_RIDS if dwg_writer_program(rid).is_file()]
+if os.environ.get("MUUNTAJA_REQUIRE_DWG_WRITER"):
+    missing = sorted(set(DWG_RIDS) - set(available))
+    assert not missing, f"DWG-kirjoitin puuttuu: {missing} (python qgis_plugin/build_dwgwriter.py)"
+elif not available:
+    print("Varoitus: DWG-kirjoitinta ei ole käännetty; paketissa ei ole DWG-vientiä.")
+
+
+def plugin_files(rids):
     for path in sorted(PLUGIN.rglob("*")):
-        if path.is_file() and path.suffix.lower() in ALLOWED:
-            archive.write(path, path.relative_to(ROOT))
+        if not path.is_file():
+            continue
+        if DWG_WRITER in path.parents and path.parent != DWG_WRITER:
+            if path.parent.name in rids and path == dwg_writer_program(path.parent.name):
+                yield path
+        elif path.suffix.lower() in ALLOWED:
+            yield path
+
+
+with ZipFile(OUTPUT, "w", ZIP_DEFLATED, compresslevel=9) as archive:
+    for path in plugin_files(available):
+        archive.write(path, path.relative_to(ROOT))
 with ZipFile(OUTPUT) as archive:
     assert f"{PLUGIN.name}/metadata.txt" in archive.namelist()
     assert f"{PLUGIN.name}/__init__.py" in archive.namelist()
@@ -34,13 +65,15 @@ with ZipFile(OUTPUT) as archive:
     assert f"{PLUGIN.name}/vendor/cadkit/seed3d-metric.dgn" in archive.namelist()
     for tool in ("dwg2dxf.exe", "libredwg-0.dll", "libiconv-2.dll"):
         assert f"{PLUGIN.name}/libredwg/{tool}" in archive.namelist(), tool
+    for rid in available:
+        assert dwg_writer_program(rid).relative_to(ROOT).as_posix() in archive.namelist(), rid
 print(OUTPUT)
 
 WINDOWS_OUTPUT = ROOT / "dist" / f"Muuntaja-QGIS-{VERSION}-Windows.zip"
 with ZipFile(WINDOWS_OUTPUT, "w", ZIP_DEFLATED, compresslevel=9) as archive:
-    for path in sorted(PLUGIN.rglob("*")):
-        if path.is_file() and path.suffix.lower() in ALLOWED:
-            archive.write(path, path.relative_to(ROOT))
+    # Windows-paketissa vain Windowsin DWG-kirjoitin, jotta lataus pysyy pienenä.
+    for path in plugin_files([rid for rid in available if rid.startswith("win")]):
+        archive.write(path, path.relative_to(ROOT))
     archive.write(ROOT / "install_windows.bat", "install_windows.bat")
     archive.write(ROOT / "install_windows.ps1", "install_windows.ps1")
 with ZipFile(WINDOWS_OUTPUT) as archive:

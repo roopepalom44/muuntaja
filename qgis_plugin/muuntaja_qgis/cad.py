@@ -1,12 +1,12 @@
-"""DWG/DXF import and DXF export that behave like native QGIS layers.
+"""DWG/DXF import and DXF/DWG export that behave like native QGIS layers.
 
 Tuonti lukee CAD-kohteet GDAL:n DXF-ajurilla (DWG muunnetaan ensin DXF:ksi
 LibreDWG:llä, joka tulee Windowsissa lisäosan mukana) ja kirjoittaa ne neljäksi tasoksi:
 tekstit, pisteet, viivat ja alueet. Tasot saavat CAD-värit, CAD-tasot
 näkyvät sisällysluettelossa päälle/pois kytkettävinä sääntöinä ja tekstit
 nimiöinä. Vienti käyttää QGISin omaa DXF-vientiä, joten tasojen symbologia,
-nimiöt ja CAD-tasonimet säilyvät. DWG-vientiä ei ole: LibreDWG ei kirjoita
-DWG:hen viivoja, pisteitä eikä tekstejä.
+nimiöt ja CAD-tasonimet säilyvät. DWG kirjoitetaan tästä DXF:stä lisäosan
+mukana tulevalla ACadSharp-ohjelmalla (qgis_plugin/dwgwriter).
 """
 
 import tempfile
@@ -183,7 +183,7 @@ def read_cad(path, clean_cad=False, notes=None, encoding=None):
                         color = DEFAULT_COLOR
                     subclasses = str(_field(feature, "SubClasses", "cadgeom_type", "Entity", "Type") or "")
                     entity = subclasses.split(":")[-1] if subclasses else ""
-                    text = style["text"] or str(_field(feature, "Text", "text", "TextString") or "")
+                    text = formats.strip_mtext(style["text"] or str(_field(feature, "Text", "text", "TextString") or ""))
                     for part in _flatten(feature.GetGeometryRef()):
                         # GDAL V7 represents an unlabelled point as a zero-length line.
                         if _field(feature, "Type") == 3 and ogr.GT_Flatten(part.GetGeometryType()) == ogr.wkbLineString and part.GetPointCount() >= 2:
@@ -503,6 +503,59 @@ def write_dxf(layers, path, crs=None, symbology_scale=None, project=None):
         }
         raise RuntimeError(f"{messages.get(result, 'DXF-vienti epäonnistui')}: {path}")
     return Path(path)
+
+
+def missing_dwg_writer_message():
+    rid = formats.dwg_writer_platform() or "tämä alusta"
+    return (f"DWG-kirjoitin puuttuu lisäosasta ({rid}). Asenna Muuntajan uusin ZIP uudelleen "
+            "tai vie DXF-muotoon, jonka AutoCAD ja ArcGIS avaavat sellaisenaan.")
+
+
+def write_dwg(layers, path, crs, project=None, notes=None, symbology_scale=None, version="2018"):
+    """Export layers to DWG: QGIS' own DXF export, then ACadSharp writes the DWG.
+
+    Symbologia, nimiöt, lohkosymbolit ja CAD-tasonimet tulevat QGISin
+    DXF-viennistä. Kirjoitin lukee DWG:n takaisin ja vertaa kohdemäärät ennen
+    kuin tiedosto hyväksytään. Koordinaatisto tallennetaan viereen .prj-
+    tiedostoon, jonka ArcGIS Pro lukee CAD-aineistolle automaattisesti.
+    """
+    import json
+    tool = formats.find_dwg_writer()
+    if not tool:
+        raise RuntimeError(missing_dwg_writer_message())
+    path = Path(path)
+    if path.exists():
+        raise RuntimeError(f"DWG-tiedosto on jo olemassa: {path}")
+    labels = dict(formats.DWG_EXPORT_VERSIONS)
+    version = str(version or "2018")
+    if version not in labels:
+        raise ValueError(f"Tuntematon DWG-versio: {version}")
+    with tempfile.TemporaryDirectory(prefix="muuntaja_dwg_") as temp:
+        dxf = write_dxf(layers, Path(temp) / "vienti.dxf", crs, symbology_scale, project)
+        result = formats.run_converter([tool, dxf, path, "--version", version], "DWG-kirjoitin (ACadSharp)")
+    if not path.is_file() or not formats.dwg_version(path):
+        path.unlink(missing_ok=True)
+        raise RuntimeError(f"DWG-kirjoitin ei tuottanut kelvollista DWG-tiedostoa: {path.name}")
+    try:
+        report = json.loads((result.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        report = {}
+    prj = path.with_suffix(".prj")
+    crs = crs if crs is not None and crs.isValid() else _destination_crs(layers, project or processing._project())
+    if not crs.isValid():
+        crs_note = "Koordinaatistoa ei tunnettu, joten .prj-tiedostoa ei kirjoitettu."
+    elif prj.exists():
+        crs_note = f"Olemassa olevaa tiedostoa {prj.name} ei korvattu; koordinaatisto on {crs.authid()}."
+    else:
+        esri = getattr(QgsCoordinateReferenceSystem, "WKT1_ESRI", None)
+        prj.write_text(crs.toWkt(esri) if esri is not None else crs.toWkt(), encoding="utf-8")
+        crs_note = f"Koordinaatisto {crs.authid()} tallennettiin tiedostoon {prj.name}."
+    if notes is not None:
+        notes.append(f"DWG {labels[version]}: {path.name}, {report.get('entities', '?')} CAD-kohdetta, "
+                     f"{report.get('layers', '?')} CAD-tasoa. {crs_note}")
+        for warning in report.get("warnings", [])[:5]:
+            notes.append(f"DWG-kirjoittimen huomautus: {warning}")
+    return path
 
 
 def export_cad(layers, folder, combined=False, progress=None, symbology_scale=None, project=None,

@@ -14,3 +14,5 @@ __pycache__/
 qgis_plugin/dist/
 qgis_plugin/.cache/
 !tests/data/*.dwg
+# Built by qgis_plugin/build_dwgwriter.py (CI); licenses and README are tracked.
+qgis_plugin/muuntaja_qgis/acadsharp/*/

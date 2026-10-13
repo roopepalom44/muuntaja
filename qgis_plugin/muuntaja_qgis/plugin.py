@@ -15,7 +15,7 @@ from qgis.gui import QgsCustomDropHandler
 
 from .core import EXPORT_FORMATS
 from .tasks import ConversionTask, publish_layers
-from .formats import COMMON_EXPORT_CRS, STYLE_EXPORT_FORMATS
+from .formats import COMMON_EXPORT_CRS, DWG_EXPORT_VERSIONS, STYLE_EXPORT_FORMATS
 
 OTHER_CRS = "__muu__"
 
@@ -213,6 +213,13 @@ class MuuntajaDialog(QDialog):
         self.include_styles.setToolTip("GeoPackage: tyyli tallennetaan tiedoston sisään. Shapefile ja GeoJSON: "
                                        "samanniminen .qml viereen. KML/KMZ: tyylit tiedostoon.")
         form.addRow("Tyylit", self.include_styles)
+        self.dwg_version = QComboBox()
+        for code, label in DWG_EXPORT_VERSIONS:
+            self.dwg_version.addItem(label, code)
+        self.dwg_version.setToolTip("AutoCAD 2018 avautuu AutoCAD 2018:ssa ja uudemmissa sekä ArcGIS Prossa. "
+                                    "Valitse vanhempi versio vanhoille CAD-ohjelmille.")
+        self.dwg_version_label = QLabel("DWG-versio")
+        form.addRow(self.dwg_version_label, self.dwg_version)
         self.combined = QCheckBox("Vie valitut tasot samaan tiedostoon")
         self.combined.stateChanged.connect(self._update_export_controls)
         form.addRow("Useita tasoja", self.combined)
@@ -343,18 +350,23 @@ class MuuntajaDialog(QDialog):
 
     def _update_export_controls(self, *_):
         format_name = self.format.currentText()
-        supports_combined = format_name in {"GPKG", "DXF", "DGN"}
+        supports_combined = format_name in {"GPKG", "DXF", "DWG", "DGN"}
         self.combined.setEnabled(supports_combined)
         if not supports_combined:
             self.combined.setChecked(False)
-        self.cad_hint.setVisible(format_name in {"DXF", "DGN"})
-        self.cad_hint.setText(
-            "DGN V8 tallentaa geometriat, korkeudet ja CAD-tasot metriseen koordinaatistoon. "
-            "Tarvittava kirjasto tulee lisäosan mukana; erillisiä asennuksia ei tarvita."
-            if format_name == "DGN" else
+        self.cad_hint.setVisible(format_name in {"DXF", "DWG", "DGN"})
+        self.dwg_version.setVisible(format_name == "DWG")
+        self.dwg_version_label.setVisible(format_name == "DWG")
+        hints = {
+            "DGN": "DGN V8 tallentaa geometriat, korkeudet ja CAD-tasot metriseen koordinaatistoon. "
+                   "Tarvittava kirjasto tulee lisäosan mukana; erillisiä asennuksia ei tarvita.",
+            "DWG": "DWG tehdään QGISin DXF-viennistä lisäosan mukana tulevalla ACadSharp-kirjoittimella: "
+                   "symbologia, nimiöt, pistesymbolit ja CAD-tasot säilyvät. Koordinaatisto tallennetaan "
+                   "viereen .prj-tiedostoon (ArcGIS Pro lukee sen). Erillisiä asennuksia ei tarvita.",
+        }
+        self.cad_hint.setText(hints.get(format_name,
             "DXF tehdään QGISin omalla DXF-viennillä: tasojen symbologia, nimiöt ja "
-            "tuotujen CAD-tasojen nimet säilyvät. DXF avautuu AutoCADissa ja ArcGISissä."
-        )
+            "tuotujen CAD-tasojen nimet säilyvät. DXF avautuu AutoCADissa ja ArcGISissä."))
         self.include_styles.setEnabled(format_name in STYLE_EXPORT_FORMATS)
         wgs84_only = format_name in {"KML", "KMZ"}
         self.export_crs.setEnabled(not wgs84_only)
@@ -434,7 +446,8 @@ class MuuntajaDialog(QDialog):
             return
         self._start_task("Vienti", dict(folder=folder, format_name=self.format.currentText(),
             combined=self.combined.isChecked(), symbology_scale=self._symbology_scale(),
-            target_crs=self._export_target_crs(), include_styles=self.include_styles.isChecked()), layers)
+            target_crs=self._export_target_crs(), include_styles=self.include_styles.isChecked(),
+            dwg_version=self.dwg_version.currentData()), layers)
 
     def _start_task(self, operation, arguments, layers=()):
         if self._task is not None:
@@ -537,6 +550,7 @@ class MuuntajaPlugin:
         self.action = None
         self.add_cad_action = None
         self.export_cad_action = None
+        self.export_dwg_action = None
         self.export_dgn_action = None
         self.drop_handler = None
         self.dialog = None
@@ -560,15 +574,16 @@ class MuuntajaPlugin:
             self.iface.addPluginToMenu("Muuntaja", self.add_cad_action)
         self.export_cad_action = QAction(icon, "Vie tasot DXF-muotoon (Muuntaja)…", self.iface.mainWindow())
         self.export_cad_action.triggered.connect(lambda: self._dialog().show_export("DXF"))
+        self.export_dwg_action = QAction(icon, "Vie tasot DWG-muotoon (Muuntaja)…", self.iface.mainWindow())
+        self.export_dwg_action.triggered.connect(lambda: self._dialog().show_export("DWG"))
         self.export_dgn_action = QAction(icon, "Vie tasot DGN-muotoon (Muuntaja)…", self.iface.mainWindow())
         self.export_dgn_action.triggered.connect(lambda: self._dialog().show_export("DGN"))
         menu = self.iface.projectImportExportMenu() if hasattr(self.iface, "projectImportExportMenu") else None
-        if menu is not None:
-            menu.addAction(self.export_cad_action)
-            menu.addAction(self.export_dgn_action)
-        else:
-            self.iface.addPluginToMenu("Muuntaja", self.export_cad_action)
-            self.iface.addPluginToMenu("Muuntaja", self.export_dgn_action)
+        for action in (self.export_cad_action, self.export_dwg_action, self.export_dgn_action):
+            if menu is not None:
+                menu.addAction(action)
+            else:
+                self.iface.addPluginToMenu("Muuntaja", action)
         if hasattr(self.iface, "registerCustomDropHandler"):
             self.drop_handler = CadDropHandler(self)
             self.iface.registerCustomDropHandler(self.drop_handler)
@@ -586,7 +601,7 @@ class MuuntajaPlugin:
                 self.iface.removeAddLayerAction(self.add_cad_action)
             self.iface.removePluginMenu("Muuntaja", self.add_cad_action)
         menu = self.iface.projectImportExportMenu() if hasattr(self.iface, "projectImportExportMenu") else None
-        for action in (self.export_cad_action, self.export_dgn_action):
+        for action in (self.export_cad_action, self.export_dwg_action, self.export_dgn_action):
             if action is not None:
                 if menu is not None:
                     menu.removeAction(action)

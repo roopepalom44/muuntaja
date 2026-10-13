@@ -1,3 +1,8 @@
+## Muuntaja QGIS 0.5.0 — 13.10.2026
+
+- **DWG-vienti.** Tasot voi viedä DWG-muotoon (AutoCAD 2018, 2013, 2010, 2004 tai 2000) ilman ODA File Converteria tai muita asennuksia. DWG kirjoitetaan QGISin omasta DXF-viennistä lisäosan mukana tulevalla ACadSharp-ohjelmalla, joten symbologia, nimiöt, pistesymbolit, viivatyypit ja CAD-tasonimet säilyvät. Kirjoitettu tiedosto luetaan takaisin ja kohdemäärät verrataan ennen hyväksyntää, ja koordinaatisto tallennetaan viereen `.prj`-tiedostoon ArcGIS Pron luettavaksi. Valikkoon tuli **Projekti → Tuo/Vie → Vie tasot DWG-muotoon (Muuntaja)**.
+- AutoCAD 2000 -DWG:n MTEXT-tekstit tuodaan ilman muotoilukoodeja (aiemmin esim. `\fArial|b0;\H2.5;Kauppakatu`).
+
 ## Muuntaja QGIS 0.4.4 — 13.10.2026
 
 - **DGN-mitoitukset ja kartiot tuodaan geometriana.** MicroStationin mitoitus- ja nimiöviivat (elementtityyppi 33) tulevat viivoina ja niiden tekstit (esim. korot ja putkimerkinnät kuten "Sv 160 PVC") nimiöinä; kartiot ja sylinterit (tyyppi 23, esim. kaivot) tulevat pohja-alueina kannen korkeudella. Aiemmin ne jäivät pois ilmoituksella "kept as Unknown entities". Muut tunnistamattomat graafiset elementit säilyvät vähintään pisteenä omalla paikallaan, ja tulosikkuna kertoo mitä purettiin.

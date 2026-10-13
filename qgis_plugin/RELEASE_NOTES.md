@@ -1,3 +1,10 @@
+## Muuntaja QGIS 0.5.1 — 13.10.2026
+
+- **DWG-viivat eivät enää levene kilometrien levyisiksi.** QGIS kirjoittaa viivan leveyden karttayksiköissä symbologiamittakaavassa, joten koko Suomen näkymästä (n. 1:5 000 000) viety 1,6 mm tieviiva oli DWG:ssä 8 km leveä. Viivat kirjoitetaan nyt nollaleveyksinä ja leveys tallennetaan CAD-viivapaksuudeksi (lähin vakiopaksuus, esim. 1,58 mm).
+- DWG:n piirustusyksikkö on metri metrisissä koordinaatistoissa (aiemmin "Unitless"), piirustuksen laajuus tallennetaan otsikkoon ja jokainen CAD-taso saa kohteidensa värin (QGIS kirjoittaa kaikki tasot punaisina).
+- **Yhteiseen tiedostoon viedyt tasot nimetään sisällön mukaan** `muuntaja_vienti`-nimen sijaan: saman ryhmän tasot saavat ryhmän nimen (esim. tuodun `suunnitelma.dgn`:n tasot → `suunnitelma.dwg`), muuten käytetään tasonimien yhteistä alkua, tallennetun projektin nimeä tai ensimmäisen tason nimeä (`Eurooppatienumero_Digiroad_ja_2_muuta.dwg`). Koskee DWG-, DXF-, DGN- ja GeoPackage-vientiä.
+- Vientisivulta poistettiin CAD-muotojen ohjeteksti.
+
 ## Muuntaja QGIS 0.5.0 — 13.10.2026
 
 - **DWG-vienti.** Tasot voi viedä DWG-muotoon (AutoCAD 2018, 2013, 2010, 2004 tai 2000) ilman ODA File Converteria tai muita asennuksia. DWG kirjoitetaan QGISin omasta DXF-viennistä lisäosan mukana tulevalla ACadSharp-ohjelmalla, joten symbologia, nimiöt, pistesymbolit, viivatyypit ja CAD-tasonimet säilyvät. Kirjoitettu tiedosto luetaan takaisin ja kohdemäärät verrataan ennen hyväksyntää, ja koordinaatisto tallennetaan viereen `.prj`-tiedostoon ArcGIS Pron luettavaksi. Valikkoon tuli **Projekti → Tuo/Vie → Vie tasot DWG-muotoon (Muuntaja)**.

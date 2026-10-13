@@ -9,6 +9,8 @@ nimiöt ja CAD-tasonimet säilyvät. DWG kirjoitetaan tästä DXF:stä lisäosan
 mukana tulevalla ACadSharp-ohjelmalla (qgis_plugin/dwgwriter).
 """
 
+import os
+import re
 import tempfile
 from collections import Counter
 from contextlib import contextmanager
@@ -19,7 +21,7 @@ from qgis.core import (
     QgsFeature, QgsField, QgsFields, QgsFillSymbol, QgsGeometry, QgsLineSymbol, QgsMapSettings,
     QgsMarkerSymbol, QgsNullSymbolRenderer, QgsPalLayerSettings, QgsProperty, QgsRectangle,
     QgsRuleBasedRenderer, QgsSingleSymbolRenderer, QgsSymbolLayer, QgsTextFormat,
-    QgsVectorFileWriter, QgsVectorLayer, QgsVectorLayerSimpleLabeling, QgsWkbTypes,
+    QgsUnitTypes, QgsVectorFileWriter, QgsVectorLayer, QgsVectorLayerSimpleLabeling, QgsWkbTypes,
 )
 from qgis.PyQt.QtCore import QFile
 from qgis.PyQt.QtGui import QColor
@@ -530,9 +532,22 @@ def write_dwg(layers, path, crs, project=None, notes=None, symbology_scale=None,
     version = str(version or "2018")
     if version not in labels:
         raise ValueError(f"Tuntematon DWG-versio: {version}")
+    crs = crs if crs is not None and crs.isValid() else _destination_crs(layers, project or processing._project())
+    command = [tool, None, path, "--version", version]
+    if crs.isValid():
+        # QGIS kirjoittaa viivanleveydet karttayksiköissä symbologiamittakaavassa
+        # (1:5 000 000:ssa 1,6 mm = 8 km); CAD-viivapaksuudeksi tarvitaan
+        # karttayksiköt paperimillimetriä kohden.
+        meters = crs.mapUnits() == QgsUnitTypes.DistanceMeters
+        factor = 1.0 if meters else QgsUnitTypes.fromUnitToUnitFactor(QgsUnitTypes.DistanceMeters, crs.mapUnits())
+        units_per_mm = float(symbology_scale or 1000) / 1000 * factor
+        if units_per_mm > 0:
+            command += ["--units-per-mm", repr(units_per_mm)]
+        if meters:
+            command.append("--meters")
     with tempfile.TemporaryDirectory(prefix="muuntaja_dwg_") as temp:
-        dxf = write_dxf(layers, Path(temp) / "vienti.dxf", crs, symbology_scale, project)
-        result = formats.run_converter([tool, dxf, path, "--version", version], "DWG-kirjoitin (ACadSharp)")
+        command[1] = write_dxf(layers, Path(temp) / "vienti.dxf", crs, symbology_scale, project)
+        result = formats.run_converter(command, "DWG-kirjoitin (ACadSharp)")
     if not path.is_file() or not formats.dwg_version(path):
         path.unlink(missing_ok=True)
         raise RuntimeError(f"DWG-kirjoitin ei tuottanut kelvollista DWG-tiedostoa: {path.name}")
@@ -541,7 +556,6 @@ def write_dwg(layers, path, crs, project=None, notes=None, symbology_scale=None,
     except (ValueError, IndexError):
         report = {}
     prj = path.with_suffix(".prj")
-    crs = crs if crs is not None and crs.isValid() else _destination_crs(layers, project or processing._project())
     if not crs.isValid():
         crs_note = "Koordinaatistoa ei tunnettu, joten .prj-tiedostoa ei kirjoitettu."
     elif prj.exists():
@@ -556,6 +570,38 @@ def write_dwg(layers, path, crs, project=None, notes=None, symbology_scale=None,
         for warning in report.get("warnings", [])[:5]:
             notes.append(f"DWG-kirjoittimen huomautus: {warning}")
     return path
+
+
+def combined_export_name(layers, project=None):
+    """File name for layers exported into one file.
+
+    Saman ryhmän tasot saavat ryhmän nimen (tuodun tiedoston nimi ilman
+    päätettä), muuten tasonimien yhteinen alku, tallennetun projektin nimi tai
+    ensimmäisen tason nimi ja muiden tasojen määrä.
+    """
+    layers = list(layers)
+    names = [layer.name() for layer in layers]
+    if len(layers) == 1:
+        return formats.safe_name(names[0])
+    project = project or processing._project()
+    root = project.layerTreeRoot()
+    groups = set()
+    for layer in layers:
+        node = root.findLayer(layer.id())
+        parent = node.parent() if node is not None else None
+        groups.add(parent.name() if parent is not None and parent.parent() is not None else None)
+    if len(groups) == 1 and None not in groups:
+        group = groups.pop()
+        stem = Path(group)
+        return formats.safe_name(stem.stem if stem.suffix.lower() in formats.VECTOR_EXTENSIONS else group)
+    # Yhteinen alku kokonaisina sanoina: kaivot_2024 + kaivot_2025 -> kaivot.
+    words = os.path.commonprefix([re.split(r"([\s_.()-]+)", name) for name in names])
+    prefix = "".join(words).strip(" _-.(")
+    if len(prefix) >= 3:
+        return formats.safe_name(prefix)
+    if project.fileName():
+        return formats.safe_name(project.baseName())
+    return formats.safe_name(f"{formats.safe_name(names[0])[:60]}_ja_{len(names) - 1}_muuta")
 
 
 def export_cad(layers, folder, combined=False, progress=None, symbology_scale=None, project=None,
@@ -580,7 +626,7 @@ def export_cad(layers, folder, combined=False, progress=None, symbology_scale=No
                 "Tasot ovat eri koordinaatistoissa (" + ", ".join(sorted(systems)) + "), eikä yhteen "
                 f"{format_name}-tiedostoon mahdu kuin yksi koordinaatisto. Valitse kohdekoordinaatisto tai vie tasot "
                 "omiin tiedostoihinsa, jolloin jokainen taso säilyttää omansa.")
-    groups = ([(list(layers), "muuntaja_vienti")] if combined
+    groups = ([(list(layers), combined_export_name(layers, project))] if combined
               else [([layer], formats.safe_name(layer.name())) for layer in layers])
     successes, failures = [], []
     for index, (group, name) in enumerate(groups, 1):

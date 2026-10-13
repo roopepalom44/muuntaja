@@ -1,4 +1,4 @@
-# Muuntaja QGIS (esijulkaisu 0.5.0)
+# Muuntaja QGIS (esijulkaisu 0.5.1)
 
 QGIS 3.44:lle tehty erillinen, natiivi Python-lisäosa. ArcGIS Pro -laajennus pysyy samassa projektissa.
 

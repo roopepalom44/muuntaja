@@ -201,7 +201,8 @@ def export_data(layers, folder, format_name, combined=False, progress=None,
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     combined = combined and format_name == "GPKG"
-    common_path = unique_path(folder / f"muuntaja_vienti{extension}") if combined else None
+    common_path = (unique_path(folder / f"{cad.combined_export_name(layers, _project())}{extension}")
+                   if combined else None)
     successes, failures = [], []
     used_names = set()
     for index, layer in enumerate(layers, 1):

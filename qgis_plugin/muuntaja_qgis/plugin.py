@@ -223,10 +223,6 @@ class MuuntajaDialog(QDialog):
         self.combined = QCheckBox("Vie valitut tasot samaan tiedostoon")
         self.combined.stateChanged.connect(self._update_export_controls)
         form.addRow("Useita tasoja", self.combined)
-        self.cad_hint = QLabel("DXF tehdään QGISin omalla DXF-viennillä: tasojen symbologia, nimiöt ja "
-                               "tuotujen CAD-tasojen nimet säilyvät. DXF avautuu AutoCADissa ja ArcGISissä.")
-        self.cad_hint.setWordWrap(True)
-        form.addRow("", self.cad_hint)
         layout.addLayout(form)
 
         run = QPushButton("Vie tasot")
@@ -354,19 +350,8 @@ class MuuntajaDialog(QDialog):
         self.combined.setEnabled(supports_combined)
         if not supports_combined:
             self.combined.setChecked(False)
-        self.cad_hint.setVisible(format_name in {"DXF", "DWG", "DGN"})
         self.dwg_version.setVisible(format_name == "DWG")
         self.dwg_version_label.setVisible(format_name == "DWG")
-        hints = {
-            "DGN": "DGN V8 tallentaa geometriat, korkeudet ja CAD-tasot metriseen koordinaatistoon. "
-                   "Tarvittava kirjasto tulee lisäosan mukana; erillisiä asennuksia ei tarvita.",
-            "DWG": "DWG tehdään QGISin DXF-viennistä lisäosan mukana tulevalla ACadSharp-kirjoittimella: "
-                   "symbologia, nimiöt, pistesymbolit ja CAD-tasot säilyvät. Koordinaatisto tallennetaan "
-                   "viereen .prj-tiedostoon (ArcGIS Pro lukee sen). Erillisiä asennuksia ei tarvita.",
-        }
-        self.cad_hint.setText(hints.get(format_name,
-            "DXF tehdään QGISin omalla DXF-viennillä: tasojen symbologia, nimiöt ja "
-            "tuotujen CAD-tasojen nimet säilyvät. DXF avautuu AutoCADissa ja ArcGISissä."))
         self.include_styles.setEnabled(format_name in STYLE_EXPORT_FORMATS)
         wgs84_only = format_name in {"KML", "KMZ"}
         self.export_crs.setEnabled(not wgs84_only)

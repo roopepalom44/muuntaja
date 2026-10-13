@@ -399,7 +399,7 @@ class CadExportTests(QgisTestCase):
         notes = []
         with mock.patch.dict(os.environ, {"MUUNTAJA_DWG_WRITER": str(writer)}):
             written, failures = self.core.export_data([layer], self.folder / "dwg", "DWG", notes=notes,
-                                                      dwg_version="2013")
+                                                      dwg_version="2013", symbology_scale=5000000)
 
         self.assertEqual(failures, [])
         output = Path(written[0])
@@ -407,7 +407,8 @@ class CadExportTests(QgisTestCase):
         self.assertEqual(formats.dwg_version(output), "AC1032")
         arguments = record.read_text(encoding="utf-8").splitlines()
         self.assertTrue(arguments[0].endswith(".dxf"))
-        self.assertEqual(arguments[1:], [str(output), "--version", "2013"])
+        # 1:5 000 000:ssa yksi paperimillimetri on 5 000 m; ETRS-TM35FIN on metrinen.
+        self.assertEqual(arguments[1:], [str(output), "--version", "2013", "--units-per-mm", "5000.0", "--meters"])
         self.assertIn("EPSG:3067", output.with_suffix(".prj").read_text(encoding="utf-8") + notes[0])
         self.assertIn("2 CAD-kohdetta", notes[0])
         self.assertFalse(Path(arguments[0]).exists())
@@ -441,6 +442,33 @@ class CadExportTests(QgisTestCase):
             with self.assertRaisesRegex(RuntimeError, "DWG-kirjoitin puuttuu"):
                 self.core.export_data([layer], self.folder, "DWG")
 
+    def test_combined_export_is_named_after_the_layers(self):
+        name = self.cad.combined_export_name
+        first = self.point_layer("EPSG:3067", [(385000, 6672000)], "topelius_JM_line")
+        second = self.point_layer("EPSG:3067", [(385000, 6672000)], "topelius_JM_point")
+        self.assertEqual(name([first]), "topelius_JM_line")
+        self.assertEqual(name([first, second]), "topelius_JM")
+        roads = self.point_layer("EPSG:3067", [(385000, 6672000)], "Eurooppatienumero (Digiroad)")
+        stations = self.point_layer("EPSG:3067", [(385000, 6672000)], "LAM-piste")
+        self.assertEqual(name([roads, stations]), "Eurooppatienumero_Digiroad_ja_1_muuta")
+        with mock.patch.object(self.project, "fileName", return_value="/tmp/Liikenne.qgz"), \
+                mock.patch.object(self.project, "baseName", return_value="Liikenne"):
+            self.assertEqual(name([roads, stations]), "Liikenne")
+        # Saman ryhmän tasot (tuotu tiedosto) saavat ryhmän nimen ilman päätettä.
+        root = self.project.layerTreeRoot()
+        group = root.addGroup("suunnitelma.dgn")
+        for layer in (roads, stations):
+            node = root.findLayer(layer.id())
+            group.addLayer(layer)
+            node.parent().removeChildNode(node)
+        self.assertEqual(name([roads, stations]), "suunnitelma")
+
+    def test_combined_geopackage_uses_the_combined_name(self):
+        first = self.point_layer("EPSG:3067", [(385000, 6672000)], "kaivot_2024")
+        second = self.point_layer("EPSG:3067", [(385000, 6672000)], "kaivot_2025")
+        written, _failures = self.core.export_data([first, second], self.folder, "GPKG", combined=True)
+        self.assertEqual(Path(written[0]).name, "kaivot.gpkg")
+
     def test_removed_layers_are_ignored(self):
         layer = self.point_layer("EPSG:3067", [(385000, 6672000)])
         written, failures = self.core.export_data([None, layer], self.folder, "GPKG")
@@ -471,7 +499,7 @@ class RealDwgWriterTests(QgisTestCase):
         written, notes = self.export("2018")
         self.assertEqual(formats.dwg_version(written[0]), "AC1032")
         self.assertTrue(written[0].with_suffix(".prj").is_file())
-        self.assertRegex(notes[0], r"DWG AutoCAD 2018 \(AC1032\): muuntaja_vienti\.dwg, \d+ CAD-kohdetta")
+        self.assertRegex(notes[0], r"DWG AutoCAD 2018 \(AC1032\): cad_sample\.dwg, \d+ CAD-kohdetta")
 
     def test_autocad_2000_dwg_round_trips_through_gdal_cad_driver(self):
         written, _notes = self.export("2000")
@@ -819,14 +847,11 @@ class PluginTests(unittest.TestCase):
         self.assertTrue(dialog.combined.isEnabled())
         self.assertFalse(dialog.dwg_version.isHidden())
         self.assertEqual(dialog.dwg_version.currentData(), "2018")
-        self.assertIn("ACadSharp", dialog.cad_hint.text())
         dialog.format.setCurrentText("DXF")
         self.assertTrue(dialog.dwg_version.isHidden())
         self.assertTrue(dialog.combined.isEnabled())
-        self.assertIn("symbologia", dialog.cad_hint.text())
         dialog.format.setCurrentText("DGN")
         self.assertTrue(dialog.combined.isEnabled())
-        self.assertIn("V8", dialog.cad_hint.text())
         dialog.close()
 
     def test_export_dialog_offers_common_crs_and_locks_kml_to_wgs84(self):

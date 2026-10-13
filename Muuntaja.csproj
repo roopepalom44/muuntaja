@@ -6,6 +6,8 @@
 		<AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 		<NoWarn>CA1416</NoWarn>
+		<!-- QGIS-lisäosa ja sen DWG-kirjoitin (oma .NET-projekti) eivät kuulu Add-Iniin. -->
+		<DefaultItemExcludes>$(DefaultItemExcludes);qgis_plugin\**</DefaultItemExcludes>
 	</PropertyGroup>
 	<ItemGroup>
 		<None Remove="Config.daml" />

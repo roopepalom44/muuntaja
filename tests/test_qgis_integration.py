@@ -555,6 +555,57 @@ class QgisIntegrationTests(unittest.TestCase):
         )
         self.assertLess(peak, 2048 * 1024 * 1024)
 
+    def _two_layer_geopackage(self, name="kohteet.gpkg"):
+        QgsProject.instance().layerTreeRoot().removeAllChildren()
+        source = self.root / name
+        self.core.write_vector(self.points("kaivot"), source, "GPKG", "kaivot")
+        self.core.write_vector(self.points("venttiilit", coordinates=((385010, 6670010),)), source, "GPKG",
+                               "venttiilit", append=True)
+        return source
+
+    def test_multi_layer_file_is_grouped_by_file_name(self):
+        source = self._two_layer_geopackage()
+
+        successes, failures = self.core.import_data([str(source)], self.root / "tuonti.gpkg")
+
+        self.assertEqual((len(successes), failures), (1, []))
+        root = QgsProject.instance().layerTreeRoot()
+        group = root.findGroup("kohteet.gpkg")
+        self.assertIsNotNone(group)
+        self.assertEqual(sorted(node.layer().name() for node in group.findLayers()),
+                         ["kohteet_kaivot", "kohteet_venttiilit"])
+        self.assertEqual([child.name() for child in root.children()], ["kohteet.gpkg"])
+
+    def test_single_layer_file_is_not_wrapped_in_a_group(self):
+        QgsProject.instance().layerTreeRoot().removeAllChildren()
+        source = self.root / "yksi.gpkg"
+        self.core.write_vector(self.points("kaivot"), source, "GPKG", "kaivot")
+
+        self.core.import_data([str(source)], self.root / "tuonti.gpkg")
+
+        root = QgsProject.instance().layerTreeRoot()
+        self.assertEqual([node.layer().name() for node in root.findLayers()], ["yksi_kaivot"])
+        self.assertEqual(root.findGroups(), [])
+
+    def test_background_import_puts_new_file_group_on_top(self):
+        source = self._two_layer_geopackage()
+        QgsProject.instance().addMapLayer(self.points("olemassa"))
+        private = QgsProject()
+        token = self.core._operation_project.set(private)
+        try:
+            self.core.import_data([str(source)], self.root / "tuonti.gpkg")
+            specs = [self.tasks.layer_spec(node.layer(), node.parent().name() if node.parent() != private.layerTreeRoot() else "")
+                     for node in private.layerTreeRoot().findLayers()]
+        finally:
+            private.removeAllMapLayers()
+            self.core._operation_project.reset(token)
+
+        self.tasks.publish_layers(QgsProject.instance(), specs, [])
+
+        children = QgsProject.instance().layerTreeRoot().children()
+        self.assertEqual(children[0].name(), "kohteet.gpkg")
+        self.assertEqual(len(children[0].findLayers()), 2)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1,3 +1,8 @@
+## Muuntaja QGIS 0.4.4 — 13.10.2026
+
+- **DGN-mitoitukset ja kartiot tuodaan geometriana.** MicroStationin mitoitus- ja nimiöviivat (elementtityyppi 33) tulevat viivoina ja niiden tekstit (esim. korot ja putkimerkinnät kuten "Sv 160 PVC") nimiöinä; kartiot ja sylinterit (tyyppi 23, esim. kaivot) tulevat pohja-alueina kannen korkeudella. Aiemmin ne jäivät pois ilmoituksella "kept as Unknown entities". Muut tunnistamattomat graafiset elementit säilyvät vähintään pisteenä omalla paikallaan, ja tulosikkuna kertoo mitä purettiin.
+- **Monitasoiset tiedostot ryhmitellään tiedostonimen mukaan.** GeoPackage, KML, GPX ja muut useita tasoja tuottavat tiedostot lisätään CAD-tuonnin tapaan omaan ryhmäänsä (esim. `kohteet.gpkg`). Uudet ryhmät tulevat sisällysluettelon ylimmäksi.
+
 ## Muuntaja QGIS 0.4.2 — 11.10.2026
 
 - Tuonnit, viennit ja CAD-tiedostojen pudotus suoritetaan QgsTask-taustatehtävinä. Projektin tasot ja käyttöliittymä päivitetään pääsäikeessä; vienti käyttää aineiston ja tyylin tilannekuvaa.

@@ -1277,6 +1277,7 @@ class UniversalImportTool(object):
                 self._current_import_group = self._import_folder_parts(input_path, folder_roots)
                 if len(file_paths) > 1:
                     self.log(messages, f"Tuonti — ({idx}/{len(file_paths)}) {input_path}")
+                self._deferred_map_additions = []
                 try:
                     ext = os.path.splitext(input_path)[1].lower()
 
@@ -1316,6 +1317,9 @@ class UniversalImportTool(object):
                         "WARNING",
                     )
                     self.log(messages, traceback.format_exc(), "WARNING")
+                finally:
+                    pending, self._deferred_map_additions = self._deferred_map_additions, None
+                    self._flush_file_layers(input_path, pending, messages)
 
             if raster_paths:
                 raster_ok, raster_failures = self._import_rasters(
@@ -1330,6 +1334,7 @@ class UniversalImportTool(object):
                 map_failures=self._current_import_map_failures,
             )
         finally:
+            self._deferred_map_additions = None
             self._current_import_group = previous_group
             self._run_deferred_cleanup(messages)
 
@@ -3430,7 +3435,57 @@ class UniversalImportTool(object):
                     pass
 
     def _add_layers_to_map(self, paths, messages, styles=None):
-        """Lisää tasot aktiiviseen karttaan; ``styles`` = {tuotu polku: lähteen .lyrx}."""
+        """Lisää tasot aktiiviseen karttaan; ``styles`` = {tuotu polku: lähteen .lyrx}.
+
+        Tiedostotuonnin aikana lisäykset kerätään ja tehdään vasta tiedoston
+        lopussa (``_flush_file_layers``), jotta monitasoinen tiedosto voidaan
+        lisätä omaan tiedostonimen mukaiseen ryhmäänsä.
+        """
+        deferred = getattr(self, "_deferred_map_additions", None)
+        if deferred is not None:
+            for path in paths or []:
+                deferred.append((path, (styles or {}).get(path)))
+            return []
+        return self._add_layers_now(paths, messages, styles, getattr(self, "_current_import_group", ()))
+
+    def _file_group_name(self, active_map, parent, base_name):
+        """Vapaa ryhmänimi tiedostolle saman vanhemman alla: nimi, nimi (2), …"""
+        prefix = (parent.longName + "\\") if parent is not None else ""
+        layers = parent.listLayers() if parent is not None else active_map.listLayers()
+        taken = {
+            str(getattr(layer, "longName", "")).casefold()
+            for layer in layers
+            if getattr(layer, "isGroupLayer", False)
+        }
+        candidate, number = base_name, 2
+        while (prefix + candidate).casefold() in taken:
+            candidate = f"{base_name} ({number})"
+            number += 1
+        return candidate
+
+    def _flush_file_layers(self, input_path, pending, messages):
+        """Lisää tiedoston tasot karttaan; useampi taso → tiedostonimen ryhmä."""
+        if not pending:
+            return []
+        paths, styles = [], {}
+        for path, style in pending:
+            if path not in styles:
+                paths.append(path)
+                styles[path] = style
+        parts = tuple(getattr(self, "_current_import_group", ()) or ())
+        if len(paths) > 1:
+            name = re.split(r"[\\/]", str(input_path).rstrip("\\/"))[-1] or "Tuonti"
+            try:
+                active_map = arcpy.mp.ArcGISProject("CURRENT").activeMap
+            except Exception:
+                active_map = None
+            if active_map is not None:
+                parent = self._get_or_create_group_path(active_map, parts)
+                name = self._file_group_name(active_map, parent, name)
+            parts = parts + (name,)
+        return self._add_layers_now(paths, messages, styles, parts)
+
+    def _add_layers_now(self, paths, messages, styles, group_parts):
         if not paths:
             return []
         styles = styles or {}
@@ -3440,9 +3495,7 @@ class UniversalImportTool(object):
             active_map = aprx.activeMap
             if not active_map:
                 return []
-            group_layer = self._get_or_create_group_path(
-                active_map, getattr(self, "_current_import_group", ())
-            )
+            group_layer = self._get_or_create_group_path(active_map, tuple(group_parts or ()))
             for path in paths:
                 if not (path and arcpy.Exists(path)):
                     continue

@@ -19,7 +19,7 @@ from .formats import (  # noqa: F401  (julkinen rajapinta lisäosalle ja testeil
     unique_name, unique_path,
 )
 from .qgisutil import (  # noqa: F401
-    add_project_layer, assign_source_crs, copy_style, ensure_project_crs, field_type, inferred_crs,
+    add_layers_as_group, add_project_layer, assign_source_crs, copy_style, ensure_project_crs, field_type, inferred_crs,
     save_style, source_style, write_vector,
 )
 
@@ -64,7 +64,7 @@ def _apply_source_style(source, output, path, save_as_default, notes=None):
 
 def _import_vector(path, destination, workspace, file_gdb, source_crs, target_crs, project, taken_names,
                    notes=None):
-    written = 0
+    outputs = []
     layers = _open_vector_layers(path)
     try:
         for layer in layers:
@@ -86,13 +86,21 @@ def _import_vector(path, destination, workspace, file_gdb, source_crs, target_cr
                 _dispose(output)
                 raise RuntimeError("Kirjoitettua tasoa ei voitu avata")
             _apply_source_style(layer, output, path, save_as_default=not file_gdb, notes=notes)
-            add_project_layer(project, output)
-            written += 1
+            outputs.append(output)
+        if not outputs:
+            raise RuntimeError("Tiedostossa ei ollut tuotavia kohteita")
+        # Monitasoinen tiedosto (GPKG, KML, GPX …) tulee yhdeksi tiedostonimen
+        # mukaiseksi ryhmäksi kuten CAD-tuonnissa; yksittäinen taso ilman ryhmää.
+        if len(outputs) > 1:
+            add_layers_as_group(project, outputs, path.name)
+        else:
+            add_project_layer(project, outputs[0])
+        outputs.clear()
     finally:
         for layer in layers:
             _dispose(layer)
-    if not written:
-        raise RuntimeError("Tiedostossa ei ollut tuotavia kohteita")
+        for output in outputs:
+            _dispose(output)
 
 
 def import_data(paths, destination, source_crs=None, target_crs=None, clean_cad=False,

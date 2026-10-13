@@ -86,12 +86,18 @@ def publish_layers(project, specs, removed):
             if spec["raster"]:
                 layer.setCustomProperty("muuntaja/managed", True)
             apply_style_xml(layer, spec.get("style", ""))
+        root = project.layerTreeRoot()
+        created = 0
         for layer, spec in pending:
             core._add_project_layer(project, layer, not bool(spec["group"]))
             if spec["group"]:
-                group = project.layerTreeRoot().findGroup(
-                    spec["group"]
-                ) or project.layerTreeRoot().addGroup(spec["group"])
+                group = root.findGroup(spec["group"])
+                if group is None:
+                    # Uudet ryhmät (esim. tiedostonimen mukainen tuontiryhmä)
+                    # sisällysluettelon ylimmäksi tuontijärjestyksessä, kuten
+                    # QGIS lisää uudet tasot.
+                    group = root.insertGroup(created, spec["group"])
+                    created += 1
                 group.addLayer(layer)
         for identity in removed:
             project.removeMapLayer(identity)

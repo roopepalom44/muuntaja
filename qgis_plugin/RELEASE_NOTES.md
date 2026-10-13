@@ -1,7 +1,7 @@
 ## Muuntaja QGIS 0.5.1 — 13.10.2026
 
-- **DWG-viivat eivät enää levene kilometrien levyisiksi.** QGIS kirjoittaa viivan leveyden karttayksiköissä symbologiamittakaavassa, joten koko Suomen näkymästä (n. 1:5 000 000) viety 1,6 mm tieviiva oli DWG:ssä 8 km leveä. Viivat kirjoitetaan nyt nollaleveyksinä ja leveys tallennetaan CAD-viivapaksuudeksi (lähin vakiopaksuus, esim. 1,58 mm).
-- DWG:n piirustusyksikkö on metri metrisissä koordinaatistoissa (aiemmin "Unitless"), piirustuksen laajuus tallennetaan otsikkoon ja jokainen CAD-taso saa kohteidensa värin (QGIS kirjoittaa kaikki tasot punaisina).
+- **DXF- ja DWG-viivat eivät enää levene kilometrien levyisiksi.** QGIS kirjoittaa viivan leveyden karttayksiköissä symbologiamittakaavassa, joten koko Suomen näkymästä (n. 1:5 000 000) viety 1,6 mm tieviiva oli DXF:ssä ja DWG:ssä 8 km leveä. Viivat kirjoitetaan nyt nollaleveyksinä ja leveys tallennetaan CAD-viivapaksuudeksi (lähin vakiopaksuus, esim. 1,58 mm). Pistesymbolien sisältö säilyy ennallaan.
+- DXF:n ja DWG:n piirustusyksikkö on metri metrisissä koordinaatistoissa (aiemmin "Unitless"). DWG:hen tallennetaan piirustuksen laajuus ja jokainen CAD-taso saa kohteidensa värin (QGIS kirjoittaa kaikki tasot punaisina).
 - **Yhteiseen tiedostoon viedyt tasot nimetään sisällön mukaan** `muuntaja_vienti`-nimen sijaan: saman ryhmän tasot saavat ryhmän nimen (esim. tuodun `suunnitelma.dgn`:n tasot → `suunnitelma.dwg`), muuten käytetään tasonimien yhteistä alkua, tallennetun projektin nimeä tai ensimmäisen tason nimeä (`Eurooppatienumero_Digiroad_ja_2_muuta.dwg`). Koskee DWG-, DXF-, DGN- ja GeoPackage-vientiä.
 - Vientisivulta poistettiin CAD-muotojen ohjeteksti.
 

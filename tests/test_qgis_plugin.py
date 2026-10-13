@@ -32,7 +32,7 @@ _FORMATS_SPEC.loader.exec_module(formats)
 try:
     from qgis.core import (
         QgsApplication, QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsPointXY,
-        QgsProject, QgsRasterLayer, QgsRuleBasedRenderer, QgsVectorLayer,
+        QgsLineSymbol, QgsProject, QgsRasterLayer, QgsRuleBasedRenderer, QgsSingleSymbolRenderer, QgsVectorLayer,
     )
     from qgis.PyQt.QtGui import QColor
     HAVE_QGIS = True
@@ -187,6 +187,19 @@ class QgisTestCase(unittest.TestCase):
         layer.updateExtents()
         self.project.addMapLayer(layer)
         return layer
+
+
+def dxf_pairs(path):
+    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    return [(lines[index].strip(), lines[index + 1].strip()) for index in range(0, len(lines) - 1, 2)]
+
+
+def entity_codes(pairs, name):
+    """Group codes of the first ``name`` entity in the ENTITIES section."""
+    start = pairs.index(("2", "ENTITIES"))
+    first = next(index for index in range(start, len(pairs)) if pairs[index] == ("0", name))
+    end = next(index for index in range(first + 1, len(pairs)) if pairs[index][0] == "0")
+    return {code: value for code, value in pairs[first + 1:end]}
 
 
 def formats_module():
@@ -378,6 +391,38 @@ class CadExportTests(QgisTestCase):
         self.assertTrue({"Tiet", "Rakennukset", "Tekstit", "Puut"} <= cad_layers)
         self.assertTrue({"Kauppakatu", "Talo A"} <= texts)
 
+    def wide_road(self, width_mm="1.66"):
+        layer = QgsVectorLayer("LineString?crs=EPSG:3067", "Eurooppatienumero (Digiroad)", "memory")
+        feature = QgsFeature(layer.fields())
+        feature.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(385000, 6672000), QgsPointXY(400000, 6700000)]))
+        layer.dataProvider().addFeatures([feature])
+        layer.updateExtents()
+        layer.setRenderer(QgsSingleSymbolRenderer(QgsLineSymbol.createSimple(
+            {"line_color": "152,125,183", "line_width": width_mm})))
+        self.project.addMapLayer(layer)
+        return layer
+
+    def test_dxf_strokes_become_line_weights_instead_of_kilometre_wide_bands(self):
+        # Koko Suomen näkymästä (1:5 000 000) QGIS kirjoittaisi 1,66 mm viivan 8,3 km leveäksi.
+        written, _failures = self.core.export_data([self.wide_road()], self.folder, "DXF", symbology_scale=5000000)
+        pairs = dxf_pairs(written[0])
+        polyline = entity_codes(pairs, "LWPOLYLINE")
+        self.assertEqual(float(polyline["43"]), 0.0)
+        self.assertEqual(polyline["370"], "158")
+        self.assertIn(("9", "$INSUNITS"), pairs)
+        self.assertEqual(pairs[pairs.index(("9", "$INSUNITS")) + 1], ("70", "6"))
+        from osgeo import ogr
+        dataset = ogr.Open(written[0])
+        self.assertEqual(dataset.GetLayer(0).GetFeatureCount(), 1)
+
+    def test_dxf_strokes_in_geographic_crs_use_degrees_per_millimetre(self):
+        road = self.wide_road("0.5")
+        written, _failures = self.core.export_data([road], self.folder, "DXF", symbology_scale=100000,
+                                                   target_crs=QgsCoordinateReferenceSystem("EPSG:4326"))
+        pairs = dxf_pairs(written[0])
+        self.assertEqual(entity_codes(pairs, "LWPOLYLINE")["370"], "50")
+        self.assertNotIn(("9", "$INSUNITS"), pairs)
+
     def fake_dwg_writer(self, body=None):
         """Stand-in for the bundled ACadSharp writer: records its arguments."""
         record = self.folder / "writer_args.txt"
@@ -407,8 +452,7 @@ class CadExportTests(QgisTestCase):
         self.assertEqual(formats.dwg_version(output), "AC1032")
         arguments = record.read_text(encoding="utf-8").splitlines()
         self.assertTrue(arguments[0].endswith(".dxf"))
-        # 1:5 000 000:ssa yksi paperimillimetri on 5 000 m; ETRS-TM35FIN on metrinen.
-        self.assertEqual(arguments[1:], [str(output), "--version", "2013", "--units-per-mm", "5000.0", "--meters"])
+        self.assertEqual(arguments[1:], [str(output), "--version", "2013"])
         self.assertIn("EPSG:3067", output.with_suffix(".prj").read_text(encoding="utf-8") + notes[0])
         self.assertIn("2 CAD-kohdetta", notes[0])
         self.assertFalse(Path(arguments[0]).exists())

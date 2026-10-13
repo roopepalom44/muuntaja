@@ -1,16 +1,12 @@
 // muuntaja-dwg: converts the DXF written by QGIS' own DXF export to DWG.
 //
 //   muuntaja-dwg <input.dxf> <output.dwg> [--version 2018|2013|2010|2004|2000]
-//                [--units-per-mm <map units per paper millimetre>] [--meters]
 //
 // ACadSharp 3.8 does not write AutoCAD 2007 (AC1021) files.
 //
-// QGIS writes stroke widths as polyline widths in map units at the symbology
-// scale, which turns a 1.6 mm road at 1:5 000 000 into an 8 km wide band in
-// CAD. Model space polylines get zero width instead; with --units-per-mm the
-// stroke width becomes the nearest CAD line weight. --meters sets the drawing
-// units, which QGIS leaves unset. Layers get the most common colour of their
-// entities (QGIS writes every layer red).
+// Stroke widths and drawing units are already fixed in the DXF (cad.py
+// _cad_strokes). Here the drawing extents of the DXF are kept and each layer
+// gets the most common colour of its entities (QGIS writes every layer red).
 //
 // The drawing content (entities, the blocks they reference, layers, line types
 // and text styles) is read with ACadSharp and copied into a fresh document that
@@ -22,7 +18,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -30,7 +25,6 @@ using System.Text.Json;
 using ACadSharp;
 using ACadSharp.Entities;
 using ACadSharp.IO;
-using ACadSharp.Types.Units;
 
 namespace Muuntaja.Dwg
 {
@@ -50,15 +44,9 @@ namespace Muuntaja.Dwg
             var warnings = new List<string>();
             try
             {
-                var options = ParseArguments(args);
-                var (input, output, version) = (options.Input, options.Output, options.Version);
+                var (input, output, version) = ParseArguments(args);
                 var source = ReadDxf(input, warnings);
                 var document = CopyDrawing(source, version);
-                if (options.Meters)
-                {
-                    document.Header.InsUnits = UnitsType.Meters;
-                }
-                var strokes = StrokeWidthsToLineWeights(document, options.UnitsPerMillimetre);
                 ColourLayersByEntities(document);
                 var expected = CountByType(document.Entities);
                 var temporary = output + ".muuntaja-tmp";
@@ -75,7 +63,7 @@ namespace Muuntaja.Dwg
                         throw new InvalidDataException("Kirjoitetusta DWG:stä puuttuu kohteita: " + string.Join(", ", missing));
                     }
                     File.Move(temporary, output, overwrite: true);
-                    Console.Out.WriteLine(Report(version, actual, written, strokes, warnings));
+                    Console.Out.WriteLine(Report(version, actual, written, warnings));
                     return 0;
                 }
                 finally
@@ -99,7 +87,7 @@ namespace Muuntaja.Dwg
         }
 
         private static string Report(ACadVersion version, SortedDictionary<string, int> counts, CadDocument written,
-            int strokes, List<string> warnings)
+            List<string> warnings)
         {
             using var stream = new MemoryStream();
             using (var json = new Utf8JsonWriter(stream))
@@ -114,7 +102,6 @@ namespace Muuntaja.Dwg
                 }
                 json.WriteEndObject();
                 json.WriteNumber("layers", written.Layers.Count);
-                json.WriteNumber("stroke_widths", strokes);
                 json.WriteNumber("blocks", written.BlockRecords.Count(block => !block.Name.StartsWith("*", StringComparison.Ordinal)));
                 json.WriteStartArray("warnings");
                 foreach (var warning in warnings.Distinct().Take(50))
@@ -127,40 +114,18 @@ namespace Muuntaja.Dwg
             return Encoding.UTF8.GetString(stream.ToArray());
         }
 
-        private sealed class Options
-        {
-            public string Input;
-            public string Output;
-            public ACadVersion Version = ACadVersion.AC1032;
-            public double? UnitsPerMillimetre;
-            public bool Meters;
-        }
-
-        private static Options ParseArguments(string[] args)
+        private static (string input, string output, ACadVersion version) ParseArguments(string[] args)
         {
             var positional = new List<string>();
-            var options = new Options();
+            var version = ACadVersion.AC1032;
             for (var index = 0; index < args.Length; index++)
             {
                 if (args[index] == "--version" && index + 1 < args.Length)
                 {
-                    if (!Versions.TryGetValue(args[++index], out options.Version))
+                    if (!Versions.TryGetValue(args[++index], out version))
                     {
                         throw new ArgumentException($"Tuntematon DWG-versio: {args[index]} (sallitut: 2000, 2004, 2010, 2013, 2018)");
                     }
-                }
-                else if (args[index] == "--units-per-mm" && index + 1 < args.Length)
-                {
-                    if (!double.TryParse(args[++index], NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
-                        || !(value > 0) || double.IsInfinity(value))
-                    {
-                        throw new ArgumentException($"Virheellinen --units-per-mm: {args[index]}");
-                    }
-                    options.UnitsPerMillimetre = value;
-                }
-                else if (args[index] == "--meters")
-                {
-                    options.Meters = true;
                 }
                 else
                 {
@@ -175,66 +140,7 @@ namespace Muuntaja.Dwg
             {
                 throw new ArgumentException($"DXF-tiedostoa ei löytynyt: {positional[0]}");
             }
-            options.Input = positional[0];
-            options.Output = positional[1];
-            return options;
-        }
-
-        private static readonly LineWeightType[] LineWeights = Enum.GetValues(typeof(LineWeightType)).Cast<LineWeightType>()
-            .Where(weight => (short)weight >= 0).OrderBy(weight => (short)weight).ToArray();
-
-        /// <summary>Nearest standard CAD line weight (1/100 mm) for a stroke width in millimetres.</summary>
-        public static LineWeightType NearestLineWeight(double millimetres)
-        {
-            var hundredths = millimetres * 100;
-            return LineWeights.OrderBy(weight => Math.Abs((short)weight - hundredths)).First();
-        }
-
-        /// <summary>
-        /// Replaces model space polyline widths with line weights; returns how
-        /// many polylines had a width. Block contents (point symbols) keep theirs.
-        /// </summary>
-        public static int StrokeWidthsToLineWeights(CadDocument document, double? unitsPerMillimetre)
-        {
-            var changed = 0;
-            foreach (var polyline in document.Entities.OfType<LwPolyline>())
-            {
-                var width = Math.Max(polyline.ConstantWidth,
-                    polyline.Vertices.Select(vertex => Math.Max(vertex.StartWidth, vertex.EndWidth)).DefaultIfEmpty(0).Max());
-                if (!(width > 0))
-                {
-                    continue;
-                }
-                polyline.ConstantWidth = 0;
-                foreach (var vertex in polyline.Vertices)
-                {
-                    vertex.StartWidth = 0;
-                    vertex.EndWidth = 0;
-                }
-                if (unitsPerMillimetre.HasValue)
-                {
-                    polyline.LineWeight = NearestLineWeight(width / unitsPerMillimetre.Value);
-                }
-                changed++;
-            }
-            return changed;
-        }
-
-        /// <summary>Gives each layer the most common colour of its model space entities.</summary>
-        public static void ColourLayersByEntities(CadDocument document)
-        {
-            var colours = document.Entities
-                .Where(entity => entity.Layer != null && !entity.Color.IsByLayer && !entity.Color.IsByBlock)
-                .GroupBy(entity => entity.Layer.Name)
-                .ToDictionary(group => group.Key,
-                              group => group.GroupBy(entity => entity.Color).OrderByDescending(colour => colour.Count()).First().Key);
-            foreach (var layer in document.Layers)
-            {
-                if (colours.TryGetValue(layer.Name, out var colour))
-                {
-                    layer.Color = colour;
-                }
-            }
+            return (positional[0], positional[1], version);
         }
 
         private static void Collect(NotificationEventArgs e, List<string> warnings, string stage)
@@ -285,6 +191,23 @@ namespace Muuntaja.Dwg
                 }
             }
             return document;
+        }
+
+        /// <summary>Gives each layer the most common colour of its model space entities.</summary>
+        public static void ColourLayersByEntities(CadDocument document)
+        {
+            var colours = document.Entities
+                .Where(entity => entity.Layer != null && !entity.Color.IsByLayer && !entity.Color.IsByBlock)
+                .GroupBy(entity => entity.Layer.Name)
+                .ToDictionary(group => group.Key,
+                              group => group.GroupBy(entity => entity.Color).OrderByDescending(colour => colour.Count()).First().Key);
+            foreach (var layer in document.Layers)
+            {
+                if (colours.TryGetValue(layer.Name, out var colour))
+                {
+                    layer.Color = colour;
+                }
+            }
         }
 
         public static SortedDictionary<string, int> CountByType(IEnumerable<Entity> entities)

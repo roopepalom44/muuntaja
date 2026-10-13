@@ -504,7 +504,84 @@ def write_dxf(layers, path, crs=None, symbology_scale=None, project=None):
             QgsDxfExport.ExportResult.InvalidDeviceError: "DXF-tiedostoa ei voitu luoda",
         }
         raise RuntimeError(f"{messages.get(result, 'DXF-vienti epäonnistui')}: {path}")
+    meters = crs.mapUnits() == QgsUnitTypes.DistanceMeters
+    factor = 1.0 if meters else QgsUnitTypes.fromUnitToUnitFactor(QgsUnitTypes.DistanceMeters, crs.mapUnits())
+    _cad_strokes(path, float(symbology_scale or 1000) / 1000 * factor, meters)
     return Path(path)
+
+
+# AutoCADin vakioviivapaksuudet (1/100 mm, DXF-ryhmä 370).
+_LINE_WEIGHTS = (0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211)
+
+
+def _line_weight(millimetres):
+    return min(_LINE_WEIGHTS, key=lambda weight: abs(weight - millimetres * 100))
+
+
+def _cad_strokes(path, units_per_mm, meters):
+    """Turn QGIS' stroke widths into CAD line weights in a DXF; returns the number of lines.
+
+    QGIS kirjoittaa viivan leveyden LWPOLYLINE-leveydeksi karttayksiköissä
+    symbologiamittakaavassa, jolloin 1:5 000 000:ssa 1,6 mm tieviiva on CADissa
+    8 km leveä kaista. Mallitilan viivat saavat leveydeksi 0 ja paksuus
+    tallennetaan viivapaksuudeksi (ryhmä 370). Lohkojen (pistesymbolien) sisältö
+    säilyy. Metrisessä koordinaatistossa piirustusyksiköksi ($INSUNITS) tulee metri.
+    """
+    data = Path(path).read_bytes()
+    newline = b"\r\n" if b"\r\n" in data[:4096] else b"\n"
+    lines = data.split(newline)
+    tail = lines[len(lines) // 2 * 2:]
+    pairs = [[lines[index], lines[index + 1]] for index in range(0, len(lines) // 2 * 2, 2)]
+    output, section, entity, changed = [], None, None, 0
+    has_units = False
+
+    def finish():
+        nonlocal changed
+        if entity and entity["width"] > 0:
+            for pair in entity["widths"]:
+                pair[1] = b"0.0"
+            weight = str(_line_weight(entity["width"] / units_per_mm)).encode() if units_per_mm > 0 else None
+            if weight is not None:
+                if entity["weight"] is not None:
+                    entity["weight"][1] = weight
+                else:
+                    output.insert(entity["anchor"], [b"370", weight])
+            changed += 1
+
+    for pair in pairs:
+        code, value = pair[0].strip(), pair[1].strip()
+        if code == b"0":
+            finish()
+            entity = None
+            if value == b"ENDSEC" and section == b"HEADER" and meters and not has_units:
+                output += [[b"  9", b"$INSUNITS"], [b" 70", b"     6"]]
+            if value == b"ENDSEC":
+                section = None
+            elif section == b"ENTITIES" and value == b"LWPOLYLINE":
+                entity = {"width": 0.0, "widths": [], "weight": None, "anchor": len(output) + 1}
+        elif code == b"2" and output and output[-1][0].strip() == b"0" and output[-1][1].strip() == b"SECTION":
+            section = value
+        elif section == b"HEADER" and code == b"9" and value == b"$INSUNITS":
+            has_units = True
+        elif section == b"HEADER" and has_units and code == b"70" and meters and output[-1][1].strip() == b"$INSUNITS":
+            pair = [pair[0], b"     6"]
+        elif entity is not None:
+            if code == b"100" and value == b"AcDbEntity":
+                entity["anchor"] = len(output) + 1
+            elif code == b"370":
+                entity["weight"] = pair
+            elif code in (b"43", b"40", b"41"):
+                try:
+                    width = float(value)
+                except ValueError:
+                    width = 0.0
+                if width > 0:
+                    entity["width"] = max(entity["width"], width)
+                    entity["widths"].append(pair)
+        output.append(pair)
+    finish()
+    Path(path).write_bytes(newline.join([line for pair in output for line in pair] + tail))
+    return changed
 
 
 def missing_dwg_writer_message():
@@ -533,21 +610,9 @@ def write_dwg(layers, path, crs, project=None, notes=None, symbology_scale=None,
     if version not in labels:
         raise ValueError(f"Tuntematon DWG-versio: {version}")
     crs = crs if crs is not None and crs.isValid() else _destination_crs(layers, project or processing._project())
-    command = [tool, None, path, "--version", version]
-    if crs.isValid():
-        # QGIS kirjoittaa viivanleveydet karttayksiköissä symbologiamittakaavassa
-        # (1:5 000 000:ssa 1,6 mm = 8 km); CAD-viivapaksuudeksi tarvitaan
-        # karttayksiköt paperimillimetriä kohden.
-        meters = crs.mapUnits() == QgsUnitTypes.DistanceMeters
-        factor = 1.0 if meters else QgsUnitTypes.fromUnitToUnitFactor(QgsUnitTypes.DistanceMeters, crs.mapUnits())
-        units_per_mm = float(symbology_scale or 1000) / 1000 * factor
-        if units_per_mm > 0:
-            command += ["--units-per-mm", repr(units_per_mm)]
-        if meters:
-            command.append("--meters")
     with tempfile.TemporaryDirectory(prefix="muuntaja_dwg_") as temp:
-        command[1] = write_dxf(layers, Path(temp) / "vienti.dxf", crs, symbology_scale, project)
-        result = formats.run_converter(command, "DWG-kirjoitin (ACadSharp)")
+        dxf = write_dxf(layers, Path(temp) / "vienti.dxf", crs, symbology_scale, project)
+        result = formats.run_converter([tool, dxf, path, "--version", version], "DWG-kirjoitin (ACadSharp)")
     if not path.is_file() or not formats.dwg_version(path):
         path.unlink(missing_ok=True)
         raise RuntimeError(f"DWG-kirjoitin ei tuottanut kelvollista DWG-tiedostoa: {path.name}")

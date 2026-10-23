@@ -32,7 +32,7 @@ jobs:
       - name: Install QGIS Python bindings
         run: |
           # The Azure mirror can throttle large QGIS dependencies for minutes.
-          for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+          for source_file in /etc/apt/sources.list /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources; do
             if [ -f "$source_file" ]; then
               sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source_file"
             fi

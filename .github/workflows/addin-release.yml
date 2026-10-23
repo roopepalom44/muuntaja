@@ -31,8 +31,15 @@ jobs:
 
       - name: Install QGIS Python bindings
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          # The Azure mirror can throttle large QGIS dependencies for minutes.
+          for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$source_file" ]; then
+              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source_file"
+            fi
+          done
+          apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo apt-get "${apt_options[@]}" update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y --no-install-recommends \
             python3-qgis qgis-providers python3-gdal python3-pytest python3-numpy
 
       - name: Set up .NET 8 for the DWG writer

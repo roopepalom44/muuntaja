@@ -789,7 +789,7 @@ class PluginTests(unittest.TestCase):
         self.assertIsNone(plugin._cad_task, "CAD task did not finish")
 
     def make_iface(self):
-        from qgis.PyQt.QtWidgets import QMenu
+        from qgis.PyQt.QtWidgets import QMenu, QMainWindow, QToolBar
         calls = []
 
         class MessageBar:
@@ -803,7 +803,11 @@ class PluginTests(unittest.TestCase):
         menu = QMenu()
 
         class Iface:
-            def mainWindow(self): return None
+            def __init__(self):
+                self.window = QMainWindow()
+                self.toolbar = QToolBar(self.window)
+            def mainWindow(self): return self.window
+            def pluginToolBar(self): return self.toolbar
             def addPluginToMenu(self, *args): calls.append(("addPluginToMenu",) + args)
             def removePluginMenu(self, *args): calls.append(("removePluginMenu",) + args)
             def addToolBarIcon(self, *args): calls.append(("addToolBarIcon",) + args)

@@ -1,19 +1,22 @@
 """Build an installable QGIS plugin ZIP without caches or test artifacts."""
 
 from pathlib import Path
+import subprocess
+import sys
 from zipfile import ZipFile, ZIP_DEFLATED
 import hashlib
 import json
 import os
 
 ROOT = Path(__file__).resolve().parent
+subprocess.run([sys.executable, str(ROOT.parent / "SharedHelp/sync.py"), "--check"], check=True)
 PLUGIN = ROOT / "muuntaja_qgis"
 VERSION = next(line.split("=", 1)[1].strip() for line in (PLUGIN / "metadata.txt").read_text(encoding="utf-8").splitlines()
                if line.startswith("version="))
 OUTPUT = ROOT / "dist" / f"Muuntaja-QGIS-{VERSION}.zip"
 OUTPUT.parent.mkdir(exist_ok=True)
 # .exe/.dll: lisäosan mukana jaettava LibreDWG (muuntaja_qgis/libredwg).
-ALLOWED = {".py", ".txt", ".png", ".json", ".gpkg", ".exe", ".dll", ".pyd", ".so", ".dgn"}
+ALLOWED = {".html", ".svg", ".py", ".txt", ".png", ".json", ".gpkg", ".exe", ".dll", ".pyd", ".so", ".dgn"}
 VENDOR = PLUGIN / "vendor/cadkit"
 manifest = json.loads((VENDOR / "manifest.json").read_text(encoding="utf-8"))
 for entry in manifest["binaries"].values():

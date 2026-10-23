@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
+<?xml version="1.0" encoding="utf-8" ?>
 <ArcGIS defaultAssembly="Muuntaja.dll"
         defaultNamespace="Muuntaja"
         xmlns="http://schemas.esri.com/DADF/Registry"
@@ -6,7 +6,7 @@
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
 	<AddInInfo id="{78512C46-1376-4F15-812E-2A0D8D900A9E}"
-			   version="1.5.8"
+			   version="1.5.9"
 			   desktopVersion="3.5.0"
 			   product="ArcGISPro">
 		<Name>Muuntaja</Name>
@@ -14,26 +14,48 @@
 		<Image>Images\muuntaja32.png</Image>
 		<Author>Roope Palomaa</Author>
 		<Company>Ramboll</Company>
-		<Date>2026-10-12</Date>
+		<Date>2026-10-24</Date>
 		<Subject>Framework</Subject>
 	</AddInInfo>
 
-	<modules>
+	<conditions>
+    <insertCondition id="muuntaja_SharedHelp_suomenvaylat_Condition"><and><state id="PaikkatietoOhje_Owner_muuntaja"/><state id="PaikkatietoOhje_Tool_suomenvaylat"/></and></insertCondition>
+    <insertCondition id="muuntaja_SharedHelp_muuntaja_Condition"><and><state id="PaikkatietoOhje_Owner_muuntaja"/><state id="PaikkatietoOhje_Tool_muuntaja"/></and></insertCondition>
+    <insertCondition id="muuntaja_SharedHelp_liikenneselvitys_Condition"><and><state id="PaikkatietoOhje_Owner_muuntaja"/><state id="PaikkatietoOhje_Tool_liikenneselvitys"/></and></insertCondition>
+    <insertCondition id="muuntaja_SharedHelp_saavutettavuuskartat_Condition"><and><state id="PaikkatietoOhje_Owner_muuntaja"/><state id="PaikkatietoOhje_Tool_saavutettavuuskartat"/></and></insertCondition>
+    <insertCondition id="muuntaja_SharedHelp_Condition"><state id="PaikkatietoOhje_Owner_muuntaja"/></insertCondition>
+  </conditions>
+
+  <modules>
 		<insertModule id="Muuntaja_Module"
 					  className="Module1"
 					  autoLoad="true"
 					  caption="Muuntaja Module">
 
 			<groups>
-				<group id="Muuntaja_ToolsGroup"
-					   caption=""
-					   appearsOnAddInTab="true"
+<group id="Muuntaja_ToolsGroup"
+					   caption=" "
+					   appearsOnAddInTab="false"
 					   keytip="MT"
-					   smallImage="Images\muuntaja16.png"
-					   largeImage="Images\muuntaja32.png">
+					   smallImage="Images\muuntaja16.png">
 					<button refID="Muuntaja_OpenToolButton" size="large" />
 				</group>
-			</groups>
+        <group id="muuntaja_SharedHelp_suomenvaylat_Group" caption=" " keytip="SV" appearsOnAddInTab="true" condition="muuntaja_SharedHelp_suomenvaylat_Condition" smallImage="SharedHelp\Icons\suomenvaylat16.png">
+          <button refID="muuntaja_SharedHelp_suomenvaylat_Button" size="large"/>
+        </group>
+        <group id="muuntaja_SharedHelp_muuntaja_Group" caption=" " keytip="MU" appearsOnAddInTab="true" condition="muuntaja_SharedHelp_muuntaja_Condition" smallImage="SharedHelp\Icons\muuntaja16.png">
+          <button refID="muuntaja_SharedHelp_muuntaja_Button" size="large"/>
+        </group>
+        <group id="muuntaja_SharedHelp_liikenneselvitys_Group" caption=" " keytip="LS" appearsOnAddInTab="true" condition="muuntaja_SharedHelp_liikenneselvitys_Condition" smallImage="SharedHelp\Icons\liikenneselvitys16.png">
+          <button refID="muuntaja_SharedHelp_liikenneselvitys_Button" size="large"/>
+        </group>
+        <group id="muuntaja_SharedHelp_saavutettavuuskartat_Group" caption=" " keytip="SK" appearsOnAddInTab="true" condition="muuntaja_SharedHelp_saavutettavuuskartat_Condition" smallImage="SharedHelp\Icons\saavutettavuuskartat16.png">
+          <button refID="muuntaja_SharedHelp_saavutettavuuskartat_Button" size="large"/>
+        </group>
+        <group id="muuntaja_SharedHelp_Group" caption=" " keytip="OH" appearsOnAddInTab="true" condition="muuntaja_SharedHelp_Condition" smallImage="SharedHelp\Icons\help16.png">
+          <button refID="muuntaja_SharedHelp_Button" size="large"/>
+        </group>
+      </groups>
 
 			<controls>
 				<button id="Muuntaja_OpenToolButton"
@@ -48,7 +70,23 @@
 						<disabledText />
 					</tooltip>
 				</button>
-			</controls>
+
+        <button id="muuntaja_SharedHelp_suomenvaylat_Button" caption="Suomenväylät.fi" className="PaikkatietoOhje.SuomenvaylatButton" loadOnClick="true" keytip="SV" smallImage="SharedHelp\Icons\suomenvaylat16.png" largeImage="SharedHelp\Icons\suomenvaylat32.png">
+          <tooltip heading="Suomenväylät.fi">Avaa Suomenväylät.fi-työkalu.<disabledText/></tooltip>
+        </button>
+        <button id="muuntaja_SharedHelp_muuntaja_Button" caption="Muuntaja" className="PaikkatietoOhje.MuuntajaButton" loadOnClick="true" keytip="MU" smallImage="SharedHelp\Icons\muuntaja16.png" largeImage="SharedHelp\Icons\muuntaja32.png">
+          <tooltip heading="Muuntaja">Avaa Muuntaja-työkalu.<disabledText/></tooltip>
+        </button>
+        <button id="muuntaja_SharedHelp_liikenneselvitys_Button" caption="Liikenneselvitys" className="PaikkatietoOhje.LiikenneselvitysButton" loadOnClick="true" keytip="LS" smallImage="SharedHelp\Icons\liikenneselvitys16.png" largeImage="SharedHelp\Icons\liikenneselvitys32.png">
+          <tooltip heading="Liikenneselvitys">Avaa Liikenneselvitys-työkalu.<disabledText/></tooltip>
+        </button>
+        <button id="muuntaja_SharedHelp_saavutettavuuskartat_Button" caption="Saavutettavuuskartat" className="PaikkatietoOhje.SaavutettavuuskartatButton" loadOnClick="true" keytip="SK" smallImage="SharedHelp\Icons\saavutettavuuskartat16.png" largeImage="SharedHelp\Icons\saavutettavuuskartat32.png">
+          <tooltip heading="Saavutettavuuskartat">Avaa Saavutettavuuskartat-työkalu.<disabledText/></tooltip>
+        </button>
+        <button id="muuntaja_SharedHelp_Button" caption="Avaa ohje" className="PaikkatietoOhje.OpenHelpButton" loadOnClick="true" keytip="OH" smallImage="SharedHelp\Icons\help16.png" largeImage="SharedHelp\Icons\help32.png">
+          <tooltip heading="Avaa ohje">Avaa neljän paikkatietotyökalun yhteinen käyttöohje selaimeen.<disabledText/></tooltip>
+        </button>
+      </controls>
 
 		</insertModule>
 	</modules>

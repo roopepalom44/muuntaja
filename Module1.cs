@@ -1,10 +1,22 @@
-﻿using ArcGIS.Desktop.Framework;
+using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Contracts;
 
 namespace Muuntaja
 {
     public class Module1 : Module
     {
+
+        protected override bool Initialize()
+        {
+            PaikkatietoOhje.SharedHelp.Register("muuntaja", System.Reflection.Assembly.GetExecutingAssembly());
+            return true;
+        }
+
+        protected override void Uninitialize()
+        {
+            PaikkatietoOhje.SharedHelp.Unregister("muuntaja");
+        }
+
         private static Module1 _this = null;
 
         /// <summary>

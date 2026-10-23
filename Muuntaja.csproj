@@ -38,4 +38,9 @@
 	<ItemGroup>
 		<PackageReference Include="Esri.ArcGISPro.Extensions30" Version="3.5.0.57366" />
 	</ItemGroup>
+  <ItemGroup>
+    <Content Include="SharedHelp\index.html"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="SharedHelp\manifest.json"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="SharedHelp\Icons\*.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+  </ItemGroup>
 </Project>

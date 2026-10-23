@@ -149,6 +149,9 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_OUTPUT, $outputs, [Text.UTF8Encoding]::new($false))
           Write-Host "Building Pro 3.5-compatible AddInX $releaseVersion ($tag)."
 
+      - name: Synchronize canonical offline manual
+        run: python SharedHelp/sync.py --fetch
+
       - name: Build AddInX
         shell: pwsh
         run: |

@@ -2,7 +2,7 @@
 name=Muuntaja
 description=Paikkatietoaineistojen tuonti ja vienti QGISissä
 about=Muuntaja tuo vektori- ja rasteriaineistoja kansioista sekä vie projektin vektoritasoja yleisiin tiedostomuotoihin. DWG-, DXF- ja DGN-piirustukset avautuvat QGISissä ryhmiteltyinä, CAD-värein ja -tekstein, ja tasot voi viedä valittuun koordinaatistoon (esim. ETRS-GK23) tyyli mukana. DWG-lukua varten mukana on LibreDWG (GPL-3), joten Windowsissa ei tarvita erillistä muunninta. DGN V7/V8 -lukija ja V8-kirjoittaja (cadkit) sisältyvät lisäosaan kaikilla tuetuilla 64-bittisillä alustoilla ilman ArcGISia tai lisäasennuksia. DWG-vienti (AutoCAD 2000–2018) tehdään lisäosan mukana tulevalla ACadSharp-kirjoittimella (MIT), joten .NETiä tai ODA File Converteria ei tarvita.
-version=0.5.1
+version=0.5.2
 qgisMinimumVersion=3.44
 author=Roope Palomaa
 repository=https://github.com/roopepalom44/muuntaja

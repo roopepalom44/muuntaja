@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from .shared_help import register as register_shared_help, unregister as unregister_shared_help
+
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
@@ -549,6 +551,7 @@ class MuuntajaPlugin:
         self.action.triggered.connect(self.open)
         self.iface.addPluginToMenu("Muuntaja", self.action)
         self.iface.addToolBarIcon(self.action)
+        register_shared_help(self.iface, "muuntaja", self.action)
 
         # DWG/DXF samoihin paikkoihin kuin QGISin omat tuonti- ja vientitoiminnot.
         self.add_cad_action = QAction(icon, "Lisää DWG/DXF/DGN-taso (Muuntaja)…", self.iface.mainWindow())
@@ -574,6 +577,7 @@ class MuuntajaPlugin:
             self.iface.registerCustomDropHandler(self.drop_handler)
 
     def unload(self):
+        unregister_shared_help(self.iface, "muuntaja")
         self._unloaded = True
         self._cad_queue.clear()
         if self._cad_task is not None:

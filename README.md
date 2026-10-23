@@ -1,5 +1,7 @@
 # Muuntaja
 
+**[Yhteinen kuvallinen HTML-käyttöohje](SharedHelp/index.html)**: Suomenväylät, Muuntaja, Liikenneselvitys ja Saavutettavuuskartat. Jokainen uusi asennus sisältää saman offline-ohjeen ja yhden **Avaa ohje** -painikkeen. [Ohjeen ylläpito](SharedHelp/README.md).
+
 **Käyttöohjeet:** [ArcGIS Pro (PDF)](docs/Muuntaja_ArcGIS_Pro_ohje.pdf) · [QGIS (PDF)](docs/Muuntaja_QGIS_ohje.pdf) – Word-versiot samassa `docs`-kansiossa.
 
 **QGIS-versio (esijulkaisu):** [asennus ja nykyinen toiminnallisuus](qgis_plugin/README.md). Uusimmat asennuspaketit: [Muuntaja-QGIS-Windows.zip](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja-QGIS-Windows.zip) ja [Muuntaja-QGIS.zip](https://github.com/roopepalom44/muuntaja/releases/latest/download/Muuntaja-QGIS.zip).

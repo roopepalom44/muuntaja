@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $root = (Resolve-Path -LiteralPath $PSScriptRoot).Path
+. (Join-Path $root 'SharedHelp\package.ps1')
 $output = Join-Path $root "bin\$Configuration\$TargetFramework"
 $stage = Join-Path $env:TEMP ('muuntaja-stage-' + [guid]::NewGuid().ToString('N'))
 $stage = [IO.Path]::GetFullPath($stage)
@@ -35,6 +36,8 @@ $files = @(
     @{ Relative = 'Install\Toolboxes\Muuntaja.pyt'; Source = (Join-Path $root 'Toolboxes\Muuntaja.pyt') },
     @{ Relative = 'Install\Toolboxes\cad_worker.py'; Source = (Join-Path $root 'Toolboxes\cad_worker.py') }
 )
+
+$files += $sharedHelpPackageFiles
 
 try {
     foreach ($file in $files) {

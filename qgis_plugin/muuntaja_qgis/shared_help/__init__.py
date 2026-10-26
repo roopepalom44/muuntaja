@@ -2,6 +2,23 @@
 from pathlib import Path
 import hashlib
 import json
+import sys
+import types
+
+REGISTRY_MODULE = "_paikkatietotyokalut_help_v2"
+
+
+def _shared_registry():
+    # Native QGIS can return a fresh SIP wrapper for the same main window.
+    # Python attributes on that wrapper are neither shared nor a lifetime root.
+    # Keep strong references outside every plugin package so unload/reload of
+    # the plugin that supplied the implementation cannot orphan the QAction.
+    registry = sys.modules.get(REGISTRY_MODULE)
+    if registry is None:
+        registry = types.ModuleType(REGISTRY_MODULE)
+        registry.managers = {}
+        sys.modules[REGISTRY_MODULE] = registry
+    return registry
 
 
 def guide_info(directory):
@@ -28,18 +45,22 @@ def newest_guide(directories):
 
 
 def register(iface, key, action):
-    """One manager per main window, even when imported from different plugins."""
+    """Share one persistent manager by native window identity, not SIP wrapper."""
+    from qgis.PyQt import sip
     from qgis.PyQt.QtCore import QEvent, QObject, QTimer, QUrl
     from qgis.PyQt.QtGui import QDesktopServices, QIcon
     from qgis.PyQt.QtWidgets import QAction, QMessageBox
 
     window = iface.mainWindow()
-    manager = getattr(window, "_paikkatieto_shared_help_v1", None)
+    window_id = int(sip.unwrapinstance(window))
+    registry = _shared_registry()
+    manager = registry.managers.get(window_id)
     if manager is None:
         class Manager(QObject):
             def __init__(self):
                 super().__init__(window)
                 self.entries = {}
+                self.window = window
                 self.pending = False
                 self.closed = False
                 self.action = QAction(QIcon(str(Path(__file__).parent / "Icons" / "help.svg")), "Avaa ohje", window)
@@ -50,6 +71,11 @@ def register(iface, key, action):
                 iface.addToolBarIcon(self.action)
                 self.toolbar = iface.pluginToolBar()
                 self.toolbar.installEventFilter(self)
+                window.destroyed.connect(self.window_destroyed)
+
+            def window_destroyed(self):
+                self.closed = True
+                registry.managers.pop(window_id, None)
 
             def eventFilter(self, watched, event):
                 if event.type() == QEvent.ActionAdded and not self.pending:
@@ -83,6 +109,8 @@ def register(iface, key, action):
 
             def close(self):
                 self.closed = True
+                registry.managers.pop(window_id, None)
+                window.destroyed.disconnect(self.window_destroyed)
                 self.toolbar.removeEventFilter(self)
                 iface.removePluginMenu("Paikkatietotyökalut", self.action)
                 iface.removeToolBarIcon(self.action)
@@ -90,14 +118,16 @@ def register(iface, key, action):
                 self.deleteLater()
 
         manager = Manager()
-        window._paikkatieto_shared_help_v1 = manager
+        registry.managers[window_id] = manager
     manager.entries[key] = (action, Path(__file__).parent)
     manager.reorder()
 
 
 def unregister(iface, key):
+    from qgis.PyQt import sip
     window = iface.mainWindow()
-    manager = getattr(window, "_paikkatieto_shared_help_v1", None)
+    window_id = int(sip.unwrapinstance(window))
+    manager = _shared_registry().managers.get(window_id)
     if manager is None:
         return
     manager.entries.pop(key, None)
@@ -105,4 +135,3 @@ def unregister(iface, key):
         manager.reorder()
     else:
         manager.close()
-        delattr(window, "_paikkatieto_shared_help_v1")

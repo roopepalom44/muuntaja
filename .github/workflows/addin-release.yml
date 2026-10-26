@@ -58,7 +58,9 @@ jobs:
       - name: Unit tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: /usr/bin/python3 -m pytest tests --tb=short
+        run: |
+          /usr/bin/python3 -m pytest tests --tb=short
+          /usr/bin/python3 SharedHelp/test_qgis_help.py
 
   dwg-writer-macos:
     # macOS binaries must be (ad-hoc) code signed to run on Apple Silicon,

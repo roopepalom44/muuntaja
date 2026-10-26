@@ -1,5 +1,4 @@
 using ArcGIS.Desktop.Framework;
-using ArcGIS.Desktop.Framework.Contracts;
 using ArcGIS.Desktop.Framework.Dialogs;
 using System;
 using System.Collections.Generic;
@@ -107,9 +106,4 @@ namespace PaikkatietoOhje
         }
     }
 
-    internal class OpenHelpButton : Button { protected override void OnClick() => SharedHelp.Open(); }
-    internal class SuomenvaylatButton : Button { protected override void OnClick() => SharedHelp.Execute("suomenvaylat_SuomenvaylatButton"); }
-    internal class MuuntajaButton : Button { protected override void OnClick() => SharedHelp.Execute("Muuntaja_OpenToolButton"); }
-    internal class LiikenneselvitysButton : Button { protected override void OnClick() => SharedHelp.Execute("Liikenneselvitys_OpenButton"); }
-    internal class SaavutettavuuskartatButton : Button { protected override void OnClick() => SharedHelp.Execute("Saavutettavuuskartat_OpenButton"); }
 }

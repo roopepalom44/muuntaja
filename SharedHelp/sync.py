@@ -71,7 +71,7 @@ def main():
         validate(source)
         if source != ROOT:
             shutil.copytree(source, ROOT, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "bin", "obj"))
     if args.fetch:
         fetch()
     if args.verify_canonical:

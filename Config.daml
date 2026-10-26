@@ -6,7 +6,7 @@
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
 	<AddInInfo id="{78512C46-1376-4F15-812E-2A0D8D900A9E}"
-			   version="1.5.9"
+			   version="1.5.10"
 			   desktopVersion="3.5.0"
 			   product="ArcGISPro">
 		<Name>Muuntaja</Name>
@@ -14,7 +14,7 @@
 		<Image>Images\muuntaja32.png</Image>
 		<Author>Roope Palomaa</Author>
 		<Company>Ramboll</Company>
-		<Date>2026-10-24</Date>
+		<Date>2026-10-26</Date>
 		<Subject>Framework</Subject>
 	</AddInInfo>
 
@@ -71,19 +71,19 @@
 					</tooltip>
 				</button>
 
-        <button id="muuntaja_SharedHelp_suomenvaylat_Button" caption="Suomenväylät.fi" className="PaikkatietoOhje.SuomenvaylatButton" loadOnClick="true" keytip="SV" smallImage="SharedHelp\Icons\suomenvaylat16.png" largeImage="SharedHelp\Icons\suomenvaylat32.png">
+        <button id="muuntaja_SharedHelp_suomenvaylat_Button" caption="Suomenväylät.fi" className="SuomenvaylatButton" loadOnClick="true" keytip="SV" smallImage="SharedHelp\Icons\suomenvaylat16.png" largeImage="SharedHelp\Icons\suomenvaylat32.png">
           <tooltip heading="Suomenväylät.fi">Avaa Suomenväylät.fi-työkalu.<disabledText/></tooltip>
         </button>
-        <button id="muuntaja_SharedHelp_muuntaja_Button" caption="Muuntaja" className="PaikkatietoOhje.MuuntajaButton" loadOnClick="true" keytip="MU" smallImage="SharedHelp\Icons\muuntaja16.png" largeImage="SharedHelp\Icons\muuntaja32.png">
+        <button id="muuntaja_SharedHelp_muuntaja_Button" caption="Muuntaja" className="MuuntajaButton" loadOnClick="true" keytip="MU" smallImage="SharedHelp\Icons\muuntaja16.png" largeImage="SharedHelp\Icons\muuntaja32.png">
           <tooltip heading="Muuntaja">Avaa Muuntaja-työkalu.<disabledText/></tooltip>
         </button>
-        <button id="muuntaja_SharedHelp_liikenneselvitys_Button" caption="Liikenneselvitys" className="PaikkatietoOhje.LiikenneselvitysButton" loadOnClick="true" keytip="LS" smallImage="SharedHelp\Icons\liikenneselvitys16.png" largeImage="SharedHelp\Icons\liikenneselvitys32.png">
+        <button id="muuntaja_SharedHelp_liikenneselvitys_Button" caption="Liikenneselvitys" className="LiikenneselvitysButton" loadOnClick="true" keytip="LS" smallImage="SharedHelp\Icons\liikenneselvitys16.png" largeImage="SharedHelp\Icons\liikenneselvitys32.png">
           <tooltip heading="Liikenneselvitys">Avaa Liikenneselvitys-työkalu.<disabledText/></tooltip>
         </button>
-        <button id="muuntaja_SharedHelp_saavutettavuuskartat_Button" caption="Saavutettavuuskartat" className="PaikkatietoOhje.SaavutettavuuskartatButton" loadOnClick="true" keytip="SK" smallImage="SharedHelp\Icons\saavutettavuuskartat16.png" largeImage="SharedHelp\Icons\saavutettavuuskartat32.png">
+        <button id="muuntaja_SharedHelp_saavutettavuuskartat_Button" caption="Saavutettavuuskartat" className="SaavutettavuuskartatButton" loadOnClick="true" keytip="SK" smallImage="SharedHelp\Icons\saavutettavuuskartat16.png" largeImage="SharedHelp\Icons\saavutettavuuskartat32.png">
           <tooltip heading="Saavutettavuuskartat">Avaa Saavutettavuuskartat-työkalu.<disabledText/></tooltip>
         </button>
-        <button id="muuntaja_SharedHelp_Button" caption="Avaa ohje" className="PaikkatietoOhje.OpenHelpButton" loadOnClick="true" keytip="OH" smallImage="SharedHelp\Icons\help16.png" largeImage="SharedHelp\Icons\help32.png">
+        <button id="muuntaja_SharedHelp_Button" caption="Avaa ohje" className="OpenHelpButton" loadOnClick="true" keytip="OH" smallImage="SharedHelp\Icons\help16.png" largeImage="SharedHelp\Icons\help32.png">
           <tooltip heading="Avaa ohje">Avaa neljän paikkatietotyökalun yhteinen käyttöohje selaimeen.<disabledText/></tooltip>
         </button>
       </controls>

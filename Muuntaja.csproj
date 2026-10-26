@@ -43,4 +43,7 @@
     <Content Include="SharedHelp\manifest.json"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
     <Content Include="SharedHelp\Icons\*.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="SharedHelp\TypeCheck\**\*.cs" />
+  </ItemGroup>
 </Project>

@@ -19,6 +19,7 @@ if (-not $stage.StartsWith($taskTempRoot, [StringComparison]::OrdinalIgnoreCase)
 }
 $zip = Join-Path $env:TEMP ('muuntaja-' + [guid]::NewGuid().ToString('N') + '.zip')
 $package = Join-Path $output 'Muuntaja.esriAddInX'
+Assert-SharedHelpDamlTypes -AssemblyPath (Join-Path $output 'Muuntaja.dll')
 
 # Add-inin juureen tulee vain manifesti ja kuvat. Runtime-tiedostot ovat
 # Install-kansiossa, jotta ArcGIS Pro ei yritä ladata niitä väärästä polusta.
